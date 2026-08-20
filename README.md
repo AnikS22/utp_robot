@@ -87,6 +87,18 @@ ros2 topic echo /safety/status
 
 Status: arbiter logic is tested; **the nodes have never run against a moving robot.** Gate H4.
 
+## Documents
+
+| | |
+|---|---|
+| `docs/AGENT_BRIEF.md` | start here — project, rules, order of work |
+| `docs/LAPTOP_SETUP.md` | 10-stage provisioning runbook, each stage gated by a CHECK |
+| `docs/HARDWARE_SPECS.md` | every device ID, baud, pinned commit, mount pose, known quirk |
+| `docs/CALIBRATION.md` | nine calibrations in dependency order, with acceptance criteria |
+| `docs/PIPELINE.md` | what a trial is: the loop, the method matrix, missions, metrics |
+| `docs/LLM_ENDPOINT.md` | the FAU OwlChat reasoning endpoint — config, verification, failure modes |
+| `EXPERIMENT_LOG.md` | what has actually been observed |
+
 ## Background (in the sim repo)
 
 `docs/REAL_ROBOT_PLAN.md`, `docs/REAL_ROBOT_DESIGN_REASONING.md`, `docs/integration_contract.md`.

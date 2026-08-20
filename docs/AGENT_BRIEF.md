@@ -65,6 +65,8 @@ by the executable living under this repo. On the rover laptop you are alone, but
 | Provisioning | `docs/LAPTOP_SETUP.md` |
 | Every spec, ID and pinned version | `docs/HARDWARE_SPECS.md` |
 | Calibration procedures | `docs/CALIBRATION.md` |
+| The benchmark pipeline: loop, methods, missions, metrics | `docs/PIPELINE.md` |
+| Reasoning VLM endpoint, key handling, troubleshooting | `docs/LLM_ENDPOINT.md` |
 
 ## The order of work
 

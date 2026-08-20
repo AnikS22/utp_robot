@@ -10,6 +10,8 @@ Mini 3.0 + uFactory xArm6 + RealSense D455 + RPLIDAR A1M8. Deadline **2026-08-25
 | Setting the laptop up from scratch | `docs/LAPTOP_SETUP.md` |
 | Any device ID, pinned version, or setting | `docs/HARDWARE_SPECS.md` |
 | Measuring anything on the robot | `docs/CALIBRATION.md` |
+| What a "trial" is, methods, missions, metrics | `docs/PIPELINE.md` |
+| The reasoning VLM endpoint and its key | `docs/LLM_ENDPOINT.md` |
 | What has actually been done and observed | `EXPERIMENT_LOG.md` |
 
 ## Non-negotiables
@@ -24,6 +26,10 @@ Mini 3.0 + uFactory xArm6 + RealSense D455 + RPLIDAR A1M8. Deadline **2026-08-25
 - **Never kill processes by a loose pattern** — scope by full command line AND by the executable
   living under this repo. A frame-name match once killed 22 of the sim campaign's TF publishers.
 - **Do not edit the simulation repo.** Copy from it; never modify it in place.
+- **Never commit the API key.** It lives in a gitignored `.env` in the pipeline repo. This repo is
+  PUBLIC. See `docs/LLM_ENDPOINT.md`.
+- **The reasoner must never emit pixel coordinates or boxes.** Separating semantics from geometry
+  is the entire thesis; letting the VLM return a box deletes the experiment.
 - **`use_sim_time:=false`** on all real hardware. The sim configs default it true and the failure
   is silent.
 
