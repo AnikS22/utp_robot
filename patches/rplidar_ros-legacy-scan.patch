@@ -1,0 +1,46 @@
+diff --git a/src/rplidar_node.cpp b/src/rplidar_node.cpp
+index ee7e7cf..090b0f7 100644
+--- a/src/rplidar_node.cpp
++++ b/src/rplidar_node.cpp
+@@ -83,6 +83,11 @@ class RPlidarNode : public rclcpp::Node
+         this->declare_parameter<bool>("angle_compensate", false);
+         this->declare_parameter<bool>("flip_x_axis", false);
+         this->declare_parameter<bool>("auto_standby", false);
++        // UTP patch: force the legacy SCAN command. Firmware 1.29 on our A1M8 predates the
++        // scan-mode configuration protocol: getAllSupportedScanModes() returns
++        // SL_RESULT_OPERATION_NOT_SUPPORT (0x80008004) and the express path returns
++        // SL_RESULT_INVALID_DATA (0x80008000). Legacy SCAN streams valid data on this unit.
++        this->declare_parameter<bool>("legacy_scan", false);
+         this->declare_parameter<std::string>("topic_name",std::string("scan"));
+         this->declare_parameter<std::string>("scan_mode",std::string());
+         this->declare_parameter<float>("scan_frequency",10);
+@@ -99,6 +104,7 @@ class RPlidarNode : public rclcpp::Node
+         this->get_parameter_or<bool>("angle_compensate", angle_compensate, false);
+         this->get_parameter_or<bool>("flip_x_axis", flip_x_axis, false);
+         this->get_parameter_or<bool>("auto_standby", auto_standby, false);
++        this->get_parameter_or<bool>("legacy_scan", legacy_scan, false);
+         this->get_parameter_or<std::string>("topic_name", topic_name, "scan");
+         this->get_parameter_or<std::string>("scan_mode", scan_mode, std::string());
+         if(channel_type == "udp")
+@@ -288,7 +294,12 @@ class RPlidarNode : public rclcpp::Node
+     bool set_scan_mode() {
+         sl_result     op_result;
+         LidarScanMode current_scan_mode;
+-        if (scan_mode.empty()) {
++        if (legacy_scan) {   // UTP patch: useTypicalScan=false -> legacy SCAN, no negotiation
++            RCLCPP_INFO(this->get_logger(), "legacy_scan=true: using the legacy SCAN command");
++            op_result = drv->startScan(false /* not force scan */, false /* legacy scan mode */,
++                                       0, &current_scan_mode);
++        }
++        else if (scan_mode.empty()) {
+             op_result = drv->startScan(false /* not force scan */, true /* use typical scan mode */, 0, &current_scan_mode);
+         }
+         else {
+@@ -569,6 +580,7 @@ public:
+     bool angle_compensate = true;
+     bool flip_x_axis = false;
+     bool auto_standby = false;
++    bool legacy_scan = false;
+     float max_distance = 8.0;
+     size_t angle_compensate_multiple = 1;//it stand of angle compensate at per 1 degree
+     std::string scan_mode;

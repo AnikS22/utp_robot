@@ -1,0 +1,30 @@
+# RPLIDAR A1M8 — port, driver settings, and mount pose.
+#
+# The mount pose below is the COMMITTED DESIGN copied from the sim repo's config/sensors.yaml
+# (lidar_front). It has NOT been measured on the physical robot yet. Measure it and correct these
+# numbers before trusting any map: a wrong lidar offset biases every obstacle by that offset, and
+# the resulting map looks perfectly plausible while being wrong.
+
+port: "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"
+baud: 115200
+frame_id: "lidar_link"
+parent_frame: "base_link"
+
+# Our A1M8 runs firmware 1.29, which predates scan-mode negotiation. See
+# patches/rplidar_ros-legacy-scan.patch and EXPERIMENT_LOG.md 2026-08-18b.
+legacy_scan: true
+angle_compensate: true
+
+# base_link -> lidar_link. x forward, y left, z up; radians.
+# STATUS: design values, UNMEASURED on the real robot.
+mount:
+  x_m: 0.25
+  y_m: 0.0
+  z_m: 0.08
+  roll_rad: 0.0
+  pitch_rad: 0.0
+  yaw_rad: 0.0
+
+# Measured on the bench 2026-08-18: 7.14 Hz, not the 10 Hz the driver is configured for. The A1M8's
+# motor is unregulated, so treat the measured value as truth when setting Nav2 costmap expectations.
+measured_scan_rate_hz: 7.14

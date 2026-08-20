@@ -1,0 +1,80 @@
+# Base-motion safety arbiter. Consumed by utp/safety/twist_mux_node.py.
+#
+# THE RULE THIS FILE ENCODES: /cmd_vel has exactly ONE publisher — the mux. Nav2, the pipeline's
+# servo loops, and teleop each publish to their own topic and the mux decides. Before this, Nav2
+# and utp/pipeline/isaac_world.py both published straight to /cmd_vel, so there was no single
+# place to intervene; creating that chokepoint is what makes every interlock below possible.
+
+enabled: true
+
+output_topic: "/cmd_vel"
+status_topic: "/safety/status"      # String (JSON) — selected source, gates, ages, block reason
+rate_hz: 20.0                       # the mux publishes EVERY tick, zeros included (see arbiter.py)
+
+# Priority mux. Higher priority wins whenever its topic is fresh.
+#   requires_enable     : autonomous — only passes while the deadman is held.
+#   allows_arm_override : may move the base with the arm extended, and only while /safety/override
+#                         is asserted. Teleop only: this is the recovery path for a stuck arm.
+sources:
+  - name: teleop
+    topic: "/cmd_vel_teleop"
+    priority: 100
+    requires_enable: false
+    allows_arm_override: true
+  - name: servo
+    topic: "/cmd_vel_servo"         # utp/pipeline/*_world.py approach / retreat / look-around
+    priority: 50
+    requires_enable: true
+    allows_arm_override: false
+  - name: nav
+    topic: "/cmd_vel_nav"           # Nav2 controller_server output (remapped in the launch file)
+    priority: 10
+    requires_enable: true
+    allows_arm_override: false
+
+# Gate topics (all std_msgs/Bool). Every one is FAIL-CLOSED: never-seen and stale both mean
+# "not permitted". A stale gate is indistinguishable from a crashed publisher, and the crash is
+# what we are defending against.
+gates:
+  arm_stowed: "/safety/arm_stowed"  # from utp/safety/arm_monitor_node.py
+  enable: "/safety/enable"          # deadman — held button on the operator gamepad
+  override: "/safety/override"      # human-asserted arm-extended recovery
+  estop: "/safety/estop"            # LATCHING; cleared only by the /safety/clear_estop service
+
+timeouts:
+  input_s: 0.3      # a command source older than this is treated as absent
+  gate_s: 0.2       # a gate older than this collapses to False
+
+# Speed and slew ceilings applied AFTER arbitration.
+#   max_wz is the tightest relative to the platform's capability: the Ranger spins about its
+#   centre, and with the arm out the tool tip sweeps ~0.88 m radius through space the costmap
+#   believes is empty.
+#   Acceleration is capped well below deceleration on purpose — gentle ramp-up protects the raised
+#   CG (the riser made the known high-CoM tip worse), but refusing to stop promptly is never safer.
+limits:
+  max_vx: 0.6           # m/s
+  max_vy: 0.4           # m/s
+  max_wz: 0.8           # rad/s
+  max_accel_lin: 0.5    # m/s^2
+  max_decel_lin: 1.5    # m/s^2
+  max_accel_ang: 1.0    # rad/s^2
+  max_decel_ang: 3.0    # rad/s^2
+
+override_speed_factor: 0.25   # speed ceiling while driving with the arm extended
+
+# --- arm monitor -----------------------------------------------------------------------------
+# Publishes gates.arm_stowed. Two backends, same output topic, so the mux is identical in sim and
+# on hardware.
+#   scene_state : sim — /scene/state JSON, stowed := arm_state == "idle"
+#   xarm_sdk    : real — joint angles from XArmAPI compared against stow_pose_deg
+# On real hardware we gate on MEASURED joint angles, never on an FSM's belief about itself: the
+# FSM reporting "idle" after a crash is exactly the case the interlock exists to catch.
+arm_monitor:
+  backend: "scene_state"
+  publish_rate_hz: 20.0
+  scene_state_topic: "/scene/state"
+  stale_after_s: 0.5          # no fresh arm evidence for this long -> publish False
+  xarm:
+    ip: "${ENV:UTP_XARM_IP:192.168.1.185}"   # read the real address off the control box screen
+    stow_pose_deg: [0.0, -45.0, -45.0, 0.0, 90.0, 0.0]
+    joint_tolerance_deg: 5.0

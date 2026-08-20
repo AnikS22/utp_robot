@@ -1,0 +1,8 @@
+# The driver workspace is REBUILT from bringup/setup_workspace.sh, never committed:
+# it contains third-party git checkouts (nested .git), 7 MB of vendored asio headers, and
+# build artifacts full of absolute paths that would be wrong on the rover laptop anyway.
+ros2_ws/
+
+__pycache__/
+*.pyc
+.pytest_cache/
