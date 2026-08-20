@@ -94,7 +94,7 @@ CHECK:  id -nG | grep dialout
 ## Stage 4 — This repo and the drivers
 
 ```bash
-git clone <utp_robot remote> ~/utp_robot && cd ~/utp_robot
+git clone https://github.com/AnikS22/utp_robot.git ~/utp_robot && cd ~/utp_robot
 bash bringup/setup_workspace.sh
 ```
 
@@ -114,7 +114,11 @@ CHECK:  source bringup/env.sh
 
 ## Stage 5 — The pipeline
 
+**The pipeline repo is PRIVATE.** Authenticate first or the clone fails with a confusing 404
+rather than a permission error:
+
 ```bash
+gh auth login          # or configure an SSH key / PAT for github.com
 git clone https://github.com/AnikS22/unlocking-the-path.git ~/unlocking-the-path
 cd ~/unlocking-the-path
 python3.12 -m venv env/.venv && . env/.venv/bin/activate

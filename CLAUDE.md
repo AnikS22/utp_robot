@@ -42,6 +42,12 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/ -q
 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` is required because ROS's `launch_testing` pytest plugin fails
 to import (missing `lark`). Unrelated to our code.
 
+## Repos
+
+- This one: `https://github.com/AnikS22/utp_robot` (public)
+- Pipeline: `https://github.com/AnikS22/unlocking-the-path` (**private** — run `gh auth login`
+  before cloning, or you get a 404 that looks like a wrong URL rather than a permissions problem)
+
 ## Status
 
 Working: lidar `/scan`, driver workspace, safety-stack logic (23 tests).
