@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# One command: look -> ground -> show you the photo -> reach -> retreat.
+#
+#     bash bringup/press_run.sh                      # full run, 60 mm press standoff
+#     bash bringup/press_run.sh --standoff 100       # stop further out
+#     bash bringup/press_run.sh --dry-run            # look and ground, plan the reach, move nothing
+#     bash bringup/press_run.sh --hold               # stay extended (to measure the gap by hand)
+#
+# THE ARM MOVES TOWARD A WALL unless --dry-run. Hand on the E-stop.
+#
+# WHY THIS IS A SCRIPT AND NOT ONE PROGRAM. Perception and motion run under DIFFERENT PYTHONS:
+# the grounder needs torch (the pipeline venv) and the arm needs rclpy plus the xArm SDK (ROS's
+# python). They cannot share a process. So the handoff is a FILE -- captures/<name>/detection.json
+# -- which is also why the exact frame the detector saw is kept and can go in the paper.
+#
+# THE RETREAT IS NOT A SEPARATE STEP. approach_target.py returns to its start pose on success
+# unless --hold is passed. Do not add a retreat here; two things retreating is how an arm gets
+# commanded somewhere nobody chose.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$REPO/bringup/env.sh"
+VENV="$HOME/unlocking-the-path/env/.venv/bin/python"
+
+STANDOFF=60          # mm, measured to the MARKER on the flange, not the tool tip.
+                     # 60 was confirmed by the operator on 2026-08-25 to reach the plate.
+NAME="press_$(date +%H%M%S)"
+MODE="--go"
+EXTRA=""
+QUERY=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --standoff) STANDOFF="$2"; shift 2 ;;
+        --name)     NAME="$2"; shift 2 ;;
+        --query)    QUERY="$2"; shift 2 ;;
+        --dry-run)  MODE="--dry-run"; shift ;;
+        --hold)     EXTRA="--hold"; shift ;;
+        -h|--help)  sed -n '2,8p' "$0"; exit 0 ;;
+        *) echo "unknown option: $1" >&2; exit 2 ;;
+    esac
+done
+CAP="$REPO/captures/$NAME"
+
+echo "=============================================================="
+echo " 1/4  LOOK      capturing an aligned RGB-D frame"
+echo "=============================================================="
+python3 "$REPO/bringup/grab_frame.py" --name "$NAME" --timeout 45
+
+echo
+echo "=============================================================="
+echo " 2/4  GROUND    running the shipped detector on that frame"
+echo "=============================================================="
+[ -x "$VENV" ] || { echo "pipeline venv not found at $VENV" >&2; exit 1; }
+if [ -n "$QUERY" ]; then
+    "$VENV" "$REPO/bringup/detect_frame.py" "$CAP" --query "$QUERY"
+else
+    "$VENV" "$REPO/bringup/detect_frame.py" "$CAP"
+fi
+# detect_frame writes detection.json ONLY when it has a 3D point. No point, no aiming.
+[ -f "$CAP/detection.json" ] || {
+    echo >&2
+    echo "STOPPING: no detection.json -- the detector found nothing it could place in 3D." >&2
+    echo "  That is a result, not a crash. The arm is not moving. Look at $CAP/detection.png" >&2
+    exit 3
+}
+
+echo
+echo "=============================================================="
+echo " 3/4  SHOW      opening what the detector chose"
+echo "=============================================================="
+echo "  $CAP/detection.png   (green = chosen, orange = runners-up)"
+if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+    ( setsid nohup xdg-open "$CAP/detection.png" >/dev/null 2>&1 & )
+    sleep 1
+else
+    echo "  (no display; open it yourself)"
+fi
+
+echo
+echo "=============================================================="
+echo " 4/4  REACH     $STANDOFF mm marker standoff, then retreat"
+echo "=============================================================="
+python3 "$REPO/bringup/approach_target.py" --capture "$CAP" $MODE \
+        --min-standoff "$STANDOFF" $EXTRA
+
+echo
+echo "done. frame + detection kept in $CAP"

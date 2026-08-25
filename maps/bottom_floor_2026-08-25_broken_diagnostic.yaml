@@ -1,0 +1,7 @@
+image: bottom_floor_2026-08-25_broken_diagnostic.pgm
+mode: trinary
+resolution: 0.050
+origin: [-3.645, -9.975, 0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

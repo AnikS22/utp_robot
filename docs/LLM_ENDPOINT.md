@@ -10,6 +10,13 @@ or a chat, treat it as burned and get it rotated.
 
 ---
 
+> **Base URL corrected 2026-08-21 by measurement.** `https://chat-llm.hpc.fau.edu/v1` returns
+> **HTTP 401** — *"Authentication Error, Invalid proxy server token passed"* — because it is the raw
+> LiteLLM backend, not the gateway that issues the keys. The working base is
+> **`https://chat.hpc.fau.edu/api/v1`**, which returns HTTP 200 and lists 70 models including the
+> pinned `openai/gemma4-vibe`. The sim repo's `docs/owlchat_llm_guide.md` had this right all along.
+> Verify with `bash bringup/check_llm.sh`, which tries both and reports the server's own reason.
+
 ## Configuration
 
 Three environment variables. `OPENAI_BASE_URL` and `OPENAI_API_KEY` are read directly by the client
@@ -17,7 +24,7 @@ Three environment variables. `OPENAI_BASE_URL` and `OPENAI_API_KEY` are read dir
 
 ```bash
 # ~/unlocking-the-path/.env      (gitignored — never commit)
-OPENAI_BASE_URL=https://chat-llm.hpc.fau.edu/v1
+OPENAI_BASE_URL=https://chat.hpc.fau.edu/api/v1
 OPENAI_API_KEY=<your Owl Chat virtual key>
 UTP_VLM_MODEL=openai/gemma4-vibe
 ```

@@ -28,7 +28,27 @@ measure the error with a rule.
 
 **Accept:** commanded vs measured tip height within **±5 mm**.
 
-## ② Stylus TCP offset
+**MEASURED 2026-08-21: riser = 391.225 mm** (CAD, cross-checked by tape). Deck is 0.345 m, so
+`link_base` sits at **~0.740 m** off the floor, and the arm's base plate is **horizontal** — so
+this is a pure translation, as assumed above. Consequence: with 0.764 m of arm from 0.740 m, the
+**1.067 m ADA elevator hall call is reachable**. At the flush 0.345 m mount it would not be.
+
+## ② Tool TCP offset — **STILL OPEN, and it is the only thing blocking a press**
+
+**The fitted tool is a GRIPPER, not the stylus these docs assume.** Checked on the arm 2026-08-21:
+
+    tcp_offset = [0, 0, 0, 0, 0, 0]      tcp_load = [0, [0, 0, 0]]
+
+So `get_position()` reports the **flange**, and the arm believes its tool is a bare plate. Two
+consequences, and the second is the one that matters for a contact move: every commanded position
+is short by the tool length, **and** the collision-detection thresholds are calibrated for no
+payload, so the arm will either nuisance-trip on its own gripper or fail to notice a real contact.
+
+Hand-eye (item ⑧) no longer depends on this — it now solves the marker offset for itself. But a
+**press** does: the calibration knows where the *marker* is, not where the *fingertips* are.
+
+**What is needed:** flange face → fingertips, along the gripper's pointing direction, ±3 mm. Plus
+the gripper's mass for `set_tcp_load`.
 
 **Why here.** The end effector is a ~0.12 m stylus. Until the arm knows about it, every commanded
 position refers to the flange and lands ~12 cm short along the approach axis.
@@ -117,6 +137,13 @@ the RGB target centre sits.
 
 **Accept:** depth at the RGB centre within **±2 cm** of tape at 1 m.
 
+**PASS 2026-08-21**, measured with `bringup/check_depth_alignment.py` off a single frame using the
+ADA plate's own protrusion: centre offset **−2.8 mm / +4.2 mm** at 0.84 m; diameter 17.0 cm from
+depth vs 16.5 cm from RGB. Three traps that each produced a wrong answer before the method settled,
+all now handled by that script: a flat depth threshold mistakes a non-fronto-parallel wall for
+misalignment; signs and fire alarms also stand proud, so a bounding box over all protruding pixels
+measures the widest of them; and the robot's own arm appears at ~0.37 m, half a metre proud.
+
 ## ⑧ Hand-eye — `base_link → mast_cam_optical`
 
 **The critical one.** The camera is fixed to the base on a mast, not mounted on the arm, so this is
@@ -135,6 +162,53 @@ the residual, rather than silently swallowing the riser and TCP errors.
 
 **Accept:** RMS residual **< 2 cm**, no single point > 4 cm. Comfortably inside the 11–15 cm plate.
 If residuals are large only at the workspace edges, suspect ① or ②, not the solve.
+
+**PASS 2026-08-21. rms 3.0 mm, worst 8.2 mm, 10 poses, rotation spread 63.8°.**
+
+**The method changed, and it no longer needs item ② first.** `cv2.calibrateRobotWorldHandEye`
+solves for the camera pose *and* the flange→marker offset together, given the marker's full 6-DoF
+pose (solvePnP on the ArUco corners, scaled by the printed 40 mm). So the ruler measurement that
+step 1 above asks for comes **out** of the solve instead of into it. Run:
+
+```bash
+python3 bringup/handeye_auto.py --go        # drives the arm through 10 bounded joint poses
+python3 bringup/handeye_solve_rw.py         # solve; writes calib/handeye.json
+python3 bringup/handeye_verify.py --go      # end-to-end placement accuracy, no contact
+python3 bringup/check_calib.py              # later: still valid? one frame, 30 s
+```
+
+**A residual is not validation.** A systematically wrong calibration fits its own data perfectly.
+Two independent checks were run and both should be repeated after any recalibration:
+
+- **Against an outside measurement.** Solved camera x = **−327.6 mm** vs **−324.238 mm** off the
+  CAD — 3.4 mm apart, and the solver never saw that number.
+- **Leave-one-out cross-validation.** Solve on 9 pairs, predict the 10th: **3.31 mm mean,
+  6.16 mm worst**, against an in-sample 3.0 mm. Nearly equal, so it generalises rather than overfits.
+
+**Known weakness: camera *lateral* position is poorly constrained.** Across the ten LOO sub-solves,
+camera y spans 55 mm (std 14 mm) while x spans 16 mm — camera-y and marker-y trade off against each
+other. Prediction is unaffected (that is what LOO measures), but do not read the reported y as a
+physical measurement, and **include more lateral spread** in the next collection.
+
+**End-to-end placement (`handeye_verify.py`, 6 targets over ±50 mm):**
+
+    mean |error| 4.3 mm    worst 9.7 mm    bias dx +2.3 dy +0.5 dz +0.5 mm
+
+That is the number that matters — it includes calibration, arm positioning, detection and depth.
+An ADA plate needs ~±30 mm, so there is 3× margin.
+
+### Two hardware constraints found while doing this
+
+**J5 is the binding joint.** Its range is **−97° to +180°**, and in the working pose it sits near
+−92° — under 5° of headroom. It stopped collection once as a joint delta (now fixed by reading
+`XCONF.Robot.JOINT_LIMITS` and clamping), and again as **error 23** on a *Cartesian* goal 50 mm
+lower, where clamping cannot help because the IK picks the joint solution. **Approach in joint
+space, or keep Cartesian goals at or above the current height.**
+
+**The arm occludes its own camera.** At a working pose it fills over half the frame, and the marker
+leaves view entirely at full extension. So grounding must complete **before** the arm enters the
+workspace, and closed-loop visual verification is not available at the moment of contact. This is a
+constraint on the pipeline's ordering, not a nuisance — see `docs/PIPELINE.md`.
 
 ## ⑨ Stopping distance
 

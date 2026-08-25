@@ -90,6 +90,20 @@ candump can0        # heartbeat frames appear with the chassis powered
 **Fault 0x80 is the E-stop.** If the driver runs but nothing moves, check the RC mode switch and
 both E-stops before debugging software. This looks exactly like a software bug and is not one.
 
+**A pressed E-stop reads `EXCEPTION` (0x02), not `ESTOP` (0x01).** Measured 2026-08-21: with the
+chassis E-stop out, `0x211` reports `vehicle_state=NORMAL`; pressed, it reports `EXCEPTION` with
+`error_code=0x0000`. The `VEHICLE_STATE_ESTOP = 0x01` value in `agilex_types.h:33` is **never
+observed on this chassis**. Anything gating on `ESTOP` will refuse on correctly-stopped hardware —
+`bringup/stale_cmd_test.py` did exactly that until it was fixed.
+
+Distinguish the two meanings of `EXCEPTION` by the error code: E-stop is `EXCEPTION` **with
+`error=0x0000`**; a genuine fault is `EXCEPTION` with a non-zero error. There is no separate state
+for "stopped by a human" versus "stopped by a fault", so the error code is the only discriminator.
+
+Note also that the **Ranger's** E-stop is the one that moves `vehicle_state`. The xArm has its own,
+entirely independent E-stop on its control box; it is on Ethernet and contributes nothing to
+`0x211`. Pressing the arm's E-stop does not stop the base.
+
 **Twist truncation (GAP 1) — verified in driver source.** `TwistCmdCallback` auto-selects a motion
 mode from `/cmd_vel` and **drops components**:
 
@@ -104,9 +118,29 @@ strafe+yaw and no ROS service to override the mode. Consequences: **use Regulate
 MPPI with `motion_model: Omni`**, and any approach servo must alternate rotate-then-translate
 rather than blending.
 
-**`/cmd_vel` stale-command behaviour is UNVERIFIED.** Determine at first bring-up whether the
-driver stops when its publisher dies. If it holds the last command, that is a runaway — write a
-watchdog before driving.
+**`/cmd_vel` stale-command behaviour — half answered from source, half still UNVERIFIED.**
+There are two independent failure modes and they need separate answers:
+
+| | Question | Status |
+|---|---|---|
+| driver | Does `ranger_base` keep **transmitting** the last twist on CAN after its `/cmd_vel` publisher dies? | **No**, from source. `ranger_messenger.cpp:391` calls `SetMotionCommand` directly inside the subscription callback, and `agilex_base.hpp:92` emits exactly one `0x111` frame per call. There is no repeat timer anywhere in `ugv_sdk`. Confirm on the bus with `bringup/stale_cmd_test.py driver` (E-stop engaged, zero risk). |
+| firmware | If `0x111` stops **arriving**, does the chassis keep executing the last one? | **YES, for ~1.26 s.** Measured 2026-08-21 on hardware: commanded 0.15 m/s, SIGKILLed the publisher, and `0x221` kept reporting ~0.147 m/s for **1.263 s** before reaching zero. Roughly **18 cm of uncommanded travel**, scaling linearly with speed. |
+
+**Design consequence, and it is the important one.** The chassis watchdog is a *backstop, not a
+brake*. It bounds a lost commander — the base will not run forever — but 1.26 s is far too slow to
+be the safety mechanism. Stopping must come from software: `safety/teleop_guard.py` acts at 0.35 s,
+which beats firmware by ~0.9 s, and that margin is the whole reason the hold lease was worth
+building properly instead of just lengthening the heartbeat.
+
+Both gates together also settle the 2026-08-20 runaway: it ran far longer than 1.26 s, so it cannot
+have been a latch of any kind. It was continuous commanding from a browser holding a stale key
+belief — consistent with the `driver` result, and fixed by the hold lease.
+
+The distinction matters: a PASS on `driver` and a FAIL on `firmware` is still a runaway, and the
+driver is blameless. It also reframes the 2026-08-20 teleop runaway — the driver was faithfully
+relaying live commands the whole time; the browser was the thing generating them from a stale
+held-key belief. That is fixed by the hold lease in `safety/teleop_guard.py`, and it means the
+runaway is **not** evidence about either row of this table.
 
 ## uFactory xArm6 — BLOCKED
 
@@ -168,7 +202,7 @@ before the first press: patch median → plane fit → known height from the mis
 |---|---|
 | Grounder (primary) | `IDEA-Research/grounding-dino-base` via HF `transformers` |
 | Grounder (2nd arm) | `google/owlv2-base-patch16-ensemble` |
-| Reasoner | OpenAI-compatible client; endpoint `https://chat-llm.hpc.fau.edu/v1` (FAU OwlChat) |
+| Reasoner | OpenAI-compatible client; endpoint `https://chat.hpc.fau.edu/api/v1` (FAU OwlChat) |
 | Env vars | `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `UTP_VLM_MODEL` in `.env` |
 
 **Two deployment risks, both must be handled before going to the test site:**

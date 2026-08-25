@@ -1,0 +1,51 @@
+{
+    "_comment2": "Slamtec RPLIDAR A1M8 datasheet: range 0.15-12 m, angular res <=1 deg, scan 5.5 Hz nominal (5-10 Hz), sample rate up to 8 kHz, 905 nm. This is the RTX-lidar sensor profile referenced by omni:sensor:modelName='RPLIDAR_A1M8' on the robot's OmniLidar prim; it (NOT the omni:sensor:Core:* prim attributes) is what actually sets /scan min/max range, which drives the Nav2 costmap.",
+    "class": "sensor",
+    "type": "lidar",
+    "name": "RPLIDAR A1M8", "_comment0": "SLAMTEC RPLIDAR A1M8, standard mode ~5.5 Hz, ~1 deg (360 rays/rev)",
+    "driveWorksId": "GENERIC",
+    "profile":
+    {
+        "scanType": "rotary",
+        "intensityProcessing": "normalization",
+        "rotationDirection": "CW",
+        "rayType": "IDEALIZED",
+
+        "nearRangeM": 0.15,
+        "minDistBetweenEchos": 0.15,
+        "farRangeM": 12.0,
+
+        "rangeResolutionM": 0.015,
+        "rangeAccuracyM": 0.03,
+
+        "avgPowerW": 0.004,
+        "minReflectance": 0.1,
+        "minReflectanceRange": 6.0,
+        "wavelengthNm": 905.0,
+        "pulseTimeNs": 5,
+
+        "azimuthErrorMean": 0.0,
+        "azimuthErrorStd": 0.0,
+        "elevationErrorMean": 0.0,
+        "elevationErrorStd": 0.0,
+
+        "maxReturns": 1,
+
+        "scanRateBaseHz": 5.5,
+
+        "reportRateBaseHz": 1980, "_comment1": "5.5 Hz * 360 rays = 1980 -> ~1 deg angular resolution (A1M8 spec <=1 deg)",
+
+        "numberOfEmitters": 1,
+
+        "emitterStateCount": 1,
+        "emitterStates": [
+        {
+          "azimuthDeg": [0],
+          "elevationDeg": [0 ],
+          "fireTimeNs": [0]
+        }
+        ],
+
+        "intensityMappingType": "LINEAR"
+    }
+}

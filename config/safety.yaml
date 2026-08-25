@@ -70,11 +70,15 @@ override_speed_factor: 0.25   # speed ceiling while driving with the arm extende
 # On real hardware we gate on MEASURED joint angles, never on an FSM's belief about itself: the
 # FSM reporting "idle" after a crash is exactly the case the interlock exists to catch.
 arm_monitor:
-  backend: "scene_state"
+  # MEASURED joint angles on hardware, never an FSM's belief about itself. "scene_state" is the
+  # SIM backend: it reads /scene/state, which does not exist on this machine, so the arm_stowed
+  # gate fail-closes forever and the nav and servo mux sources are silently dead. Teleop still
+  # works (allows_arm_override), which is exactly why this hides.
+  backend: "xarm_sdk"
   publish_rate_hz: 20.0
   scene_state_topic: "/scene/state"
   stale_after_s: 0.5          # no fresh arm evidence for this long -> publish False
   xarm:
-    ip: "${ENV:UTP_XARM_IP:192.168.1.185}"   # read the real address off the control box screen
+    ip: "${ENV:UTP_XARM_IP:192.168.1.221}"   # VERIFIED reachable 2026-08-25 via enx00e04c674c60 (192.168.1.100/24)
     stow_pose_deg: [0.0, -45.0, -45.0, 0.0, 90.0, 0.0]
     joint_tolerance_deg: 5.0

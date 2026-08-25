@@ -1,0 +1,49 @@
+# Open-vocab grounding detectors (the "where" half of decoupling). Loaded on the Ada 6000s in
+# the pipeline (3.12) env. One backend is active per method; for the decoupling comparison we pin
+# one backend per GPU and run them in parallel.
+#
+# DECOUPLING COMPARISON (defensible, native open-vocab pair):
+#   primary    = gdino   (Grounding DINO: text in, boxes out)
+#   second arm = owlv2   (also natively open-vocab)
+# CLIP is DESCOPED to optional/stretch: it is NOT a detector — grounding with it needs a separate
+# region-proposal stage feeding CLIP retrieval, a whole extra moving part with its own failure
+# modes. Only build it if a reviewer specifically asks. Do not put CLIP on the critical path.
+
+decoupling_comparison: [gdino, owlv2]
+optional_backends: [clip]
+
+backends:
+  gdino:                            # PRIMARY
+    kind: grounding_dino
+    model: "IDEA-Research/grounding-dino-base"   # HF id; open-vocab text->boxes
+    box_threshold: 0.30
+    text_threshold: 0.25
+    device: "cuda:0"
+
+  owlv2:                            # SECOND ARM
+    kind: owlv2
+    model: "google/owlv2-base-patch16-ensemble"
+    score_threshold: 0.20
+    device: "cuda:0"   # UTP_ROBOT: rover laptop has ONE GPU; cuda:1 raises on .to()
+
+  clip:                             # OPTIONAL / STRETCH — needs a region-proposal stage; not built by default
+    kind: clip_retrieval
+    enabled: false
+    model: "ViT-L-14"
+    pretrained: "openai"
+    region_proposals: none          # would require e.g. SAM/selective-search proposals -> CLIP retrieval
+    device: "cuda:0"   # UTP_ROBOT: single GPU (backend is enabled:false anyway)
+    note: "Not a detector on its own. Build only if explicitly required."
+
+# Direct-VLM grounding (the no-decoupling arm): the reasoning VLM itself emits a box.
+direct_vlm:
+  use_reasoning_vlm: true           # reuse the GPT-5 client; ask it for [x0,y0,x1,y1]
+
+# Pointing-style grounding (Molmo/RoboPoint): VLM emits a point, lifted via depth.
+pointing:
+  model: "allenai/Molmo-7B-D-0924"
+  device: "cuda:0"
+
+# Oracle grounder (testing only): perfect strong-match, zero noise.
+oracle:
+  noise_px: 0.0

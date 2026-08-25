@@ -35,8 +35,38 @@ _utp_had_u=0; case "$-" in *u*) _utp_had_u=1; set +u;; esac
 # shellcheck disable=SC1090,SC1091
 source /opt/ros/jazzy/setup.bash
 UTP_ROBOT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# ---------------------------------------------------------------------------------------------
+# OWNERSHIP MARKER -- how preflight tells our processes from someone else's
+# ---------------------------------------------------------------------------------------------
+# Every process launched from a shell that sourced this file inherits UTP_ROBOT_STACK in its
+# environment. preflight.py reads /proc/<pid>/environ and treats a match as ours.
+#
+# This exists because the previous test -- "is the repo path in the command line?" -- was wrong in
+# both directions. It missed `realsense2_camera_node` and `ros2 launch ranger_bringup` (their
+# executables live in /opt/ros) and `bash bringup/teleop.sh` (relative path), so on 2026-08-21
+# preflight refused to start the lidar because it had mistaken our OWN running stack for a foreign
+# one. Widening it to a name or topic match is not the fix: matching `--child-frame-id lidar_link`
+# is exactly what killed 22 of the sim campaign's TF publishers on 2026-08-18, because the sim uses
+# the same frame names. An inherited env var is precise in both directions -- nothing we did not
+# start can carry it, and everything we start does.
+export UTP_ROBOT_STACK="$UTP_ROBOT_REPO"
 if [ -f "$UTP_ROBOT_REPO/ros2_ws/install/setup.bash" ]; then
     source "$UTP_ROBOT_REPO/ros2_ws/install/setup.bash"
 fi
 [ "$_utp_had_u" = "1" ] && set -u
 export UTP_ROBOT_REPO
+
+# ---------------------------------------------------------------------------------------------
+# Record where we are on the network, every time anything starts.
+# ---------------------------------------------------------------------------------------------
+# The laptop rides on the robot with the lid shut, so there is no screen to read an IP off. Campus
+# DHCP re-leases and the robot roams between access points, so the address changes without warning.
+# Stamping it here means the last known address is always on disk -- readable over whatever
+# connection still works, or from the keyboard if none does. Costs a few bytes per invocation.
+# Never allowed to fail: a read-only checkout must not stop the stack from starting.
+{
+    printf '# %s\nhost=%s\nuser=%s\n' "$(date -Is 2>/dev/null)" "$(hostname)" "${USER:-unknown}"
+    for _a in $(hostname -I 2>/dev/null); do printf 'addr=%s\n' "$_a"; done
+} > "$UTP_ROBOT_REPO/.last_address" 2>/dev/null || true
+unset _a

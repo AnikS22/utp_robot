@@ -29,6 +29,12 @@ import argparse
 import math
 import sys
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from _ros_env import require_ros
+require_ros()
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data

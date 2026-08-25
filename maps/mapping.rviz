@@ -1,0 +1,183 @@
+# RViz view for building the map. Opened automatically by bringup/mapping.sh.
+#
+# Deliberate QoS choices -- both are the difference between "empty screen" and "working":
+#   Map        Reliable + Transient Local. slam_toolbox LATCHES /map, so a Volatile subscriber
+#              shows nothing until the next periodic republish and looks broken meanwhile.
+#   LaserScan  Best Effort. A Best Effort subscriber accepts a Reliable publisher, but a Reliable
+#              subscriber gets NOTHING from a Best Effort publisher. Best Effort works either way.
+#
+# Fixed Frame is `map`. If RViz complains the frame does not exist, slam_toolbox is not publishing
+# map->odom -- almost always base_frame or publish_odom_tf, not RViz. See docs/MAPPING.md.
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Map1
+        - /LaserScan1
+      Splitter Ratio: 0.5
+    Tree Height: 700
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Name: root
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 20
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 40
+      Color: 90; 90; 90
+      Alpha: 0.3
+      Reference Frame: <Fixed Frame>
+
+    # The map being built. Watch THIS, not the laser.
+    - Class: rviz_default_plugins/Map
+      Name: Map
+      Enabled: true
+      Alpha: 0.9
+      Color Scheme: map
+      Draw Behind: true
+      Topic:
+        Value: /map
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+
+    # Live returns. Should sit ON the walls the map has already drawn. If it drifts off them
+    # while you move, the scan match is failing -- stop and re-drive rather than saving.
+    - Class: rviz_default_plugins/LaserScan
+      Name: LaserScan
+      Enabled: true
+      Size (m): 0.03
+      Style: Points
+      Color: 255; 80; 80
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Topic:
+        Value: /scan_filtered
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+        History Policy: Keep Last
+
+    # Where slam_toolbox thinks the robot is, and every frame in the chain to it.
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Names: true
+      Show Axes: true
+      Show Arrows: false
+      Marker Scale: 0.4
+      Update Interval: 0
+
+    # Large, unambiguous current robot pose. Red X points forward, green Y points left.
+    - Class: rviz_default_plugins/Axes
+      Name: Robot Pose
+      Enabled: true
+      Reference Frame: base_link
+      Length: 0.7
+      Radius: 0.06
+
+    # The pose graph: one node per keyframe, edges for constraints. When a loop closes you can
+    # see the whole graph twitch. Absence of any loop edge after driving a circuit is the
+    # clearest possible sign the loop did NOT close.
+    #
+    # OFF BY DEFAULT, measured 2026-08-25. slam.yaml adds a keyframe every 0.10 m OR 0.10 rad, so
+    # a real mapping drive builds thousands of markers and RViz redraws every one of them every
+    # frame -- 54% of a core, and the display lags so hard it looks like SLAM has stalled. It has
+    # not: slam_toolbox itself sits at 9% and scans arrive at normal age. This display costs six
+    # times more than the mapping it is displaying.
+    #
+    # Tick it back on when you specifically want to check loop closure -- ideally parked, after
+    # the drive, not while driving.
+    - Class: rviz_default_plugins/MarkerArray
+      Name: PoseGraph
+      Enabled: false
+      Topic:
+        Value: /slam_toolbox/graph_visualization
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Saved Landmarks
+      Enabled: true
+      Topic:
+        Value: /map_markers
+        Depth: 10
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+
+    # Odometry alone, no SLAM correction. Useful as a contrast: the gap between this trail and
+    # the robot's position in `map` IS the accumulated drift that loop closure removes.
+    - Class: rviz_default_plugins/Odometry
+      Name: Odometry (raw)
+      Enabled: true
+      Topic:
+        Value: /odom
+        Depth: 100
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+      Keep: 300
+      Position Tolerance: 0.15
+      Angle Tolerance: 0.15
+      Shape:
+        Value: Arrow
+        Alpha: 0.6
+        Color: 90; 160; 255
+        Shaft Length: 0.15
+        Shaft Radius: 0.02
+        Head Length: 0.06
+        Head Radius: 0.05
+
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+    - Class: rviz_default_plugins/FocusCamera
+    # Publishes a navigation destination on /goal_pose. During mapping this is only a visible
+    # coordinate marker; it can drive only after the separately launched Nav2 stack is validated.
+    - Class: rviz_default_plugins/SetGoal
+      Topic: /goal_pose
+    # For saved-map Nav2/AMCL: place the robot's known starting pose (A) before sending goal B.
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic: /initialpose
+      X std deviation: 0.25
+      Y std deviation: 0.25
+      Theta std deviation: 0.2618
+    # Click a location and read its exact map-frame XYZ on /clicked_point.
+    - Class: rviz_default_plugins/PublishPoint
+      Topic: /clicked_point
+      Single click: true
+
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: TopDown
+      # Keep the world fixed. Following base_link made the map slide under a stationary screen
+      # marker and concealed the exact localization jumps this view is meant to reveal.
+      Target Frame: map
+      Scale: 40
+      X: 0
+      Y: 0
+      Angle: 0
+      Invert Z Axis: false
+  Value: true
+
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 900
+  Width: 1400
+  Hide Left Dock: false
+  Hide Right Dock: true

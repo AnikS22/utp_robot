@@ -183,8 +183,14 @@ def main(argv: list[str] | None = None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        # Best-effort parting zero. The driver-side watchdog is the real guarantee (and on the
-        # Ranger it is still UNVERIFIED — see the experiment log, H1).
+        # Parting zero, and it matters more than "best-effort" suggests. Measured 2026-08-21:
+        # there is NO driver-side watchdog -- ranger_base transmits one 0x111 per callback and
+        # simply stops when its publisher dies -- and the CHASSIS watchdog takes 1.26 s, about
+        # 18 cm at 0.15 m/s. An explicit zero stops the base at once because it is a command,
+        # not a timeout. So this line is the difference between stopping now and coasting 18 cm.
+        #
+        # It is still only a best effort in the sense that SIGKILL skips it entirely. That case
+        # is exactly the 1.26 s coast, and nothing in software can shorten it.
         try:
             node.pub_cmd.publish(Twist())
         except Exception:

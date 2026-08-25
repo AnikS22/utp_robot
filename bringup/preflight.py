@@ -40,10 +40,13 @@ def _procs():
         if not cmd:
             continue
         dom = None
+        stack = None
         for e in _read(pid, "environ").split("\0"):
             if e.startswith("ROS_DOMAIN_ID="):
                 dom = e.split("=", 1)[1] or "0"
-        yield pid, cmd, dom
+            elif e.startswith("UTP_ROBOT_STACK="):
+                stack = e.split("=", 1)[1]
+        yield pid, cmd, dom, stack
 
 
 def session_of(pid: str) -> int:
@@ -57,11 +60,20 @@ def session_of(pid: str) -> int:
         return -1
 
 
-def ours(cmd: str) -> bool:
-    """Ours iff the executable actually lives in this repo. Deliberately NOT a frame-name or
-    topic-name match -- matching on `--child-frame-id lidar_link` is what killed the sim's
-    publishers, because the sim uses the same child frame."""
-    return REPO in cmd
+def ours(cmd: str, stack: str | None) -> bool:
+    """Ours iff the process carries our inherited UTP_ROBOT_STACK marker, or its executable
+    lives in this repo.
+
+    The env marker is the primary test and the path is a fallback for anything started without
+    sourcing env.sh. The path test ALONE was wrong in both directions: `realsense2_camera_node`
+    and `ros2 launch ranger_bringup` live in /opt/ros, and `bash bringup/teleop.sh` is a relative
+    path, so on 2026-08-21 preflight refused to start the lidar because it had classified our own
+    running stack as foreign interference.
+
+    Still deliberately NOT a frame-name or topic-name match -- matching on
+    `--child-frame-id lidar_link` is what killed 22 of the sim's TF publishers on 2026-08-18,
+    because the sim uses the same child frame."""
+    return stack == REPO or REPO in cmd
 
 
 def main() -> int:
@@ -83,7 +95,7 @@ def main() -> int:
     my_session = session_of(str(os.getpid()))
 
     mine, foreign = [], []
-    for pid, cmd, dom in _procs():
+    for pid, cmd, dom, stack in _procs():
         if dom != domain:
             continue
         if "preflight.py" in cmd or "/proc" in cmd:
@@ -92,7 +104,7 @@ def main() -> int:
             continue                      # our own shell tree
         if "ros2cli.daemon" in cmd or "ros2-daemon" in cmd:
             continue                      # per-domain CLI helper, harmless
-        (mine if ours(cmd) else foreign).append((pid, cmd))
+        (mine if ours(cmd, stack) else foreign).append((pid, cmd))
 
     print(f"domain           : {domain} (reserved for hardware)")
     if args.verbose or mine:
@@ -126,7 +138,11 @@ def main() -> int:
         if holders:
             print(f"\nPREFLIGHT FAIL: {real} is already open:")
             for pid, cmd in holders:
-                tag = "OURS (stale)" if ours(cmd) else "foreign"
+                stack = None
+                for e in _read(pid, "environ").split("\0"):
+                    if e.startswith("UTP_ROBOT_STACK="):
+                        stack = e.split("=", 1)[1]
+                tag = "OURS (stale)" if ours(cmd, stack) else "foreign"
                 print(f"  pid {pid}  [{tag}]  {cmd[:90]}")
             print("\nA stale rplidar_node holding the port makes the next start fail with")
             print("SL_RESULT_OPERATION_TIMEOUT, which looks like a hardware fault. Kill it by PID.")

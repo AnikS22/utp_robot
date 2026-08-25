@@ -5,9 +5,10 @@
 #     bash bringup/lidar.sh --no-tf    # /scan only (something else owns base_link -> lidar_link)
 #
 # Settings, all learned the hard way (EXPERIMENT_LOG.md 2026-08-18):
-#   * by-id port, never /dev/ttyUSBn -- the numbering DOES reorder. Observed live: the lidar moved
-#     from ttyUSB0 to ttyUSB1 after a re-plug. The by-id path followed it; a hardcoded ttyUSB0
-#     would have silently pointed at nothing.
+#   * port DISCOVERED by bringup/find_lidar.sh, never hardcoded and never /dev/ttyUSBn. ttyUSBn
+#     numbering DOES reorder -- observed live, the lidar moved from ttyUSB0 to ttyUSB1 after a
+#     re-plug. by-id follows it, but a by-id path with the adapter's serial baked in still breaks
+#     on a swap, so it is resolved fresh each start.
 #   * 115200 baud -- correct for the A1M8. The wrong baud gives a SILENT no-data start.
 #   * legacy_scan:=true -- our unit's firmware (1.29) predates scan-mode negotiation, so the
 #     driver's default express path fails (0x80008000 / 0x80008004). Needs our patch.
@@ -27,7 +28,10 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$REPO/bringup/env.sh"
 
-PORT="${RPLIDAR_PORT:-/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0}"
+# Discovered, not hardcoded. The old default pinned the adapter's serial number (..._0001_...),
+# which breaks on any swap and made "plug it in and go" impossible. find_lidar.sh honours
+# $RPLIDAR_PORT if you set it, otherwise finds the single CP2102 and refuses to guess between two.
+PORT="$(bash "$REPO/bringup/find_lidar.sh")" || exit 1
 BAUD="${RPLIDAR_BAUD:-115200}"
 FRAME="${RPLIDAR_FRAME:-lidar_link}"
 PUBLISH_TF=1
@@ -65,7 +69,7 @@ c = yaml.safe_load(open(sys.argv[1])); m = c["mount"]
 print(m["x_m"], m["y_m"], m["z_m"], m["roll_rad"], m["pitch_rad"], m["yaw_rad"], c["parent_frame"])
 EOF
 )"
-    echo "[lidar] tf $PARENT -> $FRAME  xyz=($MX $MY $MZ) rpy=($MR $MP $MYAW)  [DESIGN, UNMEASURED]"
+    echo "[lidar] tf $PARENT -> $FRAME  xyz=($MX $MY $MZ) rpy=($MR $MP $MYAW)  [x,y from CAD; z +-0.07]"
     setsid ros2 run tf2_ros static_transform_publisher \
         --x "$MX" --y "$MY" --z "$MZ" --roll "$MR" --pitch "$MP" --yaw "$MYAW" \
         --frame-id "$PARENT" --child-frame-id "$FRAME" \

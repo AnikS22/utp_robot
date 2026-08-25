@@ -6,3 +6,21 @@ ros2_ws/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# symlink into the private sim repo (see config/pipeline/README.md)
+config/missions
+.last_address
+captures/
+calib/pairs/
+
+# Map DATA, not map configuration. The .pgm/.yaml pairs and the RViz configs are committed --
+# they are small, they are what Nav2 loads, and they are worth reviewing in a diff. These are not:
+#   *.posegraph / *.data  slam_toolbox's serialised pose graph, 7-13 MB of binary per map. Only
+#                         useful for RESUMING a mapping session on the machine that made it.
+#   *_visual/frames/      6-25 MB of recorded frames per run, regenerable from a drive.
+# This repo is PUBLIC; 73 MB of binary from one evening's driving does not belong in its history.
+maps/*.posegraph
+maps/*.data
+# Any recorded-frame dump, whatever the run is called. NOTE: gitignore has no inline
+# comments -- a trailing '# ...' becomes part of the pattern and silently matches nothing.
+maps/*/frames/

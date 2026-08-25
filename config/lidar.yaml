@@ -16,11 +16,32 @@ legacy_scan: true
 angle_compensate: true
 
 # base_link -> lidar_link. x forward, y left, z up; radians.
-# STATUS: design values, UNMEASURED on the real robot.
+#
+# STATUS: x,y DERIVED FROM CAD 2026-08-25 and cross-validated; z NEEDS A TAPE CHECK.
+#
+# Source: Downloads/Ranger_mini_Xarm6_custom_box.stp (STEP AP214, 67 assembly placements).
+# The CAD frame is not the ROS frame: CAD +X -> ROS -X, CAD +Y -> ROS +Z (up), CAD +Z -> ROS +Y.
+# That mapping is not assumed, it is CHECKED: applying it to the D435f in the same assembly
+# reproduces the independently MEASURED camera pose in calib/handeye.json to 7 mm in x and 2.6 mm
+# in y. Two sensors, one transform, two independent measurements agreeing -- that is what makes
+# these numbers trustworthy where the old ones were a guess copied from the sim repo.
+#
+# The vertical datum: the CAD point cloud bottoms out at -344 mm, i.e. the CAD origin lies on the
+# chassis deck, matching the 0.345 m deck height in docs/CALIBRATION.md. So ROS z = CAD y + 0.345.
+#
+# WHAT THE OLD VALUES COST: x was 68 mm short. A lidar offset error is a LEVER ARM -- it barely
+# shows while driving straight and swings every return during rotation, which is precisely when
+# mapping was observed to lose its pose. z was out by ~0.30 m, which is why self-hits arrive at
+# 0.16-0.19 m: the scan plane is ABOVE the deck and sees the arm riser, battery and mast, not the
+# chassis body. Nav2's costmap obstacle-height reasoning depends on this being right.
+#
+# z CAVEAT: 0.379 is the STEP part origin of the A1M8 kit, which is not necessarily the scan
+# plane; the kit is ~70 mm tall. Treat as +-0.07 m until measured with a tape. x and y are
+# unaffected by that uncertainty.
 mount:
-  x_m: 0.25
-  y_m: 0.0
-  z_m: 0.08
+  x_m: 0.318
+  y_m: -0.013
+  z_m: 0.379
   roll_rad: 0.0
   pitch_rad: 0.0
   yaw_rad: 0.0

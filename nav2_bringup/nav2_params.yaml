@@ -1,0 +1,395 @@
+# =============================================================================
+# Nav2 params — AgileX Ranger Mini 3 base (M1.2)  |  ROS2 Jazzy / Nav2 1.3.x
+# =============================================================================
+# Built to docs/integration_contract.md:
+#   frames : map -> odom -> base_link   (map->odom TF comes from Isaac, NOT AMCL:
+#            /scene/state reports "localized":true, so we run NO localizer here)
+#   inputs : /scan (sensor_msgs/LaserScan, RTX 2D lidar), /odom, /tf, /tf_static
+#   output : /cmd_vel (geometry_msgs/Twist — UNSTAMPED, see enable_stamped_cmd_vel)
+#   action : /navigate_to_pose (NavigateToPose)
+#
+# Robot: 0.72 m (x, length) x 0.50 m (y, width) rectangular footprint, 4WS base
+# (spin / traverse / diagonal / ackermann). Nav2 emits Twist; the 4WS mode
+# controller inside Isaac (utp/control/ranger_4ws.py) maps cmd_vel -> per-wheel
+# (steer, speed). We therefore keep a Twist-friendly, forward+yaw controller
+# (Regulated Pure Pursuit) and let the base's spin mode satisfy in-place turns.
+#
+# NON-DEFAULT params are tagged  [NONDEFAULT]  with rationale; see README.md.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Map server — serves the static occupancy grid (default = placeholder; the
+# scene assembler exports real maps to runs/maps/<scene>.yaml).
+# -----------------------------------------------------------------------------
+map_server:
+  ros__parameters:
+    use_sim_time: false               # [HARDWARE] wall clock; CLAUDE.md forbids sim time on real hardware
+    yaml_filename: ""                 # injected by the launch file (map arg)
+    topic_name: "map"
+    frame_id: "map"
+
+# -----------------------------------------------------------------------------
+# Planner server — global path. NavfnPlanner: robust, costmap-based, no extra
+# tuning; works for a ~circumscribed-radius robot in 1 m corridors. (Swap to
+# nav2_smac_planner::SmacPlanner2D if smoother feasible paths are wanted — see
+# README; NavfnPlanner chosen to minimize plugin/config surface.)
+# -----------------------------------------------------------------------------
+planner_server:
+  ros__parameters:
+    use_sim_time: false               # [HARDWARE] wall clock; CLAUDE.md forbids sim time on real hardware
+    expected_planner_frequency: 1.0   # [NONDEFAULT] static map, replan ~1 Hz is plenty
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner::NavfnPlanner"
+      tolerance: 0.30                 # [NONDEFAULT] accept a goal up to 0.3 m off if the exact cell is in inflation
+      # DIAGNOSED (2026-07-27), NOT yet fixed: room goals sit within the 0.45 m inflation radius of
+      # walls (~76 occupied cells within 0.45 m of the goal), so the planner fails ("Failed to create
+      # plan with tolerance 0.3") on wall-hugging goals — this silently depresses navigability across
+      # the campaign. TRIED loosening tolerance to 0.60 + xy_goal_tolerance to 0.45: it REGRESSED
+      # navigation (RegulatedPurePursuit rotate-to-heading oscillated in place, no linear motion, on
+      # M0_open/M1_door that previously PASSED). Reverted. The real fix is controller/inflation tuning
+      # (e.g. lower inflation_radius toward the inscribed radius, or place goals at footprint-fittable
+      # cells), validated live — NOT a goal-tolerance bump. Left for a focused nav-tuning pass.
+      use_astar: true                 # [NONDEFAULT] A* gives straighter paths than Dijkstra in corridors
+      allow_unknown: true
+
+# -----------------------------------------------------------------------------
+# Controller server — local trajectory. Regulated Pure Pursuit (RPP).
+# Emits forward (vx) + yaw (wz). use_rotate_to_heading exploits the Ranger's
+# spin mode to turn in place; the base's traverse/diagonal modes are reachable
+# by Isaac's 4WS controller from the same Twist where geometry allows.
+# -----------------------------------------------------------------------------
+controller_server:
+  ros__parameters:
+    use_sim_time: false               # [HARDWARE] wall clock; CLAUDE.md forbids sim time on real hardware
+    controller_frequency: 20.0
+    enable_stamped_cmd_vel: false     # [NONDEFAULT] contract: /cmd_vel is geometry_msgs/Twist (unstamped); Jazzy defaults to TwistStamped
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    progress_checker_plugins: ["progress_checker"]
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.5
+      movement_time_allowance: 10.0
+
+    general_goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      stateful: true
+      xy_goal_tolerance: 0.25         # [NONDEFAULT] tightened for doorway/elevator precision
+      yaw_goal_tolerance: 0.25        # (reverted from a 0.45/0.50 experiment that oscillated — see planner tolerance note)
+
+    FollowPath:
+      # MPPI (Model Predictive Path Integral) — replaces RegulatedPurePursuit, which balked at the
+      # 1.2 m doorways (stalled ~1 m short of in-room goals: rotate-to-heading + collision-caution).
+      # MPPI samples full trajectories and commits THROUGH passable tight openings. Omni motion model
+      # exploits the Ranger 4WS strafe to center itself in a doorway; consider_footprint uses the real
+      # rectangular footprint so it threads gaps a circular check would reject. Real-world-valid (a
+      # production Nav2 controller used exactly for indoor doorway transit).
+      plugin: "nav2_mppi_controller::MPPIController"
+      time_steps: 56
+      model_dt: 0.05                  # == 1/controller_frequency (20 Hz)
+      batch_size: 2000
+      vx_std: 0.2
+      vy_std: 0.2
+      wz_std: 0.4
+      vx_max: 0.5                     # indoor cruise (Ranger cap 1.5 m/s)
+      vx_min: -0.35                   # allow modest reversing to back out + re-approach a tight door
+      vy_max: 0.5                     # 4WS strafe (Omni)
+      wz_max: 1.5
+      ax_max: 2.5                     # gentle accels — high-CoM xArm6 base must not be jerked
+      ax_min: -2.5
+      ay_max: 2.5
+      az_max: 3.0
+      iteration_count: 1
+      prune_distance: 1.7
+      transform_tolerance: 0.2        # DDS bridge jitter
+      temperature: 0.3
+      gamma: 0.015
+      motion_model: "Omni"           # Ranger 4WS: vx, vy, wz (strafe to center in doorways)
+      visualize: false
+      regenerate_noises: false
+      AckermannConstraints:
+        min_turning_r: 0.0
+      critics: ["ConstraintCritic", "CostCritic", "GoalCritic", "GoalAngleCritic", "PathAlignCritic", "PathFollowCritic", "PathAngleCritic", "PreferForwardCritic"]
+      ConstraintCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+      GoalCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 1.4
+      GoalAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.0
+        threshold_to_consider: 0.5
+      PreferForwardCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 0.5
+      CostCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.81
+        critical_cost: 300.0
+        consider_footprint: true      # thread tight doorways with the real rectangular footprint
+        collision_cost: 1000000.0
+        near_goal_distance: 1.0
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 14.0
+        max_path_occupancy_ratio: 0.05
+        trajectory_point_step: 4
+        threshold_to_consider: 0.5
+        offset_from_furthest: 20
+        use_path_orientations: false
+      PathFollowCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        offset_from_furthest: 5
+        threshold_to_consider: 1.4
+      PathAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 2.0
+        offset_from_furthest: 4
+        threshold_to_consider: 0.5
+        max_angle_to_furthest: 1.0
+        mode: 0
+
+# -----------------------------------------------------------------------------
+# Behavior (recovery) server — spin / backup / drive-on-heading / wait.
+# -----------------------------------------------------------------------------
+behavior_server:
+  ros__parameters:
+    use_sim_time: false               # [HARDWARE] wall clock; CLAUDE.md forbids sim time on real hardware
+    local_costmap_topic: local_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_costmap_topic: global_costmap/costmap_raw
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    # NO "spin": this 4WS robot has a high CoM (xArm6 on top) and cannot rotate in place stably —
+    # Nav2's spin RECOVERY (triggered when stuck at a closed door) flipped it over (roll 172 deg).
+    # backup/drive_on_heading/wait are stable; ackermann driving already avoids in-place spins.
+    behavior_plugins: ["backup", "drive_on_heading", "wait"]
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors::DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_link
+    transform_tolerance: 0.2
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 1.0
+    min_rotational_vel: 0.4
+    rotational_acc_lim: 1.5           # [NONDEFAULT] gentled from 3.2 — recovery turns must not tip the base
+    enable_stamped_cmd_vel: false     # [NONDEFAULT] match the Twist contract
+
+# -----------------------------------------------------------------------------
+# Behavior-Tree navigator — exposes /navigate_to_pose + /navigate_through_poses.
+# -----------------------------------------------------------------------------
+bt_navigator:
+  ros__parameters:
+    use_sim_time: false               # [HARDWARE] wall clock; CLAUDE.md forbids sim time on real hardware
+    global_frame: map
+    robot_base_frame: base_link
+    odom_topic: /odom
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    wait_for_service_timeout: 1000
+    navigators: ["navigate_to_pose", "navigate_through_poses"]
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+    navigate_through_poses:
+      plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
+    # NO-SPIN trees: the installed defaults' recovery RoundRobin calls the spin behavior, but this
+    # high-CoM 4WS base has spin removed from behavior_plugins (it flipped the robot). These copies
+    # drop the <Spin> node so the BT loads + recovery uses clear-costmaps/wait/backup only.
+    default_nav_to_pose_bt_xml: "/home/minghanwei/Desktop/Unlocking_the_path/nav2_bringup/behavior_trees/navigate_to_pose_no_spin.xml"
+    default_nav_through_poses_bt_xml: "/home/minghanwei/Desktop/Unlocking_the_path/nav2_bringup/behavior_trees/navigate_through_poses_no_spin.xml"
+    error_code_names:
+      - compute_path_error_code
+      - follow_path_error_code
+
+# -----------------------------------------------------------------------------
+# GLOBAL costmap — planning. Static (map) + obstacle (/scan) + inflation.
+# -----------------------------------------------------------------------------
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: false               # [HARDWARE] wall clock; CLAUDE.md forbids sim time on real hardware
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_link
+      transform_tolerance: 0.2        # [NONDEFAULT] DDS bridge jitter
+      track_unknown_space: true
+      # Rectangular footprint, base_link at center: length 0.72 (x), width 0.50 (y)
+      footprint: "[[0.36, 0.25], [0.36, -0.25], [-0.36, -0.25], [-0.36, 0.25]]"  # [NONDEFAULT]
+      footprint_padding: 0.03         # [NONDEFAULT] small safety pad around the body
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan_filtered       # rear chassis sector removed; raw /scan is diagnostic only
+          sensor_frame: lidar_link    # [NONDEFAULT] per integration contract TF tree
+          data_type: "LaserScan"
+          # [NONDEFAULT] MULTI-FLOOR z-BAND. Nav2's ObservationBuffer discards scan points whose z
+          # (in the costmap's GLOBAL frame) falls outside [min_obstacle_height, max_obstacle_height].
+          # The GT map->odom publisher preserves the true world z, so in the GLOBAL costmap (frame
+          # "map") base_link sits at the robot's real floor height: F0 z~0.0, F1 z~3.32, F2 z~6.3,
+          # and the lidar plane ~0.08 m above that. With the old band [0.0, 2.0], EVERY scan point on
+          # F1/F2 was silently dropped (measured: 0 of 326 points survived on F1) -> the obstacle
+          # layer never marked AND never cleared, freezing whatever stale cells it captured during
+          # startup (measured: bit-identical layer, 400 stale lethal cells, across 20 s of sim time).
+          # Those stale cells closed open doorways in the global costmap, so NavFn returned no path
+          # and nav reported a FALSE `blocked` on an open door (docs/NAV_PROBLEM_DIAGNOSIS.md P5).
+          # The band must span every floor the robot can stand on. This is not scene tuning: the scan
+          # is a single planar sweep at the robot's own height, so it can only ever see the floor the
+          # robot is on -- widening the band cannot import another floor's geometry.
+          min_obstacle_height: -0.5     # [NONDEFAULT] below F0 floor, tolerates odom z drift
+          max_obstacle_height: 8.0      # [NONDEFAULT] above F2 (z~6.3) + lidar height + headroom
+          clearing: true
+          marking: true
+          obstacle_max_range: 8.0
+          obstacle_min_range: 0.0
+          raytrace_max_range: 10.0
+          raytrace_min_range: 0.0
+          inf_is_valid: false
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0      # [NONDEFAULT] gentle decay -> doorways stay passable
+        inflation_radius: 0.30        # [NONDEFAULT] footprint-derived, NOT scene tuning. 0.45 m exceeded half of a real
+        # ~0.75-0.80 m doorway, so inflation from BOTH jambs overlapped and closed the doorway, and in-room goals landed
+        # inside inflation -> unplannable. 0.30 m sits just above inscribed radius (0.255) + footprint_padding (0.03), so
+        # the robot can plan through any doorway it physically fits while keeping obstacle clearance. This is the robot's
+        # physical clearance requirement and transfers directly to the real robot.
+      always_send_full_costmap: true
+
+# -----------------------------------------------------------------------------
+# LOCAL costmap — control. Rolling window, obstacle (/scan) + inflation.
+# -----------------------------------------------------------------------------
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: false               # [HARDWARE] wall clock; CLAUDE.md forbids sim time on real hardware
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_link
+      transform_tolerance: 0.2        # [NONDEFAULT]
+      rolling_window: true
+      width: 4                        # [NONDEFAULT] 4 m window — enough for 1 m corridors, cheap
+      height: 4
+      resolution: 0.05
+      footprint: "[[0.36, 0.25], [0.36, -0.25], [-0.36, -0.25], [-0.36, 0.25]]"  # [NONDEFAULT]
+      footprint_padding: 0.03         # [NONDEFAULT]
+      plugins: ["obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan_filtered       # rear chassis sector removed
+          sensor_frame: lidar_link    # [NONDEFAULT]
+          data_type: "LaserScan"
+          # [NONDEFAULT] MULTI-FLOOR z-BAND. Nav2's ObservationBuffer discards scan points whose z
+          # (in the costmap's GLOBAL frame) falls outside [min_obstacle_height, max_obstacle_height].
+          # The GT map->odom publisher preserves the true world z, so in the GLOBAL costmap (frame
+          # "map") base_link sits at the robot's real floor height: F0 z~0.0, F1 z~3.32, F2 z~6.3,
+          # and the lidar plane ~0.08 m above that. With the old band [0.0, 2.0], EVERY scan point on
+          # F1/F2 was silently dropped (measured: 0 of 326 points survived on F1) -> the obstacle
+          # layer never marked AND never cleared, freezing whatever stale cells it captured during
+          # startup (measured: bit-identical layer, 400 stale lethal cells, across 20 s of sim time).
+          # Those stale cells closed open doorways in the global costmap, so NavFn returned no path
+          # and nav reported a FALSE `blocked` on an open door (docs/NAV_PROBLEM_DIAGNOSIS.md P5).
+          # The band must span every floor the robot can stand on. This is not scene tuning: the scan
+          # is a single planar sweep at the robot's own height, so it can only ever see the floor the
+          # robot is on -- widening the band cannot import another floor's geometry.
+          min_obstacle_height: -0.5     # [NONDEFAULT] below F0 floor, tolerates odom z drift
+          max_obstacle_height: 8.0      # [NONDEFAULT] above F2 (z~6.3) + lidar height + headroom
+          clearing: true
+          marking: true
+          obstacle_max_range: 8.0
+          obstacle_min_range: 0.0
+          raytrace_max_range: 10.0
+          raytrace_min_range: 0.0
+          inf_is_valid: false
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0      # [NONDEFAULT]
+        inflation_radius: 0.30        # [NONDEFAULT] footprint-derived, NOT scene tuning. 0.45 m exceeded half of a real
+        # ~0.75-0.80 m doorway, so inflation from BOTH jambs overlapped and closed the doorway, and in-room goals landed
+        # inside inflation -> unplannable. 0.30 m sits just above inscribed radius (0.255) + footprint_padding (0.03), so
+        # the robot can plan through any doorway it physically fits while keeping obstacle clearance. This is the robot's
+        # physical clearance requirement and transfers directly to the real robot.
+      always_send_full_costmap: true
+
+# ---------------------------------------------------------------------------------------------
+# AMCL -- localization against a SAVED map. ADDED for hardware.
+#
+# The simulation did not need this: `map -> odom` came from Isaac ground truth via
+# nav2_bringup/map_to_odom_publisher.py, and docs/integration_contract.md says outright
+# "no AMCL here". On the real robot nothing supplies that transform, so without AMCL a saved map
+# loads, /map publishes, and Nav2 is still completely blind -- with no error anywhere.
+#
+# Exactly ONE node may publish map -> odom. Use AMCL with a saved map (localization:=amcl), or
+# slam_toolbox in localization mode (localization:=slam), never both.
+# ---------------------------------------------------------------------------------------------
+amcl:
+  ros__parameters:
+    use_sim_time: false               # [HARDWARE]
+    base_frame_id: "base_link"        # NOT base_footprint. This stack has no such frame, and the
+                                      # stock default silently prevents any transform being published
+                                      # -- the same trap that bit slam_toolbox (config/slam.yaml).
+    odom_frame_id: "odom"
+    global_frame_id: "map"
+    scan_topic: /scan_filtered
+
+    # OmniMotionModel, not Differential: the Ranger is 4WS and genuinely produces lateral motion in
+    # PARALLEL mode, so /odom carries a non-zero vy that a differential model cannot represent and
+    # would absorb as noise.
+    robot_model_type: "nav2_amcl::OmniMotionModel"
+
+    # A1M8: 0.15-12.0 m measured. Telling AMCL a longer range than the sensor has makes it treat
+    # max-range returns as real hits.
+    laser_min_range: 0.15
+    laser_max_range: 12.0
+    max_beams: 60
+
+    min_particles: 500
+    max_particles: 2000
+    update_min_d: 0.20                # metres of travel before a filter update
+    update_min_a: 0.20                # radians
+    resample_interval: 1
+    transform_tolerance: 0.5          # generous: the A1M8 runs ~7 Hz, not the 10 it claims
+    tf_broadcast: true
+
+    # Odometry noise. The 4WS base's real values are CALIBRATION.md item 5 (odometry scale) and are
+    # UNMEASURED -- these are conservative defaults. Measure, then tighten.
+    alpha1: 0.2   # rotation noise from rotation
+    alpha2: 0.2   # rotation noise from translation
+    alpha3: 0.2   # translation noise from translation
+    alpha4: 0.2   # translation noise from rotation
+    alpha5: 0.2   # strafe noise (Omni model only)
+
+    set_initial_pose: false           # give the pose in RViz (2D Pose Estimate) or via /initialpose
+    always_reset_initial_pose: false
