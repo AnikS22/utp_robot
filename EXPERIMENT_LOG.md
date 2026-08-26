@@ -1248,3 +1248,68 @@ Calibration is still the near-only solve from 2026-08-21: `n_pairs` 10, no far b
 the plate is 35 mm. It did not bite today because this ADA plate is ~170 mm across, so 35 mm is
 comfortably inside it -- but that is the target being forgiving, not the calibration being
 validated. A smaller control will not forgive it.
+
+## 2026-08-26 — the FSM's World, on hardware; and the lidar cannot see the doors
+
+`RosWorld` implements `utp/pipeline/interfaces.py`'s `World` protocol against the real robot, so
+the SAME FSM, reasoner and grounder that run the sim campaign can run on the rover.
+`isinstance(RosWorld(), World)` is True. Verified live end to end:
+
+    rgb=(720, 1280, 3)   pose=(1.58, 0.18, 178 deg)
+    blocked=True  kind='door'  desc='closed glass double doors labeled Da Vinci Room'
+
+It read the room name off the door.
+
+### The blockage is PERCEIVED, and the classifier is restricted to describing
+
+In simulation `current_blockage()` comes from ground truth: the scene knows a door is there. There
+is no ground truth in a corridor, so `bringup/ask_blockage.py` asks the VLM.
+
+**The prompt is deliberately barred from proposing an action.** If it returned "press the button
+beside the door", the reasoning would have happened in a prompt we wrote, and `reasoning_correct`
+would measure our prompt rather than the reasoner. It reports what is in the way; the reasoner
+still chooses the action. For the same reason it does not ask "is this a door?" -- naming the
+expected answer inside the question is how you get it back. On the real frame it volunteered the
+FIRE pull station as well as the ADA plate, unprompted.
+
+Fails closed everywhere: endpoint down, unparseable JSON, missing field -> `kind=""`, still
+blocked. Never coerced to "door", because a wrong kind sends the reasoner hunting a control that
+does not exist and the trial then records a REASONING failure that was really a PERCEPTION one.
+10 tests on the parser alone.
+
+### THE LIDAR IS NOT THE BLOCKAGE DETECTOR. It was written that way and that was wrong.
+
+Measured with the robot parked in front of closed glass doors:
+
+| | |
+|---|---|
+| camera | "closed glass double doors labeled Da Vinci Room" |
+| lidar, straight ahead | nearest return **6.98 m** |
+| `corridor_blocked()` | fired on **5/73** scans — noise, not a detection |
+
+A 2D lidar sees **through** glass, and the doors in this building are glass. The claim that "the
+corridor veto IS the blockage detector, same signal Nav2 would give without a map" is true for
+opaque obstacles and false for the only door type that matters here.
+
+Left alone this does not fail loudly. It drives into a glass door at full speed while reporting
+`reached`, the FSM never reasons, never grounds, never acts, and the experiment silently becomes
+"drove into a window". This is gate **S1**, and it is the second time on this project that a
+sensor's *silence* has been mistaken for *absence*.
+
+**Fixed by inverting the authority:** the CAMERA is checked before the wheels turn; the lidar
+corridor veto stays on as a backstop for opaque things the camera misses. Two sensors, two
+failure modes, neither trusted alone.
+
+### Deliberately not implemented
+
+The three `gt_*` methods return empty. They are ground truth for benchmark scoring and there is
+no answer key for a real corridor -- so `reasoning_correct` and `grounding_iou` are **not
+scoreable on hardware**, and pretending otherwise would be the worst kind of number. Hardware
+trials are scored on what actually happened (did the door open); the answer-key metrics stay with
+the sim campaign.
+
+### Still open
+
+The stale `/home/minghanwei/...` path in `utp/pipeline/reasoning/capabilities.py` will throw on
+this machine and has to be resolved before the FSM itself runs. Also: the HPC key pasted into a
+chat transcript on 2026-08-21 has still not been rotated.

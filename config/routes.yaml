@@ -1,0 +1,30 @@
+# Missions: waypoints in order, with visual actions where something must be touched.
+#
+# Waypoints come from `bringup/waypoints.py record <name>` and live in maps/waypoints.yaml.
+# They are in the ODOM frame, so they are only valid within one continuous run of the ranger
+# driver -- restarting it re-zeros odom and silently invalidates every one of them.
+#
+# Step kinds:
+#   goto: <waypoint>     drive there on odometry; the lidar vetoes a blocked corridor
+#   action: <name>       run a visual action (see ACTIONS in bringup/route_run.py)
+#     query: "..."       optional: what the grounder should look for
+#     standoff: 60       optional: mm, measured to the flange marker
+#   wait: <seconds>      hold position
+#
+# Waypoints are APPROXIMATE and that is fine: a leg only has to park the robot with the target in
+# the camera frame. The grounder and the visual servo close the rest, to 3 mm measured.
+
+routes:
+  # The 2026-08-25 scene: drive to the atrium door, press the ADA plate, wait for it, go through.
+  atrium_door:
+    - goto: door_approach
+    - action: press_button
+      query: "the accessible door push button"
+      standoff: 60
+    - wait: 6
+    - goto: through_door
+
+  # Smallest useful thing: drive one leg and stop. Use this to check a waypoint before
+  # trusting it in a longer route.
+  one_leg:
+    - goto: door_approach

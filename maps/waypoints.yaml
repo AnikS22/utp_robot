@@ -1,6 +1,11 @@
 # Waypoints in the ODOM frame. Only meaningful within one continuous run of the ranger
 # driver: restarting it re-zeros odom and silently invalidates every entry here.
 # The 'odom_epoch' field is how you tell. See bringup/waypoints.py.
+door_approach:
+  odom_epoch: 1787751687
+  x: -1.0943
+  y: -1.7706
+  yaw: 1.4768
 here:
   odom_epoch: 1787698872
   x: -4.1214
