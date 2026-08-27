@@ -1,7 +1,7 @@
 """Each test names the failure it prevents. A route is a list of names; a typo in one of them
 is invisible until the robot has driven six legs and refuses the seventh."""
 import pytest
-from safety.route_plan import (ACTION, GOTO, MAX_WAIT_S, RouteState, Step, WAIT,
+from safety.route_plan import (ACTION, CHECK, GOTO, MAX_WAIT_S, RouteState, Step, WAIT,
                                parse_route, validate_route)
 
 WPS = {"start", "door_approach", "through_door"}
@@ -92,3 +92,57 @@ def test_progress_is_human_readable_at_each_stage():
     assert "step 2/2" in st.progress() and "press_button" in st.progress()
     st.advance()
     assert st.progress() == "complete (2/2)"
+
+
+def test_check_step_parses_and_describes():
+    steps = parse_route([{"check": "blockage", "if_blocked": "press_and_pass"}])
+    assert steps[0].kind == CHECK and steps[0].name == "blockage"
+    assert "press_and_pass" in steps[0].describe()
+
+
+def test_check_validates_its_branch_with_the_same_sets():
+    """A typo INSIDE the branch must surface before the robot is parked at a closed door."""
+    main = parse_route([{"goto": "doors"}, {"check": "blockage", "if_blocked": "fix_it"}])
+    branch = parse_route([{"goto": "buton"}, {"action": "press_button"}])   # typo on purpose
+    errs = validate_route(main, {"doors", "button"}, {"press_button"}, {"fix_it": branch})
+    assert len(errs) == 1 and "buton" in errs[0] and "inside 'fix_it'" in errs[0]
+
+
+def test_check_without_branch_or_with_unknown_branch_is_an_error():
+    wps, acts = {"doors"}, {"press_button"}
+    errs = validate_route(parse_route([{"check": "blockage"}]), wps, acts, {})
+    assert any("if_blocked" in e for e in errs)
+    errs = validate_route(parse_route([{"check": "blockage", "if_blocked": "nope"}]),
+                          wps, acts, {"other": []})
+    assert any("nope" in e and "not found" in e for e in errs)
+
+
+def test_check_branch_may_not_itself_contain_a_check():
+    main = parse_route([{"check": "blockage", "if_blocked": "b"}])
+    nested = parse_route([{"check": "blockage", "if_blocked": "c"}])
+    errs = validate_route(main, set(), set(), {"b": nested})
+    assert any("One level" in e for e in errs)
+
+
+def test_unknown_check_name_is_an_error():
+    errs = validate_route(parse_route([{"check": "weather", "if_blocked": "b"}]),
+                          set(), set(), {"b": parse_route([{"wait": 1}])})
+    assert any("unknown check 'weather'" in e for e in errs)
+
+
+def test_splice_inserts_branch_after_current_and_walks_into_it():
+    """blocked at the check -> the branch becomes part of THIS route, then the tail resumes."""
+    st = RouteState(parse_route([{"goto": "doors"},
+                                 {"check": "blockage", "if_blocked": "p"},
+                                 {"goto": "outside"}]))
+    st.advance()                                    # now sitting on the check
+    branch = parse_route([{"goto": "button"}, {"action": "press_button"}, {"wait": 6}])
+    st.splice(branch)
+    st.advance()                                    # past the check, into the branch
+    walked = []
+    while not st.done:
+        walked.append((st.current.kind, st.current.name))
+        st.advance()
+    assert walked == [(GOTO, "button"), (ACTION, "press_button"), ("wait", ""),
+                      (GOTO, "outside")]
+    assert st.progress() == "complete (6/6)"

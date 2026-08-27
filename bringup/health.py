@@ -174,6 +174,46 @@ n.destroy_node(); rclpy.shutdown()
                 CRITICAL if want == "odom>base_link" else INFO)
 
 
+
+# Topics that must have EXACTLY ONE publisher, and what a second one does.
+SINGLE_PUBLISHER = {
+    "/odom":     "two ranger_base drivers -> readers get a BLEND of two odom frames",
+    "/scan":     "two rplidar drivers -> they split the serial stream between them",
+    "/cmd_vel":  "something is bypassing the safety mux",
+}
+
+
+def check_duplicates(rep):
+    """Exactly one publisher per critical topic.
+
+    THE FAILURE THIS CATCHES, which cost most of 2026-08-26. Two ranger_base_node processes were
+    running -- orphans left by restarts whose `ros2 launch` parent was killed but whose node
+    survived. Both published /odom. Subscribers got an interleaved blend of two odometry frames,
+    so the robot's pose jumped between them every few messages, a heading controller chased the
+    jumps, and the wheels thrashed without the base moving.
+
+    Nothing errored. Both drivers were healthy. `ros2 topic hz /odom` looked perfect -- BETTER
+    than perfect, because it was counting two publishers. The only visible signature is the
+    publisher COUNT, which nothing was checking. Two symptom-level bugs were found and fixed
+    before anyone looked at it.
+    """
+    for topic, why in SINGLE_PUBLISHER.items():
+        try:
+            r = subprocess.run(["ros2", "topic", "info", topic],
+                               capture_output=True, text=True, timeout=12)
+            line = next((l for l in r.stdout.splitlines() if "Publisher count" in l), "")
+            n = int(line.split(":")[1]) if line else -1
+        except Exception:
+            rep.add(f"publishers {topic}", False, "could not query", WARN)
+            continue
+        if n == 1:
+            rep.add(f"publishers {topic}", True, "1")
+        elif n == 0:
+            rep.add(f"publishers {topic}", False, "0 - nothing publishing", WARN)
+        else:
+            rep.add(f"publishers {topic}", False, f"{n} PUBLISHERS - {why}", CRITICAL)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -190,6 +230,7 @@ def main() -> int:
         if not a.skip_arm:
             check_arm(rep)
         check_topics(rep)
+        check_duplicates(rep)
         bad = rep.render()
         print(f"\n  {'ALL CRITICAL CHECKS PASS' if bad == 0 else f'{bad} CRITICAL FAILURE(S)'}")
         if not a.watch:

@@ -42,13 +42,13 @@ done
 CAP="$REPO/captures/$NAME"
 
 echo "=============================================================="
-echo " 1/4  LOOK      capturing an aligned RGB-D frame"
+echo " 1/6  LOOK      capturing an aligned RGB-D frame"
 echo "=============================================================="
 python3 "$REPO/bringup/grab_frame.py" --name "$NAME" --timeout 45
 
 echo
 echo "=============================================================="
-echo " 2/4  GROUND    running the shipped detector on that frame"
+echo " 2/6  GROUND    running the shipped detector on that frame"
 echo "=============================================================="
 [ -x "$VENV" ] || { echo "pipeline venv not found at $VENV" >&2; exit 1; }
 if [ -n "$QUERY" ]; then
@@ -66,7 +66,7 @@ fi
 
 echo
 echo "=============================================================="
-echo " 3/4  SHOW      opening what the detector chose"
+echo " 3/6  SHOW      opening what the detector chose"
 echo "=============================================================="
 echo "  $CAP/detection.png   (green = chosen, orange = runners-up)"
 if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
@@ -78,10 +78,40 @@ fi
 
 echo
 echo "=============================================================="
-echo " 4/4  REACH     $STANDOFF mm marker standoff, then retreat"
+echo " 4/6  READY     wrist to the press orientation"
+echo "=============================================================="
+# Stow and press are different orientations: stow folds the wrist to J5=90 so the tool points up
+# out of the way; a press needs it pointing AT the wall (J5 ~ 2.5). approach_target.py holds
+# whatever orientation the arm starts in, so approaching straight out of stow reaches at the stow
+# angle and skids off a round button. The ready pose is the OPERATOR'S, captured with
+# `stow_arm.py --save-ready`, not a number invented here.
+if [ "$MODE" = "--go" ]; then
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --ready --go || {
+        echo "could not reach the press-ready pose; not approaching" >&2; exit 5; }
+else
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --ready || true
+fi
+
+echo
+echo "=============================================================="
+echo " 5/6  REACH     $STANDOFF mm marker standoff, then retreat"
 echo "=============================================================="
 python3 "$REPO/bringup/approach_target.py" --capture "$CAP" $MODE \
         --min-standoff "$STANDOFF" $EXTRA
+
+if [ -z "$EXTRA" ]; then
+    echo
+    echo "=============================================================="
+    echo " 6/6  STOW      folding the arm so the base may move again"
+    echo "=============================================================="
+    # NOT optional in a route. approach_target.py retreats to its START pose -- wherever the arm
+    # happened to be -- not to stow. config/safety.yaml gates ALL base motion on measured joint
+    # angles, so without this the very next leg is refused with blocked_by="arm_not_stowed", and
+    # the failure looks like a navigation problem immediately after a SUCCESSFUL press.
+    # Skipped under --hold, where staying extended is the entire point.
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go || {
+        echo "STOW FAILED -- the base will refuse to move. Fix before driving." >&2; exit 4; }
+fi
 
 echo
 echo "done. frame + detection kept in $CAP"

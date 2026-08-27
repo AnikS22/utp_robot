@@ -28,6 +28,7 @@ every arrival as approximate until the camera confirms it.
 from __future__ import annotations
 
 import argparse
+import os
 import math
 import sys
 import time
@@ -51,7 +52,10 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 from safety.waypoint_drive import Limits, corridor_blocked, plan_step, to_goal, wrap  # noqa: E402
 
-STORE = REPO / "maps" / "waypoints.yaml"
+# UTP_WAYPOINTS: alternate store, so a SIM run (domain 42) can never read or clobber the
+# hardware waypoints -- sim poses in the real building would drive the robot into a wall.
+STORE = Path(os.environ.get("UTP_WAYPOINTS", "")) if os.environ.get("UTP_WAYPOINTS") \
+    else REPO / "maps" / "waypoints.yaml"
 CMD_TOPIC = "/cmd_vel_teleop"
 RATE_HZ = 20.0
 ODOM_STALE_S = 0.5
@@ -143,6 +147,45 @@ def cmd_where(n: Pose, a) -> int:
     return 0
 
 
+def cmd_rebase(n: Pose, a) -> int:
+    """Re-express every waypoint in a NEW odom frame, given where the robot was in the OLD one.
+
+    WHY THIS EXISTS. Waypoints live in the odom frame and `ranger_base` zeroes odom every time it
+    starts. It has restarted twice on 2026-08-26 -- once from a crash when the CAN adapter
+    re-enumerated, once for a driver rebuild -- and each time every recorded waypoint silently
+    became wrong. Re-driving the whole route to re-record is a twenty-minute tax on a five-second
+    event.
+
+    It is recoverable because the robot does not MOVE across a driver restart. The new origin is
+    the robot's current physical position, so if you note its pose in the old frame first, the two
+    frames differ by exactly that rigid transform. Apply the inverse and the waypoints are valid
+    again -- same places, new numbers.
+
+    THE ONE RULE: read the old pose while the OLD driver is still running, and do not move the
+    robot in between. If it rolls even slightly, every waypoint inherits that error silently.
+    """
+    ox, oy, oyaw = a.from_x, a.from_y, math.radians(a.from_yaw_deg)
+    d = load()
+    if not d:
+        print("no waypoints to rebase", file=sys.stderr)
+        return 1
+    c, s_ = math.cos(oyaw), math.sin(oyaw)
+    out = {}
+    for k, v in d.items():
+        dx, dy = v["x"] - ox, v["y"] - oy
+        out[k] = {"x": round(dx*c + dy*s_, 4),
+                  "y": round(-dx*s_ + dy*c, 4),
+                  "yaw": round(wrap(v["yaw"] - oyaw), 4)}
+        print(f"  {k:<18} ({v['x']:+7.3f},{v['y']:+7.3f},{math.degrees(v['yaw']):+7.1f}) -> "
+              f"({out[k]['x']:+7.3f},{out[k]['y']:+7.3f},{math.degrees(out[k]['yaw']):+7.1f})")
+    if not a.go:
+        print("\nDRY RUN. Add --go to write.")
+        return 0
+    save(out)
+    print(f"\nrebased {len(out)} waypoints -> {STORE}")
+    return 0
+
+
 def cmd_goto(n: Pose, a) -> int:
     d = load()
     if a.name not in d:
@@ -179,7 +222,8 @@ def cmd_goto(n: Pose, a) -> int:
             if n.scan is not None:
                 blocked = corridor_blocked(n.scan.ranges, n.scan.angle_min,
                                            n.scan.angle_increment)
-            step = plan_step(dist, bear, wrap(goal["yaw"] - th), blocked, lim)
+            step = plan_step(dist, bear, wrap(goal["yaw"] - th), blocked, lim,
+                             prev_state=last_state or "")
             t = Twist(); t.linear.x = step.twist.vx; t.angular.z = step.twist.wz
             pub.publish(t)
             if step.state != last_state:
@@ -201,6 +245,61 @@ def cmd_goto(n: Pose, a) -> int:
     return 0
 
 
+def cmd_derive(n: Pose, a) -> int:
+    """A waypoint at an EXISTING one's spot, turned to face ANOTHER one. No driving, no /odom.
+
+    Why this exists: the pose for LOOKING at the doors and the pose for PRESSING the plate are
+    the same floor spot with different headings (measured 2026-08-26: 'button' is at the doors,
+    yawed ~99 deg off the direction of travel to face the plate's wall). Recording both means
+    piloting to the same spot twice; deriving one from the other cannot disagree about position.
+    """
+    d = load()
+    missing = [k for k in (a.at, a.facing) if k not in d]
+    if missing:
+        print(f"unknown waypoint(s) {missing}; known: {sorted(d)}", file=sys.stderr)
+        return 1
+    src, tgt = d[a.at], d[a.facing]
+    dx, dy = tgt["x"] - src["x"], tgt["y"] - src["y"]
+    if math.hypot(dx, dy) < 0.30:
+        print(f"'{a.at}' and '{a.facing}' are {math.hypot(dx, dy):.2f} m apart -- too close to "
+              f"define a heading. Pick a farther 'facing' waypoint.", file=sys.stderr)
+        return 1
+    yaw = math.atan2(dy, dx)
+    d[a.name] = {"x": src["x"], "y": src["y"], "yaw": round(yaw, 4),
+                 "odom_epoch": src.get("odom_epoch", 0)}
+    save(d)
+    print(f"derived '{a.name}': at '{a.at}' (x={src['x']:+.3f} y={src['y']:+.3f}), "
+          f"facing '{a.facing}' -> yaw={math.degrees(yaw):+.1f} deg")
+    print(f"  -> {STORE}")
+    return 0
+
+
+def cmd_project(n: Pose, a) -> int:
+    """A waypoint N metres straight ahead of an existing one, same heading. No driving.
+
+    For a destination the robot cannot be piloted to before the run -- e.g. 'outside' when the
+    doors are closed and only the autonomous run will open them. The leg to it is dead
+    reckoning through unseen space, so it stays short and the corridor veto stays on.
+    """
+    d = load()
+    if a.src not in d:
+        print(f"unknown waypoint '{a.src}'; known: {sorted(d)}", file=sys.stderr)
+        return 1
+    if not (0.3 <= a.forward <= 6.0):
+        print(f"--forward {a.forward} m is outside 0.3..6.0 -- a projected goal is a guess, "
+              f"and a long guess through unseen space is not a plan.", file=sys.stderr)
+        return 1
+    src = d[a.src]
+    d[a.name] = {"x": round(src["x"] + a.forward * math.cos(src["yaw"]), 4),
+                 "y": round(src["y"] + a.forward * math.sin(src["yaw"]), 4),
+                 "yaw": src["yaw"], "odom_epoch": src.get("odom_epoch", 0)}
+    save(d)
+    v = d[a.name]
+    print(f"projected '{a.name}': {a.forward:.2f} m ahead of '{a.src}' -> "
+          f"x={v['x']:+.3f} y={v['y']:+.3f} yaw={math.degrees(v['yaw']):+.1f} deg")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -208,6 +307,22 @@ def main() -> int:
     r = sub.add_parser("record"); r.add_argument("name"); r.set_defaults(fn=cmd_record)
     sub.add_parser("list").set_defaults(fn=cmd_list)
     sub.add_parser("where").set_defaults(fn=cmd_where)
+    rb = sub.add_parser("rebase", help="re-express waypoints after a ranger_base restart")
+    rb.add_argument("--from-x", type=float, required=True,
+                    help="robot x in the OLD odom frame, read before the restart")
+    rb.add_argument("--from-y", type=float, required=True)
+    rb.add_argument("--from-yaw-deg", type=float, required=True)
+    rb.add_argument("--go", action="store_true")
+    rb.set_defaults(fn=cmd_rebase)
+    dv = sub.add_parser("derive", help="new waypoint at one waypoint's spot, facing another")
+    dv.add_argument("name", help="name for the derived waypoint, e.g. doors")
+    dv.add_argument("--at", required=True, help="take x,y from this waypoint")
+    dv.add_argument("--facing", required=True, help="point the heading at this waypoint")
+    dv.set_defaults(fn=cmd_derive)
+    pj = sub.add_parser("project", help="new waypoint N metres straight ahead of another")
+    pj.add_argument("name"); pj.add_argument("--from", dest="src", required=True)
+    pj.add_argument("--forward", type=float, required=True, help="metres ahead, 0.3..6.0")
+    pj.set_defaults(fn=cmd_project)
     g = sub.add_parser("goto"); g.add_argument("name")
     g.add_argument("--go", action="store_true", help="actually move the robot")
     g.add_argument("--timeout", type=float, default=120.0)

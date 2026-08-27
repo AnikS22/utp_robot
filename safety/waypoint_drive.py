@@ -42,6 +42,14 @@ class Limits:
     v_max: float = 0.25          # m/s -- docs/MAPPING.md speed, gentle on the high CoM
     w_max: float = 0.40          # rad/s
     turn_tol_rad: float = 0.15   # ~8.6 deg: closer than this, stop turning and drive
+    # HYSTERESIS. Once a turn has started it runs until the bearing is well inside tolerance,
+    # not merely at it. Without this the controller re-plans at 20 Hz and flips between
+    # turn_to_bearing and drive around the threshold -- and on a 4WS chassis each flip is a MODE
+    # CHANGE the firmware answers by physically re-steering all four wheels (HARDWARE_SPECS: a
+    # small turn radius selects SPINNING, an arc selects DUAL_ACKERMAN). The wheels then spend
+    # their time re-orienting and the body never commits to moving. Observed on 2026-08-26 as
+    # "wheels are just rotating, robot isn't actually moving".
+    turn_exit_tol_rad: float = 0.05   # ~2.9 deg
     pos_tol_m: float = 0.15      # arrival radius; the visual servo covers the rest
     k_ang: float = 1.2
     slow_radius_m: float = 0.60  # start easing off inside this
@@ -69,25 +77,43 @@ def plan_step(dist_m: float,
               bearing_err_rad: float,
               final_heading_err_rad: float | None,
               blocked: bool,
-              limits: Limits = Limits()) -> Step:
+              limits: Limits = Limits(),
+              prev_state: str = "") -> Step:
     """One control tick. Returns the twist to publish and why.
 
     dist_m             distance to the waypoint
     bearing_err_rad    angle between where we point and where the waypoint is
     final_heading_err  desired heading at the waypoint, or None to not care
     blocked            lidar says the path ahead is obstructed
+    prev_state         the state this returned last tick, for turn hysteresis. Threading it is
+                       the caller's job so this stays a pure function of its arguments.
     """
     if not _finite(dist_m, bearing_err_rad):
         return Step(ZERO, "bad_input")
-    if blocked:
-        return Step(ZERO, "blocked")
 
-    if not (dist_m <= limits.pos_tol_m):
+    # Arrival hysteresis, same idea as the turn band: the boundary between "at the waypoint"
+    # and "not yet" must be wider to LEAVE than to enter. At dist ~= pos_tol the bearing to a
+    # point 15 cm away swings tens of degrees on millimetre drift, and without this the
+    # controller chattered turn/drive/settle ~20 cycles at the goal edge (sim, 2026-08-27).
+    settled = prev_state in ("final_heading", "arrived")
+    pos_tol = limits.pos_tol_m * (1.6 if settled else 1.0)
+
+    if not (dist_m <= pos_tol):
         # Far from the waypoint. Point at it before driving at it: a large bearing error driven
         # as an arc sweeps a wide curve through space the lidar has not cleared.
-        if not (abs(bearing_err_rad) <= limits.turn_tol_rad):
+        # Wider band to LEAVE a turn than to enter one -- see Limits.turn_exit_tol_rad.
+        tol = (limits.turn_exit_tol_rad if prev_state == "turn_to_bearing"
+               else limits.turn_tol_rad)
+        if not (abs(bearing_err_rad) <= tol):
+            # An in-place turn is permitted even when the corridor ahead is blocked: the
+            # footprint does not advance, and the goal may be BEHIND us (measured in sim
+            # 2026-08-27: robot parked 0.17 m past the waypoint, facing a closed door, could
+            # never turn around because the veto keyed on the front rays it was leaving).
             w = max(-limits.w_max, min(limits.w_max, limits.k_ang * bearing_err_rad))
             return Step(Twist3(0.0, w), "turn_to_bearing")
+        if blocked:
+            # About to move FORWARD into the obstruction -- that, the veto stops.
+            return Step(ZERO, "blocked")
         # Aimed. Ackermann arc: vx and wz together is the ONE mix the firmware keeps intact.
         v = limits.v_max
         if dist_m < limits.slow_radius_m:
@@ -99,7 +125,9 @@ def plan_step(dist_m: float,
     if final_heading_err_rad is not None:
         if not _finite(final_heading_err_rad):
             return Step(ZERO, "bad_input")
-        if not (abs(final_heading_err_rad) <= limits.turn_tol_rad):
+        ftol = (limits.turn_exit_tol_rad if prev_state == "final_heading"
+                else limits.turn_tol_rad)
+        if not (abs(final_heading_err_rad) <= ftol):
             w = max(-limits.w_max, min(limits.w_max, limits.k_ang * final_heading_err_rad))
             return Step(Twist3(0.0, w), "final_heading")
     return Step(ZERO, "arrived")

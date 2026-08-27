@@ -24,11 +24,19 @@ WHAT IT WILL NOT DO. It will not plan around an obstacle -- that needs a costmap
 localisation we just said we do not have. A blocked corridor STOPS the route and says so. Halting
 on an unexpected obstruction is a defensible behaviour; improvising a detour on a pose estimate
 we do not trust is not.
+
+THE ONE DECISION IT DOES MAKE: a `check: blockage` step captures a frame, asks the VLM what is in
+front of the robot, and if the way is blocked splices a pre-written sub-route (drive to the
+button, press it, wait) into the run. The VLM only ever chooses BETWEEN TWO REVIEWED PLANS --
+continue, or run the named branch. It never invents motion. If the VLM cannot be reached or does
+not answer cleanly, the route FAILS CLOSED and the robot holds position: acting on a guess in
+front of a glass door is the wrong way to be wrong.
 """
 from __future__ import annotations
 
 import argparse
 import math
+import os
 import subprocess
 import sys
 import time
@@ -48,21 +56,31 @@ from rclpy.node import Node  # noqa: E402
 from rclpy.qos import qos_profile_sensor_data  # noqa: E402
 from sensor_msgs.msg import LaserScan  # noqa: E402
 
-from safety.route_plan import ACTION, GOTO, WAIT, RouteState, parse_route, validate_route  # noqa: E402
+from safety.route_plan import ACTION, CHECK, GOTO, WAIT, RouteState, parse_route, validate_route  # noqa: E402
 from safety.waypoint_drive import Limits, corridor_blocked, plan_step, to_goal, wrap  # noqa: E402
 
-WAYPOINTS = REPO / "maps" / "waypoints.yaml"
+WAYPOINTS = Path(os.environ.get("UTP_WAYPOINTS", "")) if os.environ.get("UTP_WAYPOINTS") \
+    else REPO / "maps" / "waypoints.yaml"
 ROUTES = REPO / "config" / "routes.yaml"
 CMD_TOPIC = "/cmd_vel_teleop"
 RATE_HZ = 20.0
 ODOM_STALE_S = 0.5
-LEG_TIMEOUT_S = 180.0
+LEG_TIMEOUT_S = 180
+_INTERRUPT = {"v": False}   # set by the SIGINT handler in main(); read inside the leg loop.0
 
 # Actions are shell-outs on purpose: the grounder needs torch (the pipeline venv) and this node
 # needs rclpy. Different interpreters, so the boundary is a process, not an import.
 ACTIONS = {
     "press_button": [str(REPO / "bringup" / "press_run.sh")],
 }
+# UTP_SIM=1: same route, same step names, but the press goes to the Isaac trial server's
+# /arm_reach action instead of the real xArm SDK. Everything upstream of the action --
+# waypoint legs, corridor veto, blockage check, grounding -- is IDENTICAL code.
+if os.environ.get("UTP_SIM") == "1":
+    ACTIONS["press_button"] = [sys.executable, str(REPO / "sim" / "sim_press.py")]
+    # every child that captures a frame (blockage check, sim press) needs the sim's depth topic
+    os.environ.setdefault("UTP_DEPTH_TOPIC", "/mast_cam/depth/image_rect_raw")
+PIPELINE_VENV = Path.home() / "unlocking-the-path" / "env" / ".venv" / "bin" / "python"
 
 
 def yaw_of(q) -> float:
@@ -109,6 +127,9 @@ class Runner(Node):
         deadline = time.monotonic() + LEG_TIMEOUT_S
         last = None
         while rclpy.ok() and time.monotonic() < deadline:
+            if _INTERRUPT["v"]:
+                self.stop()
+                return False, "interrupted by operator"
             rclpy.spin_once(self, timeout_sec=1.0/RATE_HZ)
             if not self.fresh():
                 self.pub.publish(Twist())
@@ -118,7 +139,8 @@ class Runner(Node):
             blocked = (self.scan is not None and
                        corridor_blocked(self.scan.ranges, self.scan.angle_min,
                                         self.scan.angle_increment))
-            step = plan_step(dist, bear, wrap(goal["yaw"] - th), blocked, lim)
+            step = plan_step(dist, bear, wrap(goal["yaw"] - th), blocked, lim,
+                             prev_state=last or "")
             t = Twist(); t.linear.x = step.twist.vx; t.angular.z = step.twist.wz
             self.pub.publish(t)
             if step.state != last:
@@ -133,6 +155,35 @@ class Runner(Node):
                 return False, "corridor blocked"
         self.stop()
         return False, f"leg timed out after {LEG_TIMEOUT_S:.0f}s"
+
+
+def run_blockage_check() -> dict:
+    """Capture a frame, ask the VLM what is in the robot's way. Never raises; fails closed.
+
+    Two subprocesses because two interpreters: grab_frame needs rclpy (ROS python),
+    ask_blockage needs openai (pipeline venv). The frame is kept in captures/ so the exact
+    image behind every branch decision can be re-examined after the run.
+    """
+    import json as _json
+    name = f"blockage_{int(time.time())}"
+    cap = REPO / "captures" / name
+    r = subprocess.run([sys.executable, str(REPO / "bringup" / "grab_frame.py"),
+                        "--name", name, "--timeout", "45"])
+    if r.returncode != 0 or not (cap / "rgb.png").exists():
+        return {"blocked": True, "kind": "", "note": "no frame",
+                "description": f"grab_frame failed (exit {r.returncode}) -- is the camera up?"}
+    if not PIPELINE_VENV.exists():
+        return {"blocked": True, "kind": "", "note": "no venv",
+                "description": f"pipeline venv missing at {PIPELINE_VENV}"}
+    r = subprocess.run([str(PIPELINE_VENV), str(REPO / "bringup" / "ask_blockage.py"),
+                        str(cap), "--json"], capture_output=True, text=True)
+    try:
+        out = _json.loads(r.stdout.strip().splitlines()[-1])
+        out["capture"] = str(cap)
+        return out
+    except Exception:
+        return {"blocked": True, "kind": "", "note": "bad output",
+                "description": f"ask_blockage said: {(r.stdout or r.stderr).strip()[:200]}"}
 
 
 def run_action(step, dry: bool) -> tuple[bool, str]:
@@ -154,6 +205,8 @@ def main() -> int:
     ap.add_argument("route", nargs="?", help="route name from config/routes.yaml")
     ap.add_argument("--list", action="store_true", help="list routes and waypoints, then exit")
     ap.add_argument("--go", action="store_true", help="actually drive")
+    ap.add_argument("--confirm", action="store_true",
+                    help="pause before EVERY step: Enter runs it, q stops the route")
     a = ap.parse_args()
 
     wps = yaml.safe_load(WAYPOINTS.read_text()) if WAYPOINTS.exists() else {}
@@ -174,7 +227,16 @@ def main() -> int:
         return 2
 
     steps = parse_route(routes[a.route])
-    errs = validate_route(steps, set(wps), set(ACTIONS))
+    # Every OTHER route is a candidate branch target for a `check` step in this one.
+    subroutes = {}
+    for rname, rspec in routes.items():
+        if rname == a.route:
+            continue
+        try:
+            subroutes[rname] = parse_route(rspec)
+        except ValueError:
+            pass    # its own validation will complain when someone tries to run it
+    errs = validate_route(steps, set(wps), set(ACTIONS), subroutes)
     if errs:
         # Before anything moves. This is the whole point of validating a route as pure data.
         print(f"ROUTE '{a.route}' WILL NOT RUN -- {len(errs)} problem(s):", file=sys.stderr)
@@ -190,7 +252,22 @@ def main() -> int:
         print("\nDRY RUN. Nothing moved. Add --go to drive.")
         return 0
 
-    rclpy.init()
+    # Take SIGINT OURSELVES. rclpy's default handler tears the context down before `finally`
+    # runs, so the stopping zero in Runner.stop() raises "publisher's context is invalid" and is
+    # never sent -- measured 2026-08-26, on a Ctrl-C during a real leg. The base then coasts on
+    # the chassis watchdog instead: 1.26 s, about 18 cm (EXPERIMENT_LOG 2026-08-21d). An explicit
+    # zero is a COMMAND and stops it now; letting the watchdog expire is the difference.
+    from rclpy.signals import SignalHandlerOptions
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    _interrupted = {"v": False}
+
+    def _on_sigint(signum, frame):
+        _interrupted["v"] = True
+        _INTERRUPT["v"] = True
+    import signal as _signal
+    _signal.signal(_signal.SIGINT, _on_sigint)
+    _signal.signal(_signal.SIGTERM, _on_sigint)
+
     n = Runner()
     st = RouteState(steps)
     lim = Limits()
@@ -200,12 +277,38 @@ def main() -> int:
             return 1
         print(f"\nSTART. odom {[round(v,2) for v in n.pose]}   Ctrl-C stops; E-stop is faster.\n")
         while not st.done and rclpy.ok():
+            if _interrupted["v"]:
+                st.fail("interrupted by operator")
+                break
             step = st.current
             print(f"  {st.progress()}")
+            if a.confirm:
+                # The robot is stationary here: nothing publishes on /cmd_vel_teleop while we
+                # wait, and the firmware watchdog holds zero. Operator paces the run.
+                try:
+                    ans = input("      [confirm] Enter to run this step, q+Enter to stop: ")
+                except EOFError:
+                    ans = "q"
+                if _interrupted["v"] or ans.strip().lower().startswith("q"):
+                    st.fail("stopped by operator at confirm prompt")
+                    break
             if step.kind == GOTO:
                 ok, why = n.drive_leg(wps[step.name], lim)
             elif step.kind == ACTION:
                 ok, why = run_action(step, dry=False)
+            elif step.kind == CHECK:
+                v = run_blockage_check()
+                if v.get("note"):
+                    ok, why = False, f"blockage check failed closed ({v['note']}): {v['description']}"
+                elif v.get("blocked"):
+                    sub = step.params["if_blocked"]
+                    print(f"      BLOCKED: {v['description']!r} (kind: {v['kind'] or 'unclassified'})")
+                    print(f"      -> splicing route '{sub}' ({len(subroutes[sub])} steps), then continuing")
+                    st.splice(subroutes[sub])
+                    ok, why = True, ""
+                else:
+                    print(f"      CLEAR: {v['description']!r} -- passable, continuing")
+                    ok, why = True, ""
             else:
                 time.sleep(min(step.params.get("seconds", 0.0), 300.0))
                 ok, why = True, ""

@@ -54,6 +54,11 @@ def _decode(msg: Image) -> np.ndarray:
     if msg.encoding in ("16UC1", "mono16"):
         a = buf.view(np.uint16).reshape(msg.height, msg.step // 2)[:, : msg.width]
         return a
+    if msg.encoding == "32FC1":
+        # Isaac's bridge publishes depth as float32 METRES (distance_to_image_plane on the color
+        # render product) -- already aligned to color, no /1000 needed downstream.
+        a = buf.view(np.float32).reshape(msg.height, msg.step // 4)[:, : msg.width]
+        return a
     raise ValueError(f"unhandled encoding {msg.encoding}")
 
 
@@ -66,8 +71,12 @@ class Grabber(Node):
         self.n_rgb = self.n_depth = 0
         self.settle = settle
         self.create_subscription(Image, f"/{ns}/color/image_raw", self._on_rgb, qos_profile_sensor_data)
-        self.create_subscription(Image, f"/{ns}/aligned_depth_to_color/image_raw",
-                                 self._on_depth, qos_profile_sensor_data)
+        # Hardware: realsense publishes depth resampled into the color frame on this topic.
+        # Sim: the bridge renders depth ON the color camera (already aligned) under a different
+        # name -- override with UTP_DEPTH_TOPIC=/mast_cam/depth/image_rect_raw for Isaac.
+        depth_topic = os.environ.get("UTP_DEPTH_TOPIC",
+                                     f"/{ns}/aligned_depth_to_color/image_raw")
+        self.create_subscription(Image, depth_topic, self._on_depth, qos_profile_sensor_data)
         self.create_subscription(CameraInfo, f"/{ns}/color/camera_info",
                                  self._on_info, qos_profile_sensor_data)
 
@@ -113,10 +122,16 @@ def main() -> int:
         return 1
 
     rgb = _decode(node.rgb).copy()
-    depth_mm = _decode(node.depth).astype(np.float32)
-    # 0 = NO RETURN. Keeping it as 0.0 metres would place the target AT the lens, and any mean
-    # over a patch would be dragged toward the camera by exactly the pixels that failed.
-    depth_m = np.where(depth_mm > 0, depth_mm / 1000.0, np.nan).astype(np.float32)
+    depth_raw = _decode(node.depth)
+    if depth_raw.dtype == np.float32:
+        # 32FC1 (sim): already metres. Non-positive / non-finite = no return.
+        depth_m = np.where(np.isfinite(depth_raw) & (depth_raw > 0), depth_raw,
+                           np.nan).astype(np.float32)
+    else:
+        depth_mm = depth_raw.astype(np.float32)
+        # 0 = NO RETURN. Keeping it as 0.0 metres would place the target AT the lens, and any
+        # mean over a patch would be dragged toward the camera by exactly the pixels that failed.
+        depth_m = np.where(depth_mm > 0, depth_mm / 1000.0, np.nan).astype(np.float32)
 
     K = np.array(node.info.k, dtype=np.float64).reshape(3, 3)
     name = a.name or f"frame_{int(time.time())}"

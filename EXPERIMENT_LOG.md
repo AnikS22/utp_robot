@@ -1313,3 +1313,99 @@ the sim campaign.
 The stale `/home/minghanwei/...` path in `utp/pipeline/reasoning/capabilities.py` will throw on
 this machine and has to be resolved before the FSM itself runs. Also: the HPC key pasted into a
 chat transcript on 2026-08-21 has still not been rotated.
+
+## 2026-08-27 — the workflow, tested in Isaac Sim (and three bugs it caught)
+
+Hardware is unplugged. The whole benchmark workflow (drive -> notice blocked -> press -> continue)
+now runs in Isaac Sim against the sim repo's trial server, using the SAME executor, the SAME route
+files, the SAME safety mux and the SAME grounder. Only the arm action differs (sim IK vs xArm SDK).
+
+### Conditional routes: the workflow the project actually needs
+
+`safety/route_plan.py` gained a `check` step. A route can now branch ONCE, on perception:
+
+    benchmark:
+      - goto: door
+      - check: blockage
+        if_blocked: press_and_pass    # spliced in, then the route continues
+      - goto: outside
+
+The VLM chooses BETWEEN TWO PRE-WRITTEN PLANS -- it never invents motion. Branch contents are
+validated before anything moves (a typo inside `if_blocked` would otherwise surface with the robot
+already parked at a closed door). Branches may not nest: a robot re-deciding inside a decision is
+unreviewable before the run. A VLM that cannot be reached FAILS CLOSED and the robot holds.
+
+This is what makes the recording run and the autonomous run the same route: you record with the
+doors open, the robot meets them closed, and the check is what absorbs the difference.
+
+### THE BUGS THE SIM CAUGHT (all three would have bitten on hardware)
+
+1. **The corridor veto could deadlock the robot.** `plan_step` zeroed ALL motion when the lidar saw
+   an obstruction -- including turning in place. A robot parked facing a closed door could never
+   turn around, because the veto keyed on the very rays it was trying to turn away from. Measured:
+   parked 0.17 m past a waypoint, `[turn_to_bearing]` -> `[blocked]` -> stop, forever.
+   FIX: the veto now gates FORWARD motion only. In-place turns are always permitted -- the
+   footprint does not advance, so there is nothing to veto. Two tests replaced with four.
+   This is a strong candidate for the 2026-08-26/27 "wheels rotate but the robot goes nowhere".
+
+2. **The controller chattered at the waypoint.** At ~pos_tol the bearing to a point 15 cm away
+   swings tens of degrees on millimetre drift. Measured ~20 turn/drive/settle cycles at the goal
+   edge before arriving. FIX: arrival hysteresis (1.6x pos_tol once settling), mirroring the turn
+   hysteresis already there for the same reason.
+
+3. **The blockage check could not read the sim depth stream.** grab_frame assumed 16UC1 millimetres
+   on the RealSense's aligned topic; Isaac publishes 32FC1 METRES on a different topic. FIX:
+   both encodings handled, topic overridable via UTP_DEPTH_TOPIC. One code path, two worlds.
+
+### Open, and the most interesting thread
+
+`/safety/arm_stowed` FLAPS in sim: 30 True / 91 False over 121 messages. Root cause is measured and
+NOT a sim quirk in its general form: `stale_after_s: 0.5` is sized against a NOMINAL 5 Hz
+/scene/state, but headless RTF drops the real rate to **0.55 Hz** (1.8 s between messages), so the
+gate collapses to False between messages and the mux blocks with `arm_not_stowed`.
+
+The lesson generalises to hardware: **the arm_stowed staleness window must be sized against the
+MEASURED evidence rate, not the nominal one.** On hardware the xarm_sdk backend polls at 20 Hz --
+but we already know that SDK session dies when other tools connect (see 2026-08-26). When it does,
+the gate goes stale, the mux blocks, and the base silently refuses to move while every other
+indicator looks healthy. That is exactly the "not moving :(" symptom, and nothing was watching it.
+NEXT: make stale_after_s per-backend, and have health.py assert the arm_stowed duty cycle.
+
+Also caught: I ran `safety_sim.sh` twice and created a SECOND twist_mux, i.e. two publishers on
+/cmd_vel -- the same class of bug that cost 2026-08-26 on hardware, this time self-inflicted.
+Killed by explicit PID after verifying /proc/PID/cmdline.
+
+### Bring-up notes (the sim was NOT runnable from a fresh checkout)
+
+- `ranger_xarm6_full.usd` is a gitignored BUILD ARTIFACT and was absent -> the server found no
+  base_link/lidar/camera and exited. Rebuilt via `sim/build_robot_usd.py` (laptop copy of the sim
+  repo's builder) from the committed configuration/ USDs, with sensor meshes streamed from
+  NVIDIA's public CDN instead of the old workstation's local asset pack.
+- Materials resolve via `ISAAC_ASSETS_ROOT`; pointed at the same CDN (0 MDL errors after).
+- Isaac's ROS2 bridge needs system Jazzy sourced BEFORE launch or it fails with
+  "ROS2 Bridge startup failed" and falls back to its internal copy.
+- **Render products only fill under the replicator orchestrator on this build.** Without
+  `rep.orchestrator.run()` after `timeline.play()`, every camera frame is the cleared buffer:
+  uniform gray 228, depth all-inf -- and the VLM was being handed a blank image while every
+  topic looked healthy at 12 Hz. The sim repo's own robot/verify_render.py documents the same
+  quirk. Patched in `sim/trial_server_patched.py` (a COPY; the sim repo is untouched).
+  After the fix: rgb std 45.2, depth 0.40-2.77 m.
+
+### New CAD (Ranger_mini_Xarm6_custom_box+Copy.stp) -- lidar height is WRONG in config
+
+Parsed 56 products. Converted CAD (mm) -> ROS base_link (m) with the mapping validated on
+2026-08-26 (CAD +X -> ROS -X, CAD +Y -> ROS +Z, CAD +Z -> ROS +Y):
+
+| component | ROS x | ROS y | ROS z |
+|---|---|---|---|
+| RPLIDAR A1M8 kit | +0.318 | -0.013 | **+0.034** |
+| D435f_Solid | -0.320 | +0.000 | +1.061 |
+| XI1305 (xArm6 base) | -0.016 | -0.024 | +0.374 |
+| AC Control Box | -0.250 | +0.285 | +0.282 |
+| Ouster OS0 | -0.375 | +0.000 | +1.146 |
+
+x and y CONFIRM `config/lidar.yaml` exactly (+0.318, -0.013). **z does not: CAD says +0.034, the
+config says +0.379 -- the lidar is configured 34 cm too high.** Not yet changed: the 2026-08-25
+entry recorded z as a DESIGN estimate with a +-0.07 caveat and the scans were sane, so this needs
+one tape-measure check before editing. The camera and the Ouster in the new box are not in the
+ROS config at all.

@@ -74,12 +74,52 @@ class ArmMonitorNode(Node):
         self._tol = float(xc.get("joint_tolerance_deg", 5.0))
         ip = xc.get("ip")
         self.get_logger().info(f"connecting to xArm at {ip}")
+        self._ip = ip
         self._arm = XArmAPI(ip, is_radian=False)
+        self._last_reconnect = 0.0
         self.create_timer(0.05, self._poll_xarm)
 
+    def _reconnect(self) -> None:
+        """Re-open the SDK session, at most once a second.
+
+        WHY THIS IS NEEDED. Every other arm tool -- stow_arm.py, approach_target.py, xArm Studio --
+        opens its own connection, and the controller drops this one when they do. Measured
+        2026-08-26: after a stow the arm was verifiably AT the stow pose and this node was still
+        publishing False, because its session had died and it had no way back. The node stayed
+        alive, the topic stayed alive, and the only symptom was the base refusing to move.
+
+        That is the failure this whole interlock is meant to catch, arriving from the wrong side:
+        a gate stuck CLOSED is not dangerous, but it is indistinguishable from a navigation fault
+        and it will burn an afternoon. Fail-closed is still correct -- the fix is to restore the
+        evidence, never to assume stowed."""
+        now = self._now()
+        if now - self._last_reconnect < 1.0:
+            return
+        self._last_reconnect = now
+        try:
+            from xarm.wrapper import XArmAPI
+            try:
+                self._arm.disconnect()
+            except Exception:
+                pass
+            self._arm = XArmAPI(self._ip, is_radian=False)
+            self._arm.connect()
+            if self._arm.connected:
+                self.get_logger().info("xArm session re-established")
+        except Exception as e:
+            self.get_logger().warning(f"xArm reconnect failed: {type(e).__name__}", once=False)
+
     def _poll_xarm(self) -> None:
-        code, angles = self._arm.get_servo_angle(is_radian=False)
+        if not getattr(self._arm, "connected", False):
+            self._reconnect()
+            return    # no session -> no evidence -> stale -> False
+        try:
+            code, angles = self._arm.get_servo_angle(is_radian=False)
+        except Exception:
+            self._reconnect()
+            return
         if code != 0 or angles is None:
+            self._reconnect()
             return    # read failed -> no evidence -> stale -> False
         self._stowed = all(
             abs(a - s) <= self._tol for a, s in zip(angles[:len(self._stow)], self._stow))

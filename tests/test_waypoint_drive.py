@@ -48,11 +48,23 @@ def test_final_heading_is_optional():
     assert s.state == "final_heading" and s.twist.vx == 0.0
 
 
-def test_blocked_beats_everything():
-    """The veto must not be outrankable by 'but we are far from the goal'."""
-    for dist, bear in ((5.0, 0.0), (5.0, math.pi/2), (0.01, 0.0)):
-        assert plan_step(dist, bear, None, True).twist.is_zero()
-        assert plan_step(dist, bear, None, True).state == "blocked"
+def test_blocked_stops_forward_motion():
+    """The veto zeros anything that would ADVANCE the footprint, however far the goal is."""
+    for dist in (5.0, 0.3):
+        st = plan_step(dist, 0.0, None, True)       # aimed at the goal -> would drive
+        assert st.twist.is_zero() and st.state == "blocked"
+
+
+def test_blocked_permits_turning_in_place():
+    """An in-place turn does not advance the footprint, and the goal may be BEHIND the robot.
+    Sim, 2026-08-27: parked 0.17 m past the waypoint facing a closed door, the robot could
+    never turn around because the veto keyed on the front rays it was in the act of leaving."""
+    st = plan_step(5.0, math.pi * 0.9, None, True)  # goal behind -> must be allowed to turn
+    assert st.state == "turn_to_bearing"
+    assert st.twist.vx == 0.0 and st.twist.wz != 0.0
+    # arrived + settling onto the final heading is a turn too -- also not vetoed
+    st = plan_step(0.05, 0.0, 1.0, True)
+    assert st.twist.vx == 0.0
 
 
 def test_nan_fails_closed():
@@ -119,3 +131,51 @@ def test_single_stray_return_does_not_latch_us():
 def test_nan_ranges_are_not_obstacles():
     r, a0, ai = _scan([])
     assert not corridor_blocked(r, a0, ai)
+
+
+def test_turn_hysteresis_finishes_what_it_starts():
+    """At 20 Hz the controller re-plans constantly. Without a wider exit band it flips between
+    turn and drive around the threshold, and on a 4WS chassis each flip is a MODE CHANGE the
+    firmware answers by re-steering all four wheels -- so the wheels spin and the body never
+    moves. Observed 2026-08-26."""
+    just_inside = L.turn_tol_rad - 0.01          # inside the ENTER band
+    # fresh: would drive
+    assert plan_step(3.0, just_inside, None, False).state == "drive"
+    # mid-turn: keeps turning, because it is outside the tighter EXIT band
+    assert plan_step(3.0, just_inside, None, False,
+                     prev_state="turn_to_bearing").state == "turn_to_bearing"
+
+
+def test_turn_releases_once_well_inside():
+    tiny = L.turn_exit_tol_rad / 2
+    assert plan_step(3.0, tiny, None, False, prev_state="turn_to_bearing").state == "drive"
+
+
+def test_exit_band_is_tighter_than_entry_band():
+    assert L.turn_exit_tol_rad < L.turn_tol_rad
+
+
+def test_hysteresis_never_drives_through_the_veto():
+    """Leaving a turn via the wide exit band must still not DRIVE while blocked."""
+    st = plan_step(3.0, L.turn_exit_tol_rad - 0.01, None, True, prev_state="turn_to_bearing")
+    assert st.twist.vx == 0.0 and st.state == "blocked"
+
+
+def test_final_heading_has_hysteresis_too():
+    just_inside = L.turn_tol_rad - 0.01
+    assert plan_step(0.05, 0.0, just_inside, False).state == "arrived"
+    assert plan_step(0.05, 0.0, just_inside, False,
+                     prev_state="final_heading").state == "final_heading"
+
+
+def test_arrival_has_hysteresis():
+    """Once settling at the waypoint, small drift past pos_tol must NOT re-enter the approach.
+    Without this the controller chattered turn/drive/settle ~20 cycles at the goal edge
+    (sim, 2026-08-27). Fresh approaches still use the strict tolerance."""
+    d = L.pos_tol_m * 1.3                     # just past strict tol
+    assert plan_step(d, -0.4, 0.0, False, prev_state="final_heading").state in (
+        "final_heading", "arrived")
+    assert plan_step(d, -0.4, None, False, prev_state="arrived").state == "arrived"
+    assert plan_step(d, -0.4, None, False, prev_state="").state == "turn_to_bearing"
+    assert plan_step(L.pos_tol_m * 1.7, -0.4, None, False,
+                     prev_state="final_heading").state == "turn_to_bearing"
