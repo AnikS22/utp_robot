@@ -26,7 +26,20 @@ def test_one_confused_query_does_not_veto_the_real_plate():
             ("a fire alarm activation lever", plate, 0.429),
             ("an emergency stop button", alarm, 0.539),
             ("a red emergency call button", alarm, 0.604)]
-    ok, why = check(plate, hits)
+    ok, why = check(plate, hits, target_score=0.526)
+    assert ok, why
+
+
+def test_a_red_door_button_is_not_an_alarm_at_low_confidence():
+    """Sim, 2026-08-29: the red door release button scored 0.586 as the target; every alarm query
+    also landed on it, all at ~0.38. Three agreeing low-confidence votes must not out-vote a
+    confident target -- a forbidden hit counts only at >= 90% of the target's own score."""
+    btn = (400, 300, 500, 400)
+    hits = [("a red fire alarm pull station", btn, 0.379),
+            ("a fire alarm activation lever", btn, 0.36),
+            ("an emergency stop button", btn, 0.38),
+            ("a red emergency call button", None, 0.0)]
+    ok, why = check(btn, hits, target_score=0.586)
     assert ok, why
 
 
@@ -39,7 +52,7 @@ def test_the_real_alarm_pick_is_still_refused_under_the_new_rule():
             ("a fire alarm activation lever", strobe, 0.571),
             ("an emergency stop button", (83, 429, 137, 501), 0.508),
             ("a red emergency call button", (84, 430, 137, 501), 0.549)]
-    ok, why = check(target, hits)
+    ok, why = check(target, hits, target_score=0.441)
     assert not ok and "2 of 4" in why
 
 

@@ -29,6 +29,7 @@ import sys
 
 import numpy as np
 
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SIM_REPO = os.environ.get("UTP_SIM_REPO", os.path.expanduser("~/unlocking-the-path"))
 sys.path.insert(0, SIM_REPO)
 
@@ -122,30 +123,19 @@ def main() -> int:
         # than assuming the two sensors share an origin.
         scan_f = os.path.join(cap, "scan.json")
         if os.path.exists(scan_f) and "T_cam_base" in cam and "T_base_lidar" in cam:
+            sys.path.insert(0, str(REPO))
+            from safety.lidar_lift import lift_bbox, scan_to_cam
             sc = json.load(open(scan_f))
             T = np.array(cam["T_cam_base"]) @ np.array(cam["T_base_lidar"])
-            r = np.asarray(sc["ranges"], dtype=float)
-            ang = sc["angle_min"] + np.arange(len(r)) * sc["angle_increment"]
-            ok = np.isfinite(r) & (r > 0.25) & (r < 12.0)
-            pl = np.stack([r[ok]*np.cos(ang[ok]), r[ok]*np.sin(ang[ok]), np.zeros(ok.sum()),
-                           np.ones(ok.sum())], axis=0)
-            pc = (T @ pl)[:3].T                       # lidar returns in the camera optical frame
-            K = np.array(cam["K"]); fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
-            x0, y0, x1, y1 = det.bbox
-            u, v = 0.5*(x0+x1), 0.5*(y0+y1)
-            ray = np.array([(u-cx)/fx, (v-cy)/fy, 1.0])
-            bearing = np.arctan2(ray[0], ray[2])
-            ahead = pc[pc[:, 2] > 0.2]
-            b = np.arctan2(ahead[:, 0], ahead[:, 2])
-            near = ahead[np.abs(np.arctan2(np.sin(b-bearing), np.cos(b-bearing))) < np.radians(1.5)]
-            if len(near) >= 2:
-                Z = float(np.median(near[:, 2]))
-                det.point3d = tuple(float(c) for c in ray * Z)
-                lift = f"lidar ({len(near)} returns within 1.5 deg, depth {Z:.2f} m)"
+            pts = scan_to_cam(sc["ranges"], sc["angle_min"], sc["angle_increment"], T)
+            lf = lift_bbox(det.bbox, cam["K"], pts)
+            if lf is not None:
+                det.point3d = lf.point3d
+                lift = f"lidar ({lf.n_returns} returns within 1.5 deg, depth {lf.depth_m:.2f} m)"
                 print(f"  depth had no return in the box; LIDAR LIFT -> {lift}")
             else:
-                print(f"  depth had no return in the box and the lidar has {len(near)} returns "
-                      f"at that bearing -- no lift")
+                print("  depth had no return in the box and the lidar has too few returns at "
+                      "that bearing -- no lift")
     if det is None:
         print("NO DETECTION above threshold.")
         print("  This is a real result, not an error: it says the detector proposed nothing it")

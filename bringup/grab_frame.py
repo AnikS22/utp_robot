@@ -193,8 +193,40 @@ def main() -> int:
             json.dump({"frame": sc.header.frame_id, "angle_min": float(sc.angle_min),
                        "angle_increment": float(sc.angle_increment),
                        "ranges": [float(r) for r in sc.ranges]}, f)
-        T_cb = node.transform_matrix(cam_frame, "base_link")
-        T_bl = node.transform_matrix("base_link", sc.header.frame_id)
+        # THE SIM'S TF USES PRIM NAMES, not the frame ids in the message headers: the camera is
+        # published as base_link -> Camera_OmniVision_OV9782_Color and the lidar as
+        # base_link -> RPLidar_S2E, while camera_info says mast_cam_optical and /scan says
+        # lidar_link (measured 2026-08-29). And the camera prim is in the USD convention
+        # (-Z forward, +Y up), not the ROS optical one the image pixels are in. Overrides for
+        # both, set by route_run under UTP_SIM=1; hardware needs neither.
+        tf_cam = os.environ.get("UTP_TF_CAM_FRAME", cam_frame)
+        tf_lidar = os.environ.get("UTP_TF_LIDAR_FRAME", sc.header.frame_id)
+        T_cb = node.transform_matrix(tf_cam, "base_link")
+        T_bl = node.transform_matrix("base_link", tf_lidar)
+        if T_cb is not None and os.environ.get("UTP_CAM_USD_CONVENTION") == "1":
+            # USD camera (x right, y up, -z forward) -> ROS optical (x right, y down, z forward)
+            T_cb = np.diag([1.0, -1.0, -1.0, 1.0]) @ T_cb
+        # STATIC CAMERA POSE OVERRIDE. The sim's TF for the camera prim is unusable -- it reports
+        # base_link -> camera at (69, 6097, -281958) m (measured 2026-08-29), a prim with a
+        # corrupt ancestor transform. The mount IS known: config/sensors.yaml camera_mast
+        # position_m [-0.25, 0, 1.15], pitch -10 deg (tilt down). UTP_CAM_BASE_POSE="x,y,z,pitch"
+        # builds the optical<-base_link transform from that instead. Hardware never sets it.
+        pose = os.environ.get("UTP_CAM_BASE_POSE")
+        if pose:
+            try:
+                x, y, z, pitch_deg = [float(v) for v in pose.split(",")]
+                th = np.radians(abs(pitch_deg))          # magnitude: "tilt down" either sign
+                f = np.array([np.cos(th), 0.0, -np.sin(th)])     # forward, tilted down
+                u = np.array([np.sin(th), 0.0, np.cos(th)])      # up
+                l = np.array([0.0, 1.0, 0.0])                    # left
+                R_base_opt = np.stack([-l, -u, f], axis=1)       # optical x,y,z in base coords
+                T_base_cam = np.eye(4); T_base_cam[:3, :3] = R_base_opt; T_base_cam[:3, 3] = [x, y, z]
+                T_cb = np.linalg.inv(T_base_cam)
+            except Exception as e:
+                print(f"  bad UTP_CAM_BASE_POSE {pose!r}: {e}")
+        if T_cb is not None and abs(T_cb[:3, 3]).max() > 10.0:
+            print(f"  camera transform is absurd (|t| > 10 m); not saving it")
+            T_cb = None
         if T_cb is not None and T_bl is not None:
             meta["T_cam_base"] = T_cb.tolist()
             meta["T_base_lidar"] = T_bl.tolist()

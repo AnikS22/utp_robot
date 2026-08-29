@@ -124,6 +124,14 @@ if os.environ.get("UTP_SIM") == "1":
     # face_target would have published /cmd_vel_teleop at the real chassis (2026-08-29, caught
     # only because the hardware mux had been stopped for the night). Pin the override.
     os.environ.setdefault("UTP_ROBOT_DOMAIN", "42")
+    # The sim's TF frames are USD prim names and the camera prim is in the USD convention;
+    # grab_frame's lidar lift needs both to find the transforms (see grab_frame.py).
+    os.environ.setdefault("UTP_TF_CAM_FRAME", "Camera_OmniVision_OV9782_Color")
+    os.environ.setdefault("UTP_TF_LIDAR_FRAME", "RPLidar_S2E")
+    os.environ.setdefault("UTP_CAM_USD_CONVENTION", "1")
+    # ... and its TF for the camera is corrupt (translation of hundreds of km), so the camera pose
+    # comes from the sim's own config: sensors.yaml camera_mast position_m + pitch_deg.
+    os.environ.setdefault("UTP_CAM_BASE_POSE", "-0.25,0.0,1.15,-10")
     os.environ["ROS_DOMAIN_ID"] = os.environ["UTP_ROBOT_DOMAIN"]
 PIPELINE_VENV = Path.home() / "unlocking-the-path" / "env" / ".venv" / "bin" / "python"
 

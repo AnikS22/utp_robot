@@ -74,7 +74,7 @@ def main() -> int:
             print(f"forbidden-query {q!r} failed ({type(e).__name__}); refusing", file=sys.stderr)
             return 2
 
-    ok, why = check(tuple(bbox), hits)
+    ok, why = check(tuple(bbox), hits, target_score=float(det.get("score") or 0.0))
     print(("SAFE: " if ok else "") + why)
     for q, b, s in hits:
         print(f"  {q!r}: {'no hit' if b is None else f'{b} score {s:.3f}'}")

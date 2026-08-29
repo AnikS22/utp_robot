@@ -56,7 +56,8 @@ def iou(a, b) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def check(target_bbox, forbidden_hits, *, iou_veto: float = IOU_VETO) -> tuple[bool, str]:
+def check(target_bbox, forbidden_hits, *, iou_veto: float = IOU_VETO,
+          target_score: float | None = None) -> tuple[bool, str]:
     """May we press ``target_bbox``?
 
     ``forbidden_hits`` is [(query, bbox, score), ...] -- what the detector found when asked about
@@ -81,10 +82,17 @@ def check(target_bbox, forbidden_hits, *, iou_veto: float = IOU_VETO) -> tuple[b
     # where the target WAS the alarm: 'emergency stop button' 0.508 and 'red emergency call
     # button' 0.549 both sat on it at 96%), OR the single most confident forbidden hit lands on
     # it. Both real frames are pinned in tests/test_press_veto.py.
+    # A forbidden hit COUNTS only if the detector is at least as sure of the forbidden label as it
+    # was of the target label. In sim the door release button is red, and every alarm query landed
+    # on it at 0.38 while "the door release button" scored 0.586 -- three low-confidence agreeing
+    # votes refused the correct control. Both real hardware frames keep their verdicts under this
+    # rule: the alarm-as-button case had forbidden hits at 0.51/0.55 against a 0.44 target (veto),
+    # the plate case had one at 0.43 against 0.53 (pass).
+    floor = 0.9 * float(target_score) if target_score else 0.0
     on_target = []
     best = None
     for q, bbox, score in forbidden_hits:
-        if bbox is None:
+        if bbox is None or float(score) < floor:
             continue
         o = iou(target_bbox, bbox)
         if best is None or score > best[2]:
