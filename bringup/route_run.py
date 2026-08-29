@@ -103,6 +103,10 @@ ACTIONS = {
     # Look, ground, and drive the BASE until the control is inside the arm envelope. Moves no
     # arm and presses nothing; press_button re-grounds from the pose this leaves.
     "reach_control": [str(REPO / "bringup" / "reach_control.sh")],
+    # Sweep the camera, ground every view, reject the fire alarms, turn to the best real control.
+    # The plate is BESIDE the door and the D435 is only ~69 deg wide, so one picture cannot find
+    # it -- and the grounder is local, so sweeping costs a second a view, not an API call.
+    "find_control": [str(REPO / "bringup" / "find_control.sh")],
 }
 # UTP_SIM=1: same route, same step names, but the press goes to the Isaac trial server's
 # /arm_reach action instead of the real xArm SDK. Everything upstream of the action --
@@ -373,39 +377,55 @@ def ask_reasoner(capture: str, blockage: dict, method: str) -> dict:
 
 def escalate(st, step, why: str, sub_name: str, subroutes: dict, budget: dict,
              quiet_if_clear: bool = False, method: str | None = None) -> tuple[bool, str]:
-    """Geometry has run out. Ask what this thing IS, and act if it is something we can act on.
+    """Geometry has run out. Get close, then ask what this thing IS.
 
-    The POLICY -- when it is safe to act on the answer -- lives in safety/escalation.py, pure and
-    tested. This is only the plumbing: spend a unit of budget, capture and ask, then do what the
-    decision says. See that module for why every ambiguous case stops.
+    ORDER MATTERS AND I HAD IT BACKWARDS. This used to ask the reasoner from wherever the corridor
+    veto stopped the robot -- typically 2 m out and square to the doors -- and only approached
+    afterwards, inside the branch it spliced. So the one question that decides the whole run was
+    put from the worst viewpoint available. On 2026-08-29 the reasoner answered, correctly:
+      "I can see the closed glass doors, but the specific mechanism to open them (a button or a
+       card reader) is not visible in the current field of view. I need to move closer."
+    fsm.py:421 calls world.approach_blockage() BEFORE reasoning; this now matches it.
+
+    FINDING the control is NOT this function's job, and a previous version of it made that mistake
+    -- sweeping five bearings with a VLM call at each, thirty seconds of API time to answer a
+    question the local grounder answers in a second. The reasoner decides WHAT KIND OF THING this
+    is and which tool applies. Where the control physically sits is grounding, and it happens
+    inside the branch (find_control.sh), which is also where the fire-alarm veto belongs.
+
+    The POLICY -- when it is safe to act on an answer -- stays in safety/escalation.py, pure and
+    tested. This is the plumbing.
     """
     from safety.escalation import ACT, decide
 
-    check = None
-    if budget["left"] > 0:
-        budget["left"] -= 1
-        print(f"      {why}")
-        print("      geometry cannot solve this. Asking what it is...")
-        check = run_blockage_check()
+    if budget["left"] <= 0:
+        return False, decide(None, 0, budget["max"], why).message
+    budget["left"] -= 1
 
-    d = decide(check, budget["left"] + 1 if check is not None else budget["left"],
-               budget["max"], why)
+    print(f"      {why}")
+
+    # CLOSE THE GAP FIRST. Depth is noise at 8-10 m and a plate is a few pixels there; the
+    # reasoner asked for exactly this. Idempotent -- returns at once if already front-blocked.
+    if not quiet_if_clear:
+        print("      geometry cannot solve this. Getting closer before asking...")
+        r = subprocess.run([sys.executable, str(REPO / "bringup" / "approach_blockage.py")],
+                           capture_output=True, text=True)
+        line = (r.stdout or r.stderr or "").strip().splitlines()
+        if line:
+            print(f"        {line[-1]}")
+
+    check = run_blockage_check()
+    d = decide(check, budget["left"] + 1, budget["max"], why)
     if d.action != ACT:
-        # A proactive look that finds the way CLEAR is the expected case, not a failure: the
-        # camera agreed with the lidar and we simply drive. Every other refusal still stops.
         if quiet_if_clear and check is not None and not check.get("note") \
                 and not check.get("blocked"):
             print(f"      looked first: clear ({check.get('description', '')!r})")
-            budget["left"] += 1        # a clear look costs nothing
+            budget["left"] += 1
             return True, ""
         return False, d.message
 
     print(f"      {d.message}")
 
-    # WHO CHOOSES THE ACTION. Without --method, the operator did, by naming --on-blocked: fine
-    # for getting through a door, useless as evidence, because the answer was supplied before
-    # the robot saw anything. With --method, the method's reasoner chooses from the bounded tool
-    # list and this only carries it out.
     if method:
         plan = ask_reasoner(check.get("capture", ""), check, method)
         if plan.get("error"):
@@ -417,9 +437,9 @@ def escalate(st, step, why: str, sub_name: str, subroutes: dict, budget: dict,
         if plan.get("rationale"):
             print(f"        rationale: {plan['rationale'][:300]}")
         if act in RESTRAINT:
-            return False, (f"{plan.get('label', method)} concluded {act!r} and did not act. "
-                           f"On a negative control that is the CORRECT outcome; here it means "
-                           f"the run ends without passing the obstruction.")
+            return False, (f"{plan.get('label', method)} concluded {act!r} and did not act. On a "
+                           f"negative control that is the CORRECT outcome; here it means the run "
+                           f"ends without passing the obstruction.")
         if act not in ACTION_ROUTES:
             return False, (f"{plan.get('label', method)} chose {act!r}, which this robot has no "
                            f"route for. Recorded as chosen-but-unexecutable.")
@@ -429,8 +449,6 @@ def escalate(st, step, why: str, sub_name: str, subroutes: dict, budget: dict,
 
     print(f"      -> running '{sub_name}' ({len(subroutes[sub_name])} steps), then retrying "
           f"this leg  [{budget['left']} escalation(s) left]")
-    # The branch, and then THIS SAME LEG again. Retrying is the point: pressing the button is
-    # only useful if we then go through the door it opened.
     st.splice(list(subroutes[sub_name]) + [step])
     return True, ""
 
@@ -459,9 +477,9 @@ def main() -> int:
     ap.add_argument("--list", action="store_true", help="list routes and waypoints, then exit")
     ap.add_argument("--go", action="store_true", help="actually drive")
     ap.add_argument("--avoid", action="store_true",
-                    help="steer around obstacles instead of stopping at them (reactive, uses "
-                         "the live scan only -- no map). It has NO MEMORY: a U-shape or dead end "
-                         "will trap it, and it stops rather than escaping.")
+                    help="steer around obstacles instead of stopping at them (reactive, live scan "
+                         "only, no map). DO NOT USE THIS ON A DOOR TASK -- see the note below. It "
+                         "has NO MEMORY: a U-shape or dead end will trap it.")
     ap.add_argument("--on-blocked", metavar="ROUTE",
                     help="when the way is blocked and there is no way around it, ASK: capture a "
                          "frame, put it to the VLM, and if it is a blockage this route can act "
@@ -536,6 +554,25 @@ def main() -> int:
     # discovered by a KeyError while the robot is stopped in a doorway is not a good time.
     # --method supplies the action, so --on-blocked is no longer needed to name one. Default it
     # to the route the action table can reach, so `--method ours` alone is a complete trial.
+    # --avoid AND --method FIGHT EACH OTHER ON A BLOCKAGE THE PIPELINE IS MEANT TO SOLVE.
+    #
+    # A closed door has no way around. Avoidance does not know that -- it only knows the forward
+    # arc, and there is almost always SOME free bearing off to one side, so it steers there,
+    # leaves the route, and burns the leg. Escalation never fires because escalation is triggered
+    # by geometry FAILING, and avoidance keeps succeeding at the wrong thing. Observed twice on
+    # 2026-08-29 at the real doors: "tries to avoid and doesn't drive to the right thing".
+    #
+    # The two flags encode opposite beliefs about what an obstruction IS. --avoid says "it is
+    # something to go round"; --method says "it is something to understand and act on". For a
+    # door, lift, or any control-operated passage, the second is right and the first is actively
+    # harmful. Keep --avoid for opaque clutter in a corridor on a route with no --method.
+    if a.avoid and a.method:
+        print("\nWARNING: --avoid with --method. A closed door has NO WAY AROUND, so avoidance\n"
+              "  will steer off-route down whatever side bearing is free and the pipeline will\n"
+              "  never be asked -- escalation fires on geometry FAILING, and avoidance keeps\n"
+              "  succeeding at the wrong thing. Drop --avoid for door/lift tasks.\n",
+              file=sys.stderr)
+
     if a.method and not a.on_blocked:
         a.on_blocked = next(iter(ACTION_ROUTES.values()))
 

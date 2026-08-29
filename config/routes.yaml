@@ -88,7 +88,16 @@ routes:
   # (no map, no waypoint, stop ~0.55 m out) and the grounder locates the control from a frame
   # taken there. approach_blockage has no idea what a button is, and must not.
   press_and_pass_visual:
-    - action: approach_blockage
+    # No approach_blockage here -- escalate() now closes the gap BEFORE asking, because the
+    # reasoner cannot identify a control it is too far away to see. Kept out of the branch so the
+    # robot is not driven at the door twice.
+    #
+    # find_control sweeps the camera because the plate is on the wall BESIDE the doors and the
+    # D435 is ~69 deg wide, so from a door-facing pose it is simply not in frame. It grounds every
+    # view locally (~1 s each, no API), vetoes anything that reads as a fire alarm, and turns to
+    # the best survivor.
+    - action: find_control
+      query: "the accessible door push button"
     # Then bring the CONTROL into reach. approach_blockage stops 0.55 m from the DOOR; the plate
     # is on the wall beside it, measured 2026-08-29 at 5.51 m range and +25.1 deg bearing from
     # the door-facing pose -- out of the 0.88 m arm envelope by 4.63 m. Grounding it perfectly

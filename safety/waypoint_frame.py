@@ -28,6 +28,22 @@ from __future__ import annotations
 SESSION_KEY = "odom_session"
 
 
+# WHAT THIS GUARD DOES NOT CATCH -- read before trusting a "session matches" result.
+#
+# The session id is the DDS GID of the /odom PUBLISHER, so it changes when ranger_base restarts.
+# That is the only event it sees. Two things move the robot without changing it:
+#
+#   CHASSIS POWER CYCLE. ranger_base runs on the laptop and survives the rover being switched off
+#   and on; the GID is unchanged, so this reports "same frame" while odometry recorded NOTHING for
+#   the whole outage. Anything the robot did in that window -- pushed, carried, driven on RC with
+#   the driver deaf -- is invisible. Observed 2026-08-29: the operator power-cycled and moved the
+#   robot "a lot", and check_session passed the waypoints as valid.
+#
+#   DRIFT. Covered by drift_warning() below, and only as a time-spread heuristic.
+#
+# So a passing check means "the frame was not re-zeroed", NOT "these coordinates still point where
+# they did". The only reliable answer is to re-record immediately before the run. A guard that is
+# read as stronger than it is, is worse than no guard.
 def sessions_in(waypoints: dict) -> set:
     """Every distinct session id present. Missing ids count as None -- pre-guard waypoints."""
     return {(w or {}).get(SESSION_KEY) for w in waypoints.values()}
