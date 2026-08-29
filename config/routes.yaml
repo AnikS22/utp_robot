@@ -146,6 +146,15 @@ routes:
     - goto: start
     - goto: doors
     - goto: button
+    # CLOSE THE DRIFT BEFORE PRESSING. 'button' gets the robot to the plate's wall; it does not
+    # get it square to the plate. Measured 2026-08-29, first run of this route: odometry said
+    # 0.15 m from the recorded pose, the camera showed the plate ~22 deg left of axis and beyond
+    # the 0.5 m standoff -- ordinary drift over a ~10 m loop with two full turns. press_run
+    # reaches from wherever it stands, so without this step it reaches at the wrong place.
+    # reach_control grounds the plate, runs the fire-alarm veto, then faces it and steps in to
+    # the press standoff (the sim's _approach_press_pose); press_run then re-grounds from there.
+    - action: reach_control
+      query: "the accessible door push button"
     - action: press_button
       query: "the accessible door push button"
       standoff: 60
