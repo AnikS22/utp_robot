@@ -35,6 +35,7 @@ front of a glass door is the wrong way to be wrong.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import subprocess
@@ -55,7 +56,9 @@ from nav_msgs.msg import Odometry  # noqa: E402
 from rclpy.node import Node  # noqa: E402
 from rclpy.qos import qos_profile_sensor_data  # noqa: E402
 from sensor_msgs.msg import LaserScan  # noqa: E402
+from std_msgs.msg import String  # noqa: E402
 
+from safety.mux_watch import MuxWatch  # noqa: E402
 from safety.route_plan import ACTION, CHECK, GOTO, WAIT, RouteState, parse_route, validate_route  # noqa: E402
 from safety.waypoint_drive import Limits, corridor_blocked, plan_step, to_goal, wrap  # noqa: E402
 
@@ -63,6 +66,7 @@ WAYPOINTS = Path(os.environ.get("UTP_WAYPOINTS", "")) if os.environ.get("UTP_WAY
     else REPO / "maps" / "waypoints.yaml"
 ROUTES = REPO / "config" / "routes.yaml"
 CMD_TOPIC = "/cmd_vel_teleop"
+SAFETY_STATUS_TOPIC = "/safety/status"
 RATE_HZ = 20.0
 ODOM_STALE_S = 0.5
 LEG_TIMEOUT_S = 180
@@ -95,7 +99,11 @@ class Runner(Node):
         self.scan = None
         self.create_subscription(Odometry, "/odom", self._odom, 10)
         self.create_subscription(LaserScan, "/scan_filtered", self._scan, qos_profile_sensor_data)
+        self.create_subscription(String, SAFETY_STATUS_TOPIC, self._safety, 10)
         self.pub = self.create_publisher(Twist, CMD_TOPIC, 10)
+        # Watches whether the mux is actually passing our commands through. Without it a closed
+        # gate is indistinguishable from a robot that will not drive. See safety/mux_watch.py.
+        self.mux = MuxWatch(time.monotonic())
 
     def _odom(self, m) -> None:
         p = m.pose.pose
@@ -104,6 +112,13 @@ class Runner(Node):
 
     def _scan(self, m) -> None:
         self.scan = m
+
+    def _safety(self, m) -> None:
+        try:
+            st = json.loads(m.data)
+        except (ValueError, TypeError):
+            return          # malformed status is no status; MuxWatch will call it stale
+        self.mux.note_status(st.get("blocked_by"), time.monotonic())
 
     def fresh(self) -> bool:
         return self.pose is not None and (time.monotonic() - self.stamp) <= ODOM_STALE_S
@@ -115,6 +130,27 @@ class Runner(Node):
             if self.pose is not None:
                 return True
         return False
+
+    def wait_for_permission(self, timeout: float = 8.0) -> tuple[bool, str]:
+        """Wait for the safety mux to report, and to report that it is NOT blocking.
+
+        Note what this does not do: it never overrides a gate. If the arm is not stowed the right
+        answer is to stow the arm, not to start driving and hope. All this buys is that the
+        refusal arrives in one line at t=0 instead of as an unexplained timeout at t=180."""
+        end = time.monotonic() + timeout
+        while rclpy.ok() and time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if self.mux.seen_status and self.mux.blocked_by in (None, "no_source"):
+                # no_source is expected here: we have not commanded anything yet.
+                return True, ""
+        if not self.mux.seen_status:
+            return False, ("no /safety/status after %.0fs -- the safety mux is not running, so "
+                           "nothing forwards %s to /cmd_vel. Start the safety stack, and check "
+                           "ROS_DOMAIN_ID (9 = hardware, 42 = sim)." % (timeout, CMD_TOPIC))
+        from safety.mux_watch import HINTS
+        why = self.mux.blocked_by or "?"
+        return False, f"safety mux is blocking before we even start: {why}" + \
+            (" -- " + HINTS[why] if why in HINTS else "")
 
     def stop(self) -> None:
         """An explicit zero is a COMMAND and stops the chassis now. Letting the firmware watchdog
@@ -143,6 +179,17 @@ class Runner(Node):
                              prev_state=last or "")
             t = Twist(); t.linear.x = step.twist.vx; t.angular.z = step.twist.wz
             self.pub.publish(t)
+
+            # Did any of that reach the wheels? A fail-closed gate discards our commands
+            # silently, and without this the leg burns its whole 180 s timeout and then reports
+            # "timed out" -- naming the symptom, not the cause. Abort and name the gate instead.
+            now = time.monotonic()
+            self.mux.note_command(not (step.twist.vx == 0.0 and step.twist.wz == 0.0), now)
+            v = self.mux.verdict(now)
+            if not v.ok:
+                self.stop()
+                return False, v.reason
+
             if step.state != last:
                 print(f"      [{step.state}] {dist:5.2f} m, bearing {math.degrees(bear):+6.1f} deg")
                 last = step.state
@@ -274,6 +321,13 @@ def main() -> int:
     try:
         if not n.wait_for_odom():
             print("no /odom -- is ranger_bringup running?", file=sys.stderr)
+            return 1
+        # Prove the mux is alive and permitting BEFORE the first leg. Every gate is fail-closed,
+        # so the default state of this robot is "will not move"; starting a route without
+        # checking means discovering that fact one 180 s leg timeout at a time.
+        ok, why = n.wait_for_permission()
+        if not ok:
+            print(f"\nNOT DRIVING: {why}", file=sys.stderr)
             return 1
         print(f"\nSTART. odom {[round(v,2) for v in n.pose]}   Ctrl-C stops; E-stop is faster.\n")
         while not st.done and rclpy.ok():

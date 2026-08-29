@@ -37,7 +37,19 @@ class ArmMonitorNode(Node):
         super().__init__("utp_safety_arm_monitor")
         mon = cfg.get("arm_monitor", {})
         self.backend = backend or mon.get("backend", "scene_state")
-        self.stale_after_s = float(mon.get("stale_after_s", 0.5))
+        # Staleness must be sized against the rate the evidence ACTUALLY arrives at, and the two
+        # backends differ by more than an order of magnitude: the xArm SDK is polled at 20 Hz,
+        # while /scene/state is nominally 5 Hz but measured 0.55 Hz on this laptop headless
+        # (2026-08-27) -- real time factor, not a fault. One shared 0.5 s window therefore held
+        # the gate open on hardware and slammed it shut between every message in sim, which the
+        # mux reported, correctly, as arm_not_stowed.
+        #
+        # It is deliberately NOT adaptive. Widening a safety window because evidence got slow is
+        # how an interlock quietly stops interlocking; the window is declared, and a rate that
+        # cannot support it is reported as the fault it is.
+        self.stale_after_s = float(
+            (mon.get(self.backend) or {}).get("stale_after_s", mon.get("stale_after_s", 0.5)))
+        self._interval_warned = False
 
         topic = cfg.get("gates", {}).get("arm_stowed", "/safety/arm_stowed")
         self.pub = self.create_publisher(Bool, topic, 10)
@@ -64,7 +76,7 @@ class ArmMonitorNode(Node):
         except (ValueError, TypeError):
             return    # malformed -> no evidence -> goes stale -> False
         self._stowed = (st.get("arm_state") == "idle")
-        self._last_evidence = self._now()
+        self._note_evidence()
 
     # ---- hardware backend ------------------------------------------------------------------
     def _init_xarm(self, xc: dict) -> None:
@@ -123,11 +135,30 @@ class ArmMonitorNode(Node):
             return    # read failed -> no evidence -> stale -> False
         self._stowed = all(
             abs(a - s) <= self._tol for a, s in zip(angles[:len(self._stow)], self._stow))
-        self._last_evidence = self._now()
+        self._note_evidence()
 
     # ---- common ----------------------------------------------------------------------------
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
+
+    def _note_evidence(self) -> None:
+        """Record fresh evidence, and complain ONCE if it is arriving too slowly to hold the gate.
+
+        A gate that collapses between messages is indistinguishable from an arm that is not
+        stowed, and it is the mux -- three processes away -- that ends up reporting it. Saying it
+        here, where the rate is known, turns a mystified afternoon into one log line."""
+        now = self._now()
+        if self._last_evidence is not None and not self._interval_warned:
+            gap = now - self._last_evidence
+            if gap > self.stale_after_s:
+                self._interval_warned = True
+                self.get_logger().error(
+                    f"{self.backend} evidence arrived {gap:.2f}s apart but stale_after_s is "
+                    f"{self.stale_after_s:.2f}s -- the arm_stowed gate collapses BETWEEN messages "
+                    f"and the base will be blocked with 'arm_not_stowed'. Raise "
+                    f"arm_monitor.{self.backend}.stale_after_s above the real message interval, "
+                    f"or fix the rate.")
+        self._last_evidence = now
 
     def _tick(self) -> None:
         fresh = (self._last_evidence is not None

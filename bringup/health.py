@@ -28,6 +28,7 @@ everything is fine. Only the data rate reveals it.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -35,6 +36,10 @@ import time
 
 CRITICAL = "critical"
 INFO = "info"
+# Non-fatal but not merely informational. It was USED by check_duplicates and never
+# defined, so the "0 publishers" branch -- the one a half-started bring-up takes --
+# raised NameError instead of reporting the missing publisher.
+WARN = "warn"
 
 USB_IDS = [
     ("8086:0b07", "RealSense D435", CRITICAL),
@@ -175,6 +180,79 @@ n.destroy_node(); rclpy.shutdown()
 
 
 
+def check_gates(rep):
+    """Would the base move if something asked it to?
+
+    THE FAILURE THIS CATCHES. Every safety gate is fail-closed, so the DEFAULT state of this robot
+    is "will not move". Each gate going False is correct behaviour, reported correctly on
+    /safety/status -- and until 2026-08-29 the only subscriber was the human teleop page. An
+    autonomous run therefore published twists into a mux that discarded all of them, for the full
+    180 s leg timeout, and then reported "leg timed out": a navigation symptom for an interlock
+    cause. Days went into the planner. The planner was never running.
+
+    Duty cycle, not a snapshot. A gate that FLAPS is the expensive case: sampled once it looks
+    fine, and it still blocks the majority of ticks. arm_stowed measured 30 True / 91 False in
+    sim, and every one of those False ticks was a discarded command."""
+    script = r'''
+import json, rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+rclpy.init(); n = Node("utp_health_gates")
+seen = {"n":0}; gates = {}; blocks = {}
+def on(m):
+    try: st = json.loads(m.data)
+    except Exception: return
+    seen["n"] += 1
+    for k, v in (st.get("gates") or {}).items():
+        gates[k] = gates.get(k, 0) + (1 if v else 0)
+    b = st.get("blocked_by")
+    if b: blocks[b] = blocks.get(b, 0) + 1
+n.create_subscription(String, "/safety/status", on, 10)
+t0 = n.get_clock().now().nanoseconds
+while n.get_clock().now().nanoseconds - t0 < 5e9: rclpy.spin_once(n, timeout_sec=0.2)
+print(json.dumps({"n": seen["n"], "gates": gates, "blocks": blocks}))
+n.destroy_node(); rclpy.shutdown()
+'''
+    try:
+        r = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                           text=True, timeout=60)
+        d = json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception as e:
+        rep.add("safety mux", False, f"could not sample /safety/status: {e}", CRITICAL)
+        return
+
+    n = int(d.get("n", 0))
+    if n == 0:
+        rep.add("safety mux", False,
+                "NO /safety/status - the mux is not running, so nothing forwards commands to "
+                "/cmd_vel. Nothing will drive.", CRITICAL)
+        return
+    rep.add("safety mux", True, f"{n/5.0:.1f} Hz on /safety/status")
+
+    # estop_latched is inverted: True there means blocked, unlike every other gate.
+    for name, count in sorted((d.get("gates") or {}).items()):
+        pct = 100.0 * count / n
+        permitting = (pct < 1.0) if name == "estop_latched" else (pct > 99.0)
+        detail = f"{pct:.0f}% of {n} ticks"
+        if name == "estop_latched" and pct >= 1.0:
+            detail += "  <- LATCHED. Clear it with the /safety/clear_estop service; releasing " \
+                      "the physical button is not enough."
+        elif name == "arm_stowed" and not permitting:
+            detail += "  <- base blocked. Either stow the arm, or the monitor's evidence is " \
+                      "going stale between messages (see arm_monitor.<backend>.stale_after_s)."
+        elif name in ("enable",) and not permitting:
+            detail += "  <- deadman not held; nav and servo sources are dead (teleop is not)"
+        rep.add(f"gate {name}", permitting, detail,
+                CRITICAL if name in ("arm_stowed", "estop_latched") else INFO)
+
+    for reason, count in sorted((d.get("blocks") or {}).items(), key=lambda kv: -kv[1]):
+        # no_source with nothing driving is the correct, expected report, not a fault.
+        rep.add(f"blocking: {reason}", reason == "no_source",
+                f"{100.0*count/n:.0f}% of ticks"
+                + ("  (expected while nothing is commanding)" if reason == "no_source" else ""),
+                INFO if reason == "no_source" else CRITICAL)
+
+
 # Topics that must have EXACTLY ONE publisher, and what a second one does.
 SINGLE_PUBLISHER = {
     "/odom":     "two ranger_base drivers -> readers get a BLEND of two odom frames",
@@ -230,6 +308,7 @@ def main() -> int:
         if not a.skip_arm:
             check_arm(rep)
         check_topics(rep)
+        check_gates(rep)
         check_duplicates(rep)
         bad = rep.render()
         print(f"\n  {'ALL CRITICAL CHECKS PASS' if bad == 0 else f'{bad} CRITICAL FAILURE(S)'}")
