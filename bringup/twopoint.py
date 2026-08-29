@@ -191,6 +191,19 @@ def main() -> int:
             print(f"  Would publish to {CMD_TOPIC} at {RATE_HZ:.0f} Hz. Add --go to drive.\n")
             return 0
 
+        # Will the chassis even obey? With SWB down it is in RC mode and DISCARDS every
+        # command, while odom flows at 50 Hz and the mux reports "permitted". Nothing in ROS
+        # can see that, so it is checked here on the bus itself.
+        try:
+            from chassis_mode import ADVICE, GOOD, chassis_mode
+            st = chassis_mode()
+            if st is not None and st[1] != GOOD:
+                print(f"\nNOT DRIVING: chassis control_mode={st[1]} -- "
+                      f"{ADVICE.get(st[1], '')}", file=sys.stderr)
+                return 1
+        except Exception:
+            pass    # no CAN access is not itself a reason to refuse; the mux watch still applies
+
         print("\n  MARK THE FLOOR under the robot now -- odom cannot measure its own drift.")
         print(f"  {a.laps} lap(s). Ctrl-C stops; E-stop is faster.\n")
 

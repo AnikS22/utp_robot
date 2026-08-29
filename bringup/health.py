@@ -123,6 +123,36 @@ def check_arm(rep, ip="192.168.1.221"):
         rep.add("xArm6", False, f"{ip} reachable but SDK failed: {e}")
 
 
+def check_chassis_mode(rep):
+    """Will the chassis obey the computer, or is the RC holding authority?
+
+    Invisible from ROS: in CONTROL_MODE_RC the chassis DISCARDS every CAN motion command while
+    /odom keeps flowing at 50 Hz and the mux keeps reporting "permitted". The discard happens in
+    firmware, below anything ROS can observe, so every other check here goes green.
+    """
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from chassis_mode import ADVICE, GOOD, chassis_mode
+        st = chassis_mode()
+    except Exception as e:
+        rep.add("chassis mode", False, f"could not read 0x211: {e}", WARN)
+        return
+    if st is None:
+        rep.add("chassis mode", False, "no 0x211 -- bus silent, or rover unpowered", CRITICAL)
+        return
+    vehicle, mode, batt, err = st
+    rep.add("chassis mode", mode == GOOD,
+            f"{mode}" + ("" if mode == GOOD else f"  <- {ADVICE.get(mode, '')}"), CRITICAL)
+    rep.add("chassis state", vehicle == "NORMAL",
+            f"{vehicle}" + ("" if vehicle == "NORMAL" else "  <- nothing will move"),
+            CRITICAL if vehicle == "ESTOP" else INFO)
+    # 48 V nominal pack; below ~46 V the chassis browns out under load before it warns.
+    rep.add("battery", batt > 46.0, f"{batt:.1f} V" + ("" if batt > 46.0 else "  <- LOW"),
+            INFO if batt > 46.0 else CRITICAL)
+    if err:
+        rep.add("chassis error", False, f"0x{err:04X}", CRITICAL)
+
+
 def check_topics(rep):
     """Rates, not existence. An advertised topic with no publisher looks identical to a live one."""
     script = r'''
@@ -307,6 +337,7 @@ def main() -> int:
         check_can(rep)
         if not a.skip_arm:
             check_arm(rep)
+        check_chassis_mode(rep)
         check_topics(rep)
         check_gates(rep)
         check_duplicates(rep)

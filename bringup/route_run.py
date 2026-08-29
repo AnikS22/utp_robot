@@ -345,6 +345,19 @@ def main() -> int:
             print(f"\nSTALE WAYPOINTS -- not driving.\n  {why}", file=sys.stderr)
             return 1
 
+        # Will the chassis even obey? With SWB down it is in RC mode and DISCARDS every
+        # command, while odom flows at 50 Hz and the mux reports "permitted". Nothing in ROS
+        # can see that, so it is checked here on the bus itself.
+        try:
+            from chassis_mode import ADVICE, GOOD, chassis_mode
+            st = chassis_mode()
+            if st is not None and st[1] != GOOD:
+                print(f"\nNOT DRIVING: chassis control_mode={st[1]} -- "
+                      f"{ADVICE.get(st[1], '')}", file=sys.stderr)
+                return 1
+        except Exception:
+            pass    # no CAN access is not itself a reason to refuse; the mux watch still applies
+
         ok, why = n.wait_for_permission()
         if not ok:
             print(f"\nNOT DRIVING: {why}", file=sys.stderr)
