@@ -2,6 +2,30 @@
 
 Navigation only. No arm, no camera, no press.
 
+## Every terminal, first line
+
+```bash
+cd ~/utp_robot
+source bringup/env.sh
+```
+
+That is the whole setup. **There is no venv and no conda environment for this** — the navigation
+stack runs on the system python at `/usr/bin/python3`, because `rclpy` is installed against it by
+the ROS 2 apt packages and cannot be imported from a conda or venv interpreter. `env.sh` actively
+STRIPS conda from PATH and unsets `PYTHONPATH`/`CONDA_PREFIX` for exactly this reason: colcon and
+`ros2` run whatever `python3` comes first, and conda's has no rclpy bindings, which produces
+errors that name neither conda nor python.
+
+(The pipeline repo's venv at `~/unlocking-the-path/env/.venv` is a different thing — it holds
+torch for the grounder, and only the press shells out to it. Navigation never touches it.)
+
+`env.sh` also sets `ROS_DOMAIN_ID=9`. That matters more than it looks: unset means domain 0, an
+empty graph, where every node starts happily and finds nothing. The scripts now refuse to run
+without it rather than blaming the driver.
+
+`cd ~/utp_robot` is only needed for the relative paths below; absolute paths work from anywhere
+once `env.sh` is sourced.
+
 ## Once per session — bring the stack up
 
 Four terminals. **Leave them running.** Restarting `ranger_base` re-zeroes odom and invalidates
