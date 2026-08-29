@@ -89,6 +89,42 @@ leaves every other one wrong.
 
 ## ⑤ Wheel odometry scale
 
+**MEASURED 2026-08-29** (`bringup/characterise_twist.py --go`, 1 odom publisher, 46 Hz):
+
+| axis | commanded | expected | measured | scale | sign |
+|---|---|---|---|---|---|
+| linear `vx` | +0.10 m/s, 3 s | +0.300 m | +0.283 m | **0.94** | correct |
+| angular `wz` | +0.20 rad/s, 3 s | +34.377 deg | +20.283 deg | **0.59** | correct |
+
+Lateral drift on the straight run was -0.000 m; position drift on the spin was 0.001 m. So the
+axes are clean and independent -- this is a SCALE error, not a coupling or a sign error.
+
+**The angular figure is the serious one.** 0.59 means every commanded rotation delivers 59% of
+what the stack believes it asked for. A proportional heading controller under-rotates by 41% on
+every cycle, so turns take far longer than the tuning assumes, and combined with a steering
+target that is recomputed each cycle it can fail to converge at all -- which is what the door
+livelock of 2026-08-29 looked like from the outside.
+
+**WHAT THIS MEASUREMENT CANNOT TELL YOU, and it matters before anyone "corrects" it.** It compares
+COMMANDED against ODOMETRY. Those disagree by 41%, but the disagreement has two opposite causes:
+
+  * the CHASSIS under-rotates -- the robot really did turn 20 deg. Then the controller is being
+    lied to about its authority and a gain correction is right.
+  * ODOMETRY under-reports -- the robot really turned 34 deg and only claims 20. Then a gain
+    correction makes the robot rotate 1.7x too far, and every recorded waypoint yaw is wrong.
+
+Guessing between them is how you turn a 41% error into a 70% one. Disambiguate with an EXTERNAL
+reference: mark the floor under two points on the chassis, command a full turn, and see whether
+the robot physically returns to the marks when odom reports 360 deg. `bringup/scan_compass.py`
+gives a second, lidar-based view of the same question.
+
+Until that is done, treat both scales as UNCORRECTED and known-wrong. The 0.94 linear figure also
+means every leg is ~6% short, which is inside the 15 cm arrival tolerance for a 2 m leg and is not
+inside it for a 6 m one.
+
+<!-- original section follows -->
+## ⑤ Wheel odometry scale (procedure)
+
 **This matters more than it looks.** The design deliberately runs the entire grounding → approach →
 press chain in the **odom** frame, specifically so AMCL's discontinuous jumps stay out of the press
 error budget. That only pays off if odom is metrically honest. 4WS bases commonly carry a few
