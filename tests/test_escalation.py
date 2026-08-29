@@ -39,3 +39,19 @@ def test_budget_exhaustion_stops():
 def test_the_stuck_reason_travels_into_every_refusal():
     for check in (None, {"blocked": True, "note": "x"}, {"blocked": False}):
         assert WHY in decide(check, 2, 2, WHY).message
+
+
+def test_a_proactive_look_that_finds_glass_still_acts():
+    """The case the lidar cannot help with: geometry says clear, the camera says door."""
+    d = decide({"blocked": True, "kind": "door",
+                "description": "closed glass double doors"}, 2, 2, "looking before driving")
+    assert d.action == ACT and "glass" in d.message
+
+
+def test_clear_is_still_STOP_at_the_policy_level():
+    """decide() stays strict; only the caller may treat a CLEAR proactive look as 'carry on'.
+
+    Keeping the leniency out of the policy means the geometric-failure path -- where CLEAR means
+    the sensors DISAGREE -- cannot accidentally inherit it.
+    """
+    assert decide({"blocked": False, "description": "clear"}, 2, 2, "x").action == STOP

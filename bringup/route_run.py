@@ -269,7 +269,8 @@ def run_blockage_check() -> dict:
                 "description": f"ask_blockage said: {(r.stdout or r.stderr).strip()[:200]}"}
 
 
-def escalate(st, step, why: str, sub_name: str, subroutes: dict, budget: dict) -> tuple[bool, str]:
+def escalate(st, step, why: str, sub_name: str, subroutes: dict, budget: dict,
+             quiet_if_clear: bool = False) -> tuple[bool, str]:
     """Geometry has run out. Ask what this thing IS, and act if it is something we can act on.
 
     The POLICY -- when it is safe to act on the answer -- lives in safety/escalation.py, pure and
@@ -288,6 +289,13 @@ def escalate(st, step, why: str, sub_name: str, subroutes: dict, budget: dict) -
     d = decide(check, budget["left"] + 1 if check is not None else budget["left"],
                budget["max"], why)
     if d.action != ACT:
+        # A proactive look that finds the way CLEAR is the expected case, not a failure: the
+        # camera agreed with the lidar and we simply drive. Every other refusal still stops.
+        if quiet_if_clear and check is not None and not check.get("note") \
+                and not check.get("blocked"):
+            print(f"      looked first: clear ({check.get('description', '')!r})")
+            budget["left"] += 1        # a clear look costs nothing
+            return True, ""
         return False, d.message
 
     print(f"      {d.message}")
@@ -330,6 +338,10 @@ def main() -> int:
                     help="when the way is blocked and there is no way around it, ASK: capture a "
                          "frame, put it to the VLM, and if it is a blockage this route can act "
                          "on, run that route and retry the leg. Fails closed on any doubt.")
+    ap.add_argument("--look-first", action="store_true",
+                    help="ASK BEFORE EACH LEG, not only when geometry fails. Required for GLASS: "
+                         "a 2D lidar cannot see it, so the veto never fires and --on-blocked is "
+                         "never reached. Costs one VLM call (~6 s) per leg.")
     ap.add_argument("--escalations", type=int, default=2,
                     help="how many times a route may escalate before giving up (default 2)")
     ap.add_argument("--loops", type=int, default=1,
@@ -505,6 +517,24 @@ def main() -> int:
                     st.fail("stopped by operator at confirm prompt")
                     break
             if step.kind == GOTO:
+                # LOOK BEFORE DRIVING. Measured on this robot 2026-08-29, parked in front of
+                # closed glass double doors: the lidar's nearest return within +-15 deg was
+                # 7.79 m, corridor_blocked was False, and local_avoid reported "clear toward the
+                # goal". The camera, asked at the same instant, returned
+                # {"kind": "door", "description": "closed glass double doors", "blocked": true}.
+                #
+                # So escalation ON GEOMETRIC FAILURE alone cannot protect against glass: geometry
+                # never fails, it reports a clear path and the robot drives into the door at
+                # 0.25 m/s. The only sensor that sees glass here is the camera, so on legs where
+                # glass is possible the camera has to be asked BEFORE moving, not after failing.
+                if a.look_first and a.on_blocked:
+                    ok, why = escalate(st, step, STUCK + "looking before driving",
+                                       a.on_blocked, subroutes, budget, quiet_if_clear=True)
+                    if not ok:
+                        st.fail(why)
+                        break
+                    if st.current is not step:
+                        continue      # a branch was spliced in; run it before this leg
                 ok, why = n.drive_leg(wps[step.name], lim)
                 if not ok and why.startswith(STUCK) and a.on_blocked:
                     ok, why = escalate(st, step, why, a.on_blocked, subroutes, budget)
