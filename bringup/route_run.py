@@ -59,6 +59,7 @@ from sensor_msgs.msg import LaserScan  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
 
 from odom_session import odom_session_id  # noqa: E402
+from safety.local_avoid import choose_heading  # noqa: E402
 from safety.mux_watch import MuxWatch  # noqa: E402
 from safety.waypoint_frame import check_session  # noqa: E402
 from safety.route_plan import ACTION, CHECK, GOTO, WAIT, RouteState, parse_route, validate_route  # noqa: E402
@@ -68,6 +69,12 @@ WAYPOINTS = Path(os.environ.get("UTP_WAYPOINTS", "")) if os.environ.get("UTP_WAY
     else REPO / "maps" / "waypoints.yaml"
 ROUTES = REPO / "config" / "routes.yaml"
 CMD_TOPIC = "/cmd_vel_teleop"
+# Marks a leg that failed because THE WAY IS BLOCKED, as opposed to a timeout, an interrupt or a
+# safety gate. This is the distinction the escalation turns on: geometry having no answer is
+# exactly the evidence that the problem is semantic -- a door to be opened, a lift to be called,
+# a person to be asked -- and that is what the pipeline is for. Every other failure is a FAULT,
+# and putting a fault to a VLM would just be guessing with extra steps.
+STUCK = "STUCK: "
 SAFETY_STATUS_TOPIC = "/safety/status"
 RATE_HZ = 20.0
 ODOM_STALE_S = 0.5
@@ -106,6 +113,8 @@ class Runner(Node):
         # Watches whether the mux is actually passing our commands through. Without it a closed
         # gate is indistinguishable from a robot that will not drive. See safety/mux_watch.py.
         self.mux = MuxWatch(time.monotonic())
+        self.avoid = False          # set by --avoid; off by default
+        self._prev_avoid = None     # last steered bearing, for hysteresis
 
     def _odom(self, m) -> None:
         p = m.pose.pose
@@ -181,6 +190,26 @@ class Runner(Node):
             blocked = (self.scan is not None and
                        corridor_blocked(self.scan.ranges, self.scan.angle_min,
                                         self.scan.angle_increment))
+            # Reactive avoidance. Only while still TRAVELLING: inside the arrival zone the
+            # bearing to the goal swings wildly on millimetre drift, and the thing the scan sees
+            # may well be the goal's own surroundings.
+            avoiding = ""
+            if self.avoid and blocked and dist > 2.0 * lim.pos_tol_m:
+                ch = choose_heading(self.scan.ranges, self.scan.angle_min,
+                                    self.scan.angle_increment, bear,
+                                    prev_bearing_rad=self._prev_avoid)
+                if ch.bearing_rad is None:
+                    self.stop()
+                    return False, STUCK + f"no way around -- {ch.reason}"
+                # Steer down the gap instead of at the goal. dist is unchanged, so arrival
+                # still needs real progress -- this redirects the robot, it does not fake it.
+                bear = ch.bearing_rad
+                self._prev_avoid = ch.bearing_rad
+                blocked = False
+                avoiding = f"  [avoid] {ch.reason}"
+            elif not blocked:
+                self._prev_avoid = None
+
             step = plan_step(dist, bear, wrap(goal["yaw"] - th), blocked, lim,
                              prev_state=last or "")
             t = Twist(); t.linear.x = step.twist.vx; t.angular.z = step.twist.wz
@@ -196,8 +225,9 @@ class Runner(Node):
                 self.stop()
                 return False, v.reason
 
-            if step.state != last:
-                print(f"      [{step.state}] {dist:5.2f} m, bearing {math.degrees(bear):+6.1f} deg")
+            if step.state != last or avoiding:
+                print(f"      [{step.state}] {dist:5.2f} m, bearing "
+                      f"{math.degrees(bear):+6.1f} deg{avoiding}")
                 last = step.state
             if step.state == "arrived":
                 self.stop()
@@ -205,7 +235,7 @@ class Runner(Node):
             if step.state == "blocked":
                 # Hold, do not improvise. See the module docstring.
                 self.stop()
-                return False, "corridor blocked"
+                return False, STUCK + "corridor blocked"
         self.stop()
         return False, f"leg timed out after {LEG_TIMEOUT_S:.0f}s"
 
@@ -239,6 +269,36 @@ def run_blockage_check() -> dict:
                 "description": f"ask_blockage said: {(r.stdout or r.stderr).strip()[:200]}"}
 
 
+def escalate(st, step, why: str, sub_name: str, subroutes: dict, budget: dict) -> tuple[bool, str]:
+    """Geometry has run out. Ask what this thing IS, and act if it is something we can act on.
+
+    The POLICY -- when it is safe to act on the answer -- lives in safety/escalation.py, pure and
+    tested. This is only the plumbing: spend a unit of budget, capture and ask, then do what the
+    decision says. See that module for why every ambiguous case stops.
+    """
+    from safety.escalation import ACT, decide
+
+    check = None
+    if budget["left"] > 0:
+        budget["left"] -= 1
+        print(f"      {why}")
+        print("      geometry cannot solve this. Asking what it is...")
+        check = run_blockage_check()
+
+    d = decide(check, budget["left"] + 1 if check is not None else budget["left"],
+               budget["max"], why)
+    if d.action != ACT:
+        return False, d.message
+
+    print(f"      {d.message}")
+    print(f"      -> running '{sub_name}' ({len(subroutes[sub_name])} steps), then retrying "
+          f"this leg  [{budget['left']} escalation(s) left]")
+    # The branch, and then THIS SAME LEG again. Retrying is the point: pressing the button is
+    # only useful if we then go through the door it opened.
+    st.splice(list(subroutes[sub_name]) + [step])
+    return True, ""
+
+
 def run_action(step, dry: bool) -> tuple[bool, str]:
     cmd = list(ACTIONS[step.name])
     if step.params.get("query"):
@@ -262,6 +322,16 @@ def main() -> int:
                          "`waypoints.py record <name>`, then drive them.")
     ap.add_argument("--list", action="store_true", help="list routes and waypoints, then exit")
     ap.add_argument("--go", action="store_true", help="actually drive")
+    ap.add_argument("--avoid", action="store_true",
+                    help="steer around obstacles instead of stopping at them (reactive, uses "
+                         "the live scan only -- no map). It has NO MEMORY: a U-shape or dead end "
+                         "will trap it, and it stops rather than escaping.")
+    ap.add_argument("--on-blocked", metavar="ROUTE",
+                    help="when the way is blocked and there is no way around it, ASK: capture a "
+                         "frame, put it to the VLM, and if it is a blockage this route can act "
+                         "on, run that route and retry the leg. Fails closed on any doubt.")
+    ap.add_argument("--escalations", type=int, default=2,
+                    help="how many times a route may escalate before giving up (default 2)")
     ap.add_argument("--loops", type=int, default=1,
                     help="repeat the whole route N times. With --goto start,finish this drives "
                          "start->finish->start->finish..., re-squaring on the recorded start "
@@ -316,6 +386,21 @@ def main() -> int:
             subroutes[rname] = parse_route(rspec)
         except ValueError:
             pass    # its own validation will complain when someone tries to run it
+    # --on-blocked names a route that may run MID-DRIVE. Resolve and validate it now: a typo
+    # discovered by a KeyError while the robot is stopped in a doorway is not a good time.
+    if a.on_blocked:
+        if a.on_blocked not in subroutes:
+            print(f"--on-blocked route '{a.on_blocked}' not found. Known: "
+                  f"{sorted(subroutes)}", file=sys.stderr)
+            return 2
+        errs_b = validate_route(subroutes[a.on_blocked], set(wps), set(ACTIONS))
+        if errs_b:
+            print(f"--on-blocked route '{a.on_blocked}' WILL NOT RUN -- "
+                  f"{len(errs_b)} problem(s):", file=sys.stderr)
+            for e in errs_b:
+                print(f"  - {e}", file=sys.stderr)
+            return 3
+
     errs = validate_route(steps, set(wps), set(ACTIONS), subroutes)
     if errs:
         # Before anything moves. This is the whole point of validating a route as pure data.
@@ -349,6 +434,9 @@ def main() -> int:
     _signal.signal(_signal.SIGTERM, _on_sigint)
 
     n = Runner()
+    n.avoid = a.avoid
+    budget = {"left": max(0, a.escalations), "max": max(0, a.escalations)}
+    started = {"v": False}    # did we get past the preflights and actually begin driving?
     st = RouteState(steps)
     lim = Limits()
     try:
@@ -371,6 +459,11 @@ def main() -> int:
             for raw in (routes.get(st_.params.get("if_blocked")) or []):
                 if isinstance(raw, dict) and raw.get("goto"):
                     visited.add(raw["goto"])
+        # The escalation route's waypoints too -- it can fire on any leg, so it is not optional.
+        if a.on_blocked:
+            for st_ in subroutes[a.on_blocked]:
+                if st_.kind == GOTO:
+                    visited.add(st_.name)
         ok, why = check_session(wps, odom_session_id(n), names=visited)
         if not ok:
             print(f"\nSTALE WAYPOINTS -- not driving.\n  {why}", file=sys.stderr)
@@ -393,6 +486,7 @@ def main() -> int:
         if not ok:
             print(f"\nNOT DRIVING: {why}", file=sys.stderr)
             return 1
+        started["v"] = True
         print(f"\nSTART. odom {[round(v,2) for v in n.pose]}   Ctrl-C stops; E-stop is faster.\n")
         while not st.done and rclpy.ok():
             if _interrupted["v"]:
@@ -412,6 +506,8 @@ def main() -> int:
                     break
             if step.kind == GOTO:
                 ok, why = n.drive_leg(wps[step.name], lim)
+                if not ok and why.startswith(STUCK) and a.on_blocked:
+                    ok, why = escalate(st, step, why, a.on_blocked, subroutes, budget)
             elif step.kind == ACTION:
                 ok, why = run_action(step, dry=False)
             elif step.kind == CHECK:
@@ -438,8 +534,13 @@ def main() -> int:
         st.fail("interrupted by operator")
     finally:
         n.stop()
-        print(f"\n{st.progress()}")
-        print("stopped (zero published)")
+        # Only report progress if we actually got as far as driving. A preflight refusal that
+        # then prints "step 1/2: drive to 'start'" and "stopped (zero published)" reads exactly
+        # like a run that started and failed -- which is the opposite of what happened, and the
+        # wrong thing to be told when you are deciding whether the robot moved.
+        if started["v"]:
+            print(f"\n{st.progress()}")
+            print("stopped (zero published)")
         n.destroy_node()
         rclpy.shutdown()
     return 0 if not st.failed_reason else 1

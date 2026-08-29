@@ -123,6 +123,43 @@ That drives start -> finish -> start -> finish..., re-squaring on the recorded s
 so run 1 and run 100 are actually comparable. Drop `--confirm` once you trust it, or keep it and
 press Enter per leg.
 
+## Obstacles: steer, then ask
+
+Three tiers, and each hands off to the next only when it genuinely cannot answer.
+
+```bash
+# 1. stop at obstacles (default) -- safe, and what the first successful run used
+python3 bringup/route_run.py --goto start,finish --go
+
+# 2. steer around them, using the live scan only. No map, no localisation.
+python3 bringup/route_run.py --goto start,finish --avoid --go
+
+# 3. and when there is no way around, ASK the pipeline what it is
+python3 bringup/route_run.py --goto start,finish --avoid --on-blocked press_and_pass --go
+```
+
+**Why tier 3 is the interesting one.** A gap the robot fits through is arithmetic. A closed door
+is not -- no amount of steering opens it, and a 2D lidar cannot tell a shut door from a wall
+because geometrically they are the same thing. So local avoidance reporting "no way around" is
+precisely the evidence that the problem is semantic, and that is the moment to stop reasoning
+about shapes and ask what the obstruction MEANS.
+
+What the answer may authorise is one pre-written, pre-validated route, after which the leg is
+retried. The VLM chooses between reviewed plans -- act, or stop. It never composes motion.
+
+It stops, rather than acting, whenever the answer is ambiguous:
+
+| situation | what happens |
+|---|---|
+| VLM unreachable or unparseable | stop. Guessing in front of a glass door is the wrong way to be wrong. |
+| lidar says blocked, VLM says clear | stop, and report the disagreement. Glass, an obstacle under the scan plane, or a mis-set lidar height all look like this. Picking whichever sensor suits us is how a robot ends up in a door. |
+| `--escalations` budget spent (default 2) | stop. Repeating an action that did not work is not a plan. |
+
+**What `--avoid` cannot do**, and no amount of tuning fixes: it has no memory and no map, so a
+U-shape or a dead end traps it -- it steers into the pocket, finds no gap and stops. It cannot
+see glass. And every detour adds turns, which is where 4WS odometry degrades, so a long way round
+makes the goal coordinate itself less trustworthy. Avoidance is not free.
+
 ## The path between waypoints is straight
 
 Each leg is turn-to-bearing, then drive, then settle on the final heading. A "curvy" path is
