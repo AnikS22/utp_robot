@@ -269,8 +269,41 @@ def run_blockage_check() -> dict:
                 "description": f"ask_blockage said: {(r.stdout or r.stderr).strip()[:200]}"}
 
 
+# WHICH ROUTE CARRIES OUT WHICH ACTION. Fixed, and identical for every method -- that is the
+# point. A comparison is only about the reasoner if everything downstream of it is held constant,
+# so this table is not a per-method setting and must never become one. An action with no route on
+# this robot is recorded as chosen-but-unexecutable, which is an honest outcome and not a failure
+# of the reasoner that chose it.
+ACTION_ROUTES = {
+    "press_button": "press_and_pass",
+}
+# Reasoned conclusions that are ACTIONS OF RESTRAINT, not failures. On a negative control
+# (nothing is actually operable) these are the CORRECT answer, and scoring them as errors would
+# penalise exactly the behaviour the benchmark is trying to measure.
+RESTRAINT = {"none", "report_unreachable"}
+
+
+def ask_reasoner(capture: str, blockage: dict, method: str) -> dict:
+    """Hand the perceived blockage to the METHOD'S reasoner and return the Plan it chose.
+
+    Perception (ask_blockage) and reasoning (this) are separate calls on purpose: every method
+    gets the SAME perceived description, so a difference in outcome is a difference in reasoning
+    and not in what the camera happened to see that run.
+    """
+    import json as _json
+    if not PIPELINE_VENV.exists():
+        return {"error": f"pipeline venv missing at {PIPELINE_VENV}"}
+    r = subprocess.run([str(PIPELINE_VENV), str(REPO / "bringup" / "ask_plan.py"), str(capture),
+                        "--blockage", _json.dumps(blockage), "--method", method],
+                       capture_output=True, text=True)
+    try:
+        return _json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception:
+        return {"error": f"ask_plan gave no JSON: {(r.stdout or r.stderr).strip()[:200]}"}
+
+
 def escalate(st, step, why: str, sub_name: str, subroutes: dict, budget: dict,
-             quiet_if_clear: bool = False) -> tuple[bool, str]:
+             quiet_if_clear: bool = False, method: str | None = None) -> tuple[bool, str]:
     """Geometry has run out. Ask what this thing IS, and act if it is something we can act on.
 
     The POLICY -- when it is safe to act on the answer -- lives in safety/escalation.py, pure and
@@ -299,6 +332,32 @@ def escalate(st, step, why: str, sub_name: str, subroutes: dict, budget: dict,
         return False, d.message
 
     print(f"      {d.message}")
+
+    # WHO CHOOSES THE ACTION. Without --method, the operator did, by naming --on-blocked: fine
+    # for getting through a door, useless as evidence, because the answer was supplied before
+    # the robot saw anything. With --method, the method's reasoner chooses from the bounded tool
+    # list and this only carries it out.
+    if method:
+        plan = ask_reasoner(check.get("capture", ""), check, method)
+        if plan.get("error"):
+            return False, (f"reasoner ({method}) failed: {plan['error']} -- recorded as a "
+                           f"REASONER ERROR, which is not the same as an abstention")
+        act = plan.get("action_type", "none")
+        print(f"      [{plan.get('label', method)}] chose {act!r}"
+              + (" (abstain)" if plan.get("abstain") else ""))
+        if plan.get("rationale"):
+            print(f"        rationale: {plan['rationale'][:300]}")
+        if act in RESTRAINT:
+            return False, (f"{plan.get('label', method)} concluded {act!r} and did not act. "
+                           f"On a negative control that is the CORRECT outcome; here it means "
+                           f"the run ends without passing the obstruction.")
+        if act not in ACTION_ROUTES:
+            return False, (f"{plan.get('label', method)} chose {act!r}, which this robot has no "
+                           f"route for. Recorded as chosen-but-unexecutable.")
+        sub_name = ACTION_ROUTES[act]
+        if sub_name not in subroutes:
+            return False, f"action {act!r} maps to route '{sub_name}', which is not defined"
+
     print(f"      -> running '{sub_name}' ({len(subroutes[sub_name])} steps), then retrying "
           f"this leg  [{budget['left']} escalation(s) left]")
     # The branch, and then THIS SAME LEG again. Retrying is the point: pressing the button is
@@ -338,6 +397,12 @@ def main() -> int:
                     help="when the way is blocked and there is no way around it, ASK: capture a "
                          "frame, put it to the VLM, and if it is a blockage this route can act "
                          "on, run that route and retry the leg. Fails closed on any doubt.")
+    ap.add_argument("--method", metavar="KEY",
+                    help="run the trial as this method row from the pipeline's config/"
+                         "methods.yaml (ours | direct_vlm | heuristic | passive). Its REASONER "
+                         "chooses the action from the bounded tool list; what happens next is a "
+                         "fixed table, identical for every method. Without this, --on-blocked "
+                         "names the action and the run is a demonstration, not evidence.")
     ap.add_argument("--look-first", action="store_true",
                     help="ASK BEFORE EACH LEG, not only when geometry fails. Required for GLASS: "
                          "a 2D lidar cannot see it, so the veto never fires and --on-blocked is "
@@ -400,6 +465,11 @@ def main() -> int:
             pass    # its own validation will complain when someone tries to run it
     # --on-blocked names a route that may run MID-DRIVE. Resolve and validate it now: a typo
     # discovered by a KeyError while the robot is stopped in a doorway is not a good time.
+    # --method supplies the action, so --on-blocked is no longer needed to name one. Default it
+    # to the route the action table can reach, so `--method ours` alone is a complete trial.
+    if a.method and not a.on_blocked:
+        a.on_blocked = next(iter(ACTION_ROUTES.values()))
+
     if a.on_blocked:
         if a.on_blocked not in subroutes:
             print(f"--on-blocked route '{a.on_blocked}' not found. Known: "
@@ -517,19 +587,26 @@ def main() -> int:
                     st.fail("stopped by operator at confirm prompt")
                     break
             if step.kind == GOTO:
-                # LOOK BEFORE DRIVING. Measured on this robot 2026-08-29, parked in front of
-                # closed glass double doors: the lidar's nearest return within +-15 deg was
-                # 7.79 m, corridor_blocked was False, and local_avoid reported "clear toward the
-                # goal". The camera, asked at the same instant, returned
-                # {"kind": "door", "description": "closed glass double doors", "blocked": true}.
+                # LOOK BEFORE DRIVING -- because the camera sees FURTHER than the geometry
+                # layers act on, not because the lidar is blind.
                 #
-                # So escalation ON GEOMETRIC FAILURE alone cannot protect against glass: geometry
-                # never fails, it reports a clear path and the robot drives into the door at
-                # 0.25 m/s. The only sensor that sees glass here is the camera, so on legs where
-                # glass is possible the camera has to be asked BEFORE moving, not after failing.
+                # Measured 2026-08-29: the camera reported {"kind": "door", "description":
+                # "closed glass double doors", "blocked": true} while corridor_blocked was False
+                # and local_avoid said "clear toward the goal". That is NOT the lidar failing --
+                # the doors were ~8.96 m away (depth, frame centre) and the lidar had a return at
+                # 7.79 m. Both sensors saw the same thing; the veto box is 0.90 m and the
+                # avoidance horizon 2.0 m, so neither layer had any business reacting yet.
+                #
+                # What the check buys is KNOWING WHAT IS COMING while there is still room to act
+                # on it -- a door needing a button is a different plan, not a different steer,
+                # and the decision is better made at 9 m than at 0.9 m. Glass genuinely is a
+                # lidar blind spot (site risk S1) and this covers it, but that has NOT been
+                # demonstrated on this robot, and these doors carry tape precisely so it is not
+                # the failure mode here.
                 if a.look_first and a.on_blocked:
                     ok, why = escalate(st, step, STUCK + "looking before driving",
-                                       a.on_blocked, subroutes, budget, quiet_if_clear=True)
+                                       a.on_blocked, subroutes, budget, quiet_if_clear=True,
+                                       method=a.method)
                     if not ok:
                         st.fail(why)
                         break
@@ -537,7 +614,8 @@ def main() -> int:
                         continue      # a branch was spliced in; run it before this leg
                 ok, why = n.drive_leg(wps[step.name], lim)
                 if not ok and why.startswith(STUCK) and a.on_blocked:
-                    ok, why = escalate(st, step, why, a.on_blocked, subroutes, budget)
+                    ok, why = escalate(st, step, why, a.on_blocked, subroutes, budget,
+                                       method=a.method)
             elif step.kind == ACTION:
                 ok, why = run_action(step, dry=False)
             elif step.kind == CHECK:

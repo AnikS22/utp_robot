@@ -155,28 +155,34 @@ It stops, rather than acting, whenever the answer is ambiguous:
 | lidar says blocked, VLM says clear | stop, and report the disagreement. Glass, an obstacle under the scan plane, or a mis-set lidar height all look like this. Picking whichever sensor suits us is how a robot ends up in a door. |
 | `--escalations` budget spent (default 2) | stop. Repeating an action that did not work is not a plan. |
 
-### Glass: the case geometry cannot reach
+### Looking ahead: `--look-first`
 
-MEASURED on this robot, 2026-08-29, parked in front of closed glass double doors:
+MEASURED on this robot, 2026-08-29, pointed at closed glass double doors ~9 m away:
 
 | sensor | says |
 |---|---|
-| lidar, +-15 deg ahead | nearest return **7.79 m**; `corridor_blocked` **False**; `local_avoid` "clear toward the goal" |
-| camera, same instant | `{"kind": "door", "description": "closed glass double doors", "blocked": true}` |
+| camera | `{"kind": "door", "description": "closed glass double doors", "blocked": true}` |
+| lidar | a return at 7.79 m; `corridor_blocked` **False**; `local_avoid` "clear toward the goal" |
+| depth | doors at **8.96 m** (frame centre median) |
 
-So escalation on geometric failure ALONE cannot protect against glass. Geometry never fails --
-it reports a clear path, `--on-blocked` is never reached, and the robot drives into the door at
-0.25 m/s. The only sensor here that sees glass is the camera, so it has to be asked BEFORE
-moving:
+Read that carefully, because the obvious reading is wrong. This is **not** the lidar failing to
+see glass. Both sensors saw the same thing at ~8-9 m. The veto box is 0.90 m and the avoidance
+horizon 2.0 m, so neither geometry layer had any business reacting yet, and did not.
+
+What `--look-first` actually buys is **knowing what is coming while there is still room to act on
+it**. A door that needs a button pressed is a different PLAN, not a different steer, and that
+decision is better made at 9 m than at 0.9 m. Use it on legs that end at a door.
 
 ```bash
 python3 bringup/route_run.py --goto start,finish --avoid --look-first \
     --on-blocked press_and_pass --go
 ```
 
-`--look-first` asks once per leg (~6 s, one VLM call). A clear look costs no escalation budget
-and just drives. Use it on any leg where glass is possible -- which, in this building, is the
-door legs. Without it, `--avoid` alone is only safe against opaque obstacles.
+One VLM call per leg (~6 s). A clear look costs no escalation budget and just drives.
+
+Glass being invisible to 2D lidar is a real risk (site risk S1) and this covers it -- but it has
+NOT been demonstrated on this robot, and these doors carry tape precisely so that it is not the
+failure mode here.
 
 **What `--avoid` cannot do**, and no amount of tuning fixes: it has no memory and no map, so a
 U-shape or a dead end traps it -- it steers into the pocket, finds no gap and stops. It cannot
