@@ -85,6 +85,10 @@ LEG_TIMEOUT_S = 180
 # door -- hundreds of cycles pinned at 2.69 m, state turn_to_bearing every time, avoidance
 # happily reporting a way round on each one. Without this the leg burns its full 180 s and
 # reports "timed out", and the VLM is never asked.
+# Re-latch the steering command only when the gap has moved by more than this. Smaller values
+# re-steer the wheels more often than the body can respond; 8 deg is a little over the 5 deg of
+# cycle-to-cycle jitter measured at the door.
+STEER_RELATCH_RAD = math.radians(8.0)
 NO_PROGRESS_S = 25.0
 PROGRESS_EPS_M = 0.10
 _INTERRUPT = {"v": False}   # set by the SIGINT handler in main(); read inside the leg loop.0
@@ -125,7 +129,8 @@ class Runner(Node):
         # gate is indistinguishable from a robot that will not drive. See safety/mux_watch.py.
         self.mux = MuxWatch(time.monotonic())
         self.avoid = False          # set by --avoid; off by default
-        self._prev_avoid = None     # last steered bearing, for hysteresis
+        self._prev_avoid = None     # last steered bearing, for gap-choice hysteresis
+        self._steer_cmd = None      # LATCHED angular command; see the note in drive_leg
 
     def _odom(self, m) -> None:
         p = m.pose.pose
@@ -224,7 +229,18 @@ class Runner(Node):
                 # converges, because the gap is recomputed RELATIVE TO THE CURRENT HEADING every
                 # cycle, so it rotates with the robot. That is a tail-chase, and it is exactly
                 # what happened at the door: 2.69 m, turn_to_bearing, forever.
-                err = ch.bearing_rad
+                # LATCH THE STEER. The gap bearing jitters a degree or two every cycle as the
+                # scan changes, and re-issuing a slightly different angular command at 20 Hz is
+                # a MODE CHANGE the 4WS firmware answers by physically re-steering all four
+                # wheels -- so the wheels spend their time re-orienting and the body never
+                # commits. That is the mechanism behind the door livelock: heading wobbling
+                # +-4 deg, distance pinned at 2.69 m, avoidance reporting a way round every
+                # cycle. waypoint_drive has turn hysteresis for exactly this reason and my
+                # avoid path was bypassing it by overwriting the bearing each tick.
+                if self._steer_cmd is None or \
+                        abs(wrap(ch.bearing_rad - self._steer_cmd)) > STEER_RELATCH_RAD:
+                    self._steer_cmd = ch.bearing_rad
+                err = self._steer_cmd
                 w = max(-lim.w_max, min(lim.w_max, lim.k_ang * err))
                 if abs(err) > 1.2:      # gap is nearly abeam: turn first, briefly
                     v = 0.0
@@ -251,6 +267,7 @@ class Runner(Node):
                 continue
             elif not blocked:
                 self._prev_avoid = None
+                self._steer_cmd = None
 
             step = plan_step(dist, bear, wrap(goal["yaw"] - th), blocked, lim,
                              prev_state=last or "")
