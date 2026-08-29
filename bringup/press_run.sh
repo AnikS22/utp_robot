@@ -53,6 +53,14 @@ echo "=============================================================="
 [ -x "$VENV" ] || { echo "pipeline venv not found at $VENV" >&2; exit 1; }
 if [ -n "$QUERY" ]; then
     "$VENV" "$REPO/bringup/detect_frame.py" "$CAP" --query "$QUERY"
+
+# The last gate before the ARM moves. reach_control checks too, but this is the one that matters:
+# it is the only check between a grounded box and a fingertip on it, and press_run is runnable on
+# its own. Fails closed -- if it cannot answer, nothing is pressed. See safety/press_veto.py.
+"$VENV" "$REPO/bringup/check_press_safe.py" "$CAP" || {
+    echo "[press] REFUSED -- the arm will not be commanded at that target." >&2
+    exit 1
+}
 else
     "$VENV" "$REPO/bringup/detect_frame.py" "$CAP"
 fi

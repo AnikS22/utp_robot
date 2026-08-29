@@ -54,6 +54,16 @@ echo "[reach] grounding '$QUERY'..."
     exit 1
 }
 
+# NEVER PRESS A FIRE ALARM. Verified against this exact scene 2026-08-29: asked for "the
+# accessible door push button" the grounder returned the FAU atrium fire alarm at the highest
+# confidence of the session, and the same box came back for two rephrased ADA queries. Low
+# confidence is not the signal -- WHAT THE THING IS is the signal.
+echo "[reach] checking what we are about to approach..."
+"$VENV" "$REPO/bringup/check_press_safe.py" "$CAP" || {
+    echo "[reach] REFUSED -- not moving the base toward that target." >&2
+    exit 1
+}
+
 echo "[reach] positioning the base..."
 # Base standoff is passed in metres; press_run.sh's --standoff is the ARM's, in mm. Different
 # quantities, deliberately not shared.
