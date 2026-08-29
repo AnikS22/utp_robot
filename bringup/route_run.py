@@ -51,7 +51,7 @@ require_ros()
 
 import rclpy  # noqa: E402
 import yaml  # noqa: E402
-from geometry_msgs.msg import Twist  # noqa: E402
+from geometry_msgs.msg import Twist, Vector3  # noqa: E402
 from nav_msgs.msg import Odometry  # noqa: E402
 from rclpy.node import Node  # noqa: E402
 from rclpy.qos import qos_profile_sensor_data  # noqa: E402
@@ -79,6 +79,14 @@ SAFETY_STATUS_TOPIC = "/safety/status"
 RATE_HZ = 20.0
 ODOM_STALE_S = 0.5
 LEG_TIMEOUT_S = 180
+# No-progress watchdog. A leg that is COMMANDING MOTION but not closing on the goal is stuck,
+# and a stuck robot is a different thing from a blocked one: nothing geometric has failed, so
+# neither the corridor veto nor local avoidance will ever say so. Measured 2026-08-29 at a real
+# door -- hundreds of cycles pinned at 2.69 m, state turn_to_bearing every time, avoidance
+# happily reporting a way round on each one. Without this the leg burns its full 180 s and
+# reports "timed out", and the VLM is never asked.
+NO_PROGRESS_S = 25.0
+PROGRESS_EPS_M = 0.10
 _INTERRUPT = {"v": False}   # set by the SIGINT handler in main(); read inside the leg loop.0
 
 # Actions are shell-outs on purpose: the grounder needs torch (the pipeline venv) and this node
@@ -175,6 +183,8 @@ class Runner(Node):
 
     def drive_leg(self, goal: dict, lim: Limits) -> tuple[bool, str]:
         deadline = time.monotonic() + LEG_TIMEOUT_S
+        best_dist = float("inf")
+        progress_t = time.monotonic()
         # Anything before this leg may have blocked the thread for seconds without spinning
         # (a --confirm prompt, an action subprocess, a wait). Staleness cannot tell "the mux
         # went quiet" from "we stopped listening", so the clocks start fresh here.
@@ -206,10 +216,39 @@ class Runner(Node):
                     return False, STUCK + f"no way around -- {ch.reason}"
                 # Steer down the gap instead of at the goal. dist is unchanged, so arrival
                 # still needs real progress -- this redirects the robot, it does not fake it.
-                bear = ch.bearing_rad
                 self._prev_avoid = ch.bearing_rad
                 blocked = False
                 avoiding = f"  [avoid] {ch.reason}"
+                # STEER WHILE DRIVING. Feeding this bearing to plan_step as if it were the goal
+                # bearing makes it stop and turn until the heading converges -- and it never
+                # converges, because the gap is recomputed RELATIVE TO THE CURRENT HEADING every
+                # cycle, so it rotates with the robot. That is a tail-chase, and it is exactly
+                # what happened at the door: 2.69 m, turn_to_bearing, forever.
+                err = ch.bearing_rad
+                w = max(-lim.w_max, min(lim.w_max, lim.k_ang * err))
+                if abs(err) > 1.2:      # gap is nearly abeam: turn first, briefly
+                    v = 0.0
+                else:                   # otherwise drive, easing off as the steer sharpens
+                    v = max(lim.v_min, lim.v_max * (1.0 - abs(err) / 1.6))
+                self.pub.publish(Twist(linear=Vector3(x=v), angular=Vector3(z=w)))
+                now = time.monotonic()
+                self.mux.note_command(not (v == 0.0 and w == 0.0), now)
+                vd = self.mux.verdict(now)
+                if not vd.ok:
+                    self.stop()
+                    return False, vd.reason
+                if dist < best_dist - PROGRESS_EPS_M:
+                    best_dist, progress_t = dist, now
+                if now - progress_t > NO_PROGRESS_S:
+                    self.stop()
+                    return False, STUCK + (f"no progress for {NO_PROGRESS_S:.0f}s while steering "
+                                           f"around an obstruction -- still {dist:.2f} m out")
+                if avoiding:
+                    print(f"      [avoid] {dist:5.2f} m  steer "
+                          f"{math.degrees(err):+6.1f} deg  v={v:.2f}  {ch.reason}")
+                    last = "avoid"
+                time.sleep(max(0.0, 1.0/RATE_HZ - 0.005))
+                continue
             elif not blocked:
                 self._prev_avoid = None
 
@@ -232,6 +271,13 @@ class Runner(Node):
                 print(f"      [{step.state}] {dist:5.2f} m, bearing "
                       f"{math.degrees(bear):+6.1f} deg{avoiding}")
                 last = step.state
+            if dist < best_dist - PROGRESS_EPS_M:
+                best_dist, progress_t = dist, time.monotonic()
+            elif (step.twist.vx or step.twist.wz) and \
+                    time.monotonic() - progress_t > NO_PROGRESS_S:
+                self.stop()
+                return False, STUCK + (f"no progress for {NO_PROGRESS_S:.0f}s while commanding "
+                                       f"motion -- still {dist:.2f} m out, state {step.state!r}")
             if step.state == "arrived":
                 self.stop()
                 return True, ""
