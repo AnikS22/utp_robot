@@ -41,14 +41,39 @@ while [ $# -gt 0 ]; do
 done
 CAP="$REPO/captures/$NAME"
 
+# READY BEFORE LOOKING. The camera is on the mast, and with the arm STOWED the folded arm sits
+# in the lower-centre of the frame -- exactly where a plate 0.7 m dead ahead appears. Measured
+# 2026-08-29: from the press pose the grounder returned the FIRE alarm because the plate was behind
+# the housing (veto refused it); with the arm in the READY pose the same camera saw the plate
+# plainly (0.413, SAFE) and its direct 3D lift put it 10 cm right and 5 cm above where a target
+# reprojected through odometry had sent the arm -- which is why that press missed a 12 cm plate.
+# Raise the arm first, THEN look, and the target the arm aims at was measured from where the arm is.
+echo
 echo "=============================================================="
-echo " 1/6  LOOK      capturing an aligned RGB-D frame"
+echo " 1/6  READY     wrist to the press orientation (clears the camera view)"
+echo "=============================================================="
+# Stow and press are different orientations: stow folds the wrist to J5=90 so the tool points up
+# out of the way; a press needs it pointing AT the wall (J5 ~ 2.5). approach_target.py holds
+# whatever orientation the arm starts in, so approaching straight out of stow reaches at the stow
+# angle and skids off a round button. The ready pose is the OPERATOR'S, captured with
+# `stow_arm.py --save-ready`, not a number invented here.
+if [ "$MODE" = "--go" ]; then
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --ready --go || {
+        echo "could not reach the press-ready pose; not approaching" >&2; exit 5; }
+else
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --ready || true
+fi
+
+
+echo
+echo "=============================================================="
+echo " 2/6  LOOK      capturing an aligned RGB-D frame"
 echo "=============================================================="
 python3 "$REPO/bringup/grab_frame.py" --name "$NAME" --timeout 45
 
 echo
 echo "=============================================================="
-echo " 2/6  GROUND    running the shipped detector on that frame"
+echo " 3/6  GROUND    running the shipped detector on that frame"
 echo "=============================================================="
 [ -x "$VENV" ] || { echo "pipeline venv not found at $VENV" >&2; exit 1; }
 # PREFER A FRESH REPROJECTED TARGET. At the press standoff the plate is dead ahead at ~0.7 m,
@@ -56,12 +81,22 @@ echo "=============================================================="
 # FIRE alarm (2026-08-29) and the veto refused it. face_target/reproject_target write the plate's
 # position -- grounded and vetoed from further back -- re-expressed at THIS pose. Use it if it is
 # recent; otherwise ground as before. The veto still runs on the fresh frame either way.
+# The reprojected target is NOT used to aim any more -- it missed by 10 cm. It is kept as a
+# CROSS-CHECK: the direct grounding (arm up, camera clear) and the odometry-reprojected point
+# should agree to within the plate's size; if they do not, something upstream is wrong and the
+# arm does not move. Free consistency test on odom + calibration, every press.
 PT="$REPO/captures/press_target.json"
-if [ -f "$PT" ] && python3 -c "import json,sys,time; d=json.load(open('$PT')); sys.exit(0 if time.time()-d.get('written_at',0) < 300 else 1)"; then
-    echo "  using reprojected target from $PT ($(python3 -c "import json;print(json.load(open('$PT'))['source'])"))"
-    cp "$PT" "$CAP/detection.json"
-elif [ -n "$QUERY" ]; then
+if [ -n "$QUERY" ]; then
     "$VENV" "$REPO/bringup/detect_frame.py" "$CAP" --query "$QUERY"
+    if [ -f "$CAP/detection.json" ] && [ -f "$PT" ] && python3 -c "import json,sys,time; d=json.load(open('$PT')); sys.exit(0 if time.time()-d.get('written_at',0) < 300 else 1)"; then
+        python3 - "$CAP/detection.json" "$PT" <<'EOF' || { echo "[press] REFUSED -- direct grounding and reprojected target disagree" >&2; exit 1; }
+import json, math, sys
+a = json.load(open(sys.argv[1]))["point3d_cam_m"]; b = json.load(open(sys.argv[2]))["point3d_cam_m"]
+d = math.dist(a, b)
+print(f"  cross-check: direct grounding vs odometry-reprojected target differ by {d*100:.1f} cm")
+sys.exit(0 if d < 0.20 else 1)
+EOF
+    fi
 
 else
     "$VENV" "$REPO/bringup/detect_frame.py" "$CAP"
@@ -83,7 +118,7 @@ fi
 
 echo
 echo "=============================================================="
-echo " 3/6  SHOW      opening what the detector chose"
+echo " 4/6  SHOW      opening what the detector chose"
 echo "=============================================================="
 echo "  $CAP/detection.png   (green = chosen, orange = runners-up)"
 if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
@@ -91,22 +126,6 @@ if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
     sleep 1
 else
     echo "  (no display; open it yourself)"
-fi
-
-echo
-echo "=============================================================="
-echo " 4/6  READY     wrist to the press orientation"
-echo "=============================================================="
-# Stow and press are different orientations: stow folds the wrist to J5=90 so the tool points up
-# out of the way; a press needs it pointing AT the wall (J5 ~ 2.5). approach_target.py holds
-# whatever orientation the arm starts in, so approaching straight out of stow reaches at the stow
-# angle and skids off a round button. The ready pose is the OPERATOR'S, captured with
-# `stow_arm.py --save-ready`, not a number invented here.
-if [ "$MODE" = "--go" ]; then
-    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --ready --go || {
-        echo "could not reach the press-ready pose; not approaching" >&2; exit 5; }
-else
-    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --ready || true
 fi
 
 echo
