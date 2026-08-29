@@ -89,6 +89,9 @@ LEG_TIMEOUT_S = 180
 # re-steer the wheels more often than the body can respond; 8 deg is a little over the 5 deg of
 # cycle-to-cycle jitter measured at the door.
 STEER_RELATCH_RAD = math.radians(8.0)
+# A leg blocked this close to its goal has reached the wall the goal sits against: report
+# arrived rather than STUCK, and let the visual step finish. Just over the veto's look-ahead.
+ARRIVED_SHORT_M = 1.05
 NO_PROGRESS_S = 25.0
 PROGRESS_EPS_M = 0.10
 _INTERRUPT = {"v": False}   # set by the SIGINT handler in main(); read inside the leg loop.0
@@ -306,7 +309,22 @@ class Runner(Node):
                 self.stop()
                 return True, ""
             if step.state == "blocked":
-                # Hold, do not improvise. See the module docstring.
+                # ARRIVED SHORT. A waypoint recorded AT a wall -- the press pose, 0.55 m off the
+                # plate -- sits inside the driving veto's 0.90 m box, so the leg can never close on
+                # it: the veto fires with the goal a metre ahead and the route dies as STUCK.
+                # Measured in sim 2026-08-29 ("[blocked] 0.96 m"); hardware avoided it only
+                # because the recorded button pose happened to be 1.6 m out. The driving
+                # controller cannot finish a leg that ends against an obstruction and should not
+                # try; the visual step (reach_control) closes the last metre on the grounded
+                # control. isaac_world._approach_press_pose makes the same call: "accept EITHER
+                # arriving OR stopping squared-up against the target's wall as positioned".
+                if dist <= ARRIVED_SHORT_M:
+                    self.stop()
+                    print(f"      [arrived-short] {dist:.2f} m from the goal with the corridor "
+                          f"blocked ahead -- the goal is at the obstruction; leaving the rest to "
+                          f"the visual step")
+                    return True, ""
+                # Otherwise: hold, do not improvise. See the module docstring.
                 self.stop()
                 return False, STUCK + "corridor blocked"
         self.stop()
