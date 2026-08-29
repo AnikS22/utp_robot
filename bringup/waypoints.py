@@ -273,6 +273,107 @@ def cmd_goto(n: Pose, a) -> int:
     return 0
 
 
+ANCHORS = REPO / "maps"
+
+
+def _collect_scans(n: Pose, count: int, timeout: float = 15.0) -> list:
+    """`count` distinct /scan_filtered sweeps from the current (stationary) pose."""
+    seen = set()
+    out = []
+    end = time.monotonic() + timeout
+    while rclpy.ok() and time.monotonic() < end and len(out) < count:
+        rclpy.spin_once(n, timeout_sec=0.1)
+        s = n.scan
+        if s is None:
+            continue
+        key = (s.header.stamp.sec, s.header.stamp.nanosec)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"ranges": [float(r) for r in s.ranges], "angle_min": float(s.angle_min),
+                    "angle_increment": float(s.angle_increment)})
+    return out
+
+
+def cmd_anchor(n: Pose, a) -> int:
+    """Save a dense lidar reference at the current pose, so this frame can be re-found later.
+
+    WHY. Odometry drifts; session ids only catch a driver restart. Measured 2026-08-29: from one
+    recorded 'button' two runs landed 1.6-1.7 m from the plate. The operator's requirement is
+    "make sure the coordinates for each run are good so I don't have to re-record before every
+    run". The lidar measures the static world, so a scan saved HERE, now, is a landmark that
+    `relocalize` can match against on every later run -- and it takes twenty sweeps, not one,
+    because this A1M8 returns on ~13% of beams and a single sweep is too sparse to match to.
+    """
+    if not n.wait_for_pose():
+        print("no /odom", file=sys.stderr)
+        return 1
+    scans = _collect_scans(n, count=20)
+    if len(scans) < 10:
+        print(f"only {len(scans)} scans in 15 s -- is bringup/lidar.sh running?", file=sys.stderr)
+        return 1
+    x, y, th = n.pose
+    sid = odom_session_id(n)
+    f = ANCHORS / f"anchor_{a.name}.json"
+    f.write_text(json.dumps({"name": a.name, "pose": [x, y, th], "odom_session": sid,
+                             "odom_epoch": round(time.time()), "scans": scans}))
+    nvalid = sum(1 for s_ in scans for r in s_["ranges"] if r == r and 0.25 < r < 12.0)
+    print(f"anchored '{a.name}' at x={x:+.3f} y={y:+.3f} yaw={math.degrees(th):+.1f} deg: "
+          f"{len(scans)} sweeps, {nvalid} usable returns -> {f}")
+    return 0
+
+
+def cmd_relocalize(n: Pose, a) -> int:
+    """Match a live scan to a saved anchor and re-express every waypoint in the CURRENT frame.
+
+    Park the robot roughly where the anchor was taken (within ~1 m and ~40 deg) and run this
+    before a route. It refuses -- and says why -- when the match is weak, so a bad alignment is
+    never silently written over good coordinates.
+    """
+    from safety.scan_anchor import accumulate, apply_transform, relocalize, scan_to_points
+    f = ANCHORS / f"anchor_{a.name}.json"
+    if not f.exists():
+        print(f"no anchor '{a.name}' -- record one with: waypoints.py anchor {a.name}",
+              file=sys.stderr)
+        return 2
+    anc = json.loads(f.read_text())
+    if not n.wait_for_pose():
+        print("no /odom", file=sys.stderr)
+        return 1
+    live_scans = _collect_scans(n, count=3)
+    if not live_scans:
+        print("no /scan_filtered -- is bringup/lidar.sh running?", file=sys.stderr)
+        return 1
+    ref = accumulate([s_["ranges"] for s_ in anc["scans"]], anc["scans"][0]["angle_min"],
+                     anc["scans"][0]["angle_increment"])
+    live = accumulate([s_["ranges"] for s_ in live_scans], live_scans[0]["angle_min"],
+                      live_scans[0]["angle_increment"])
+    m, T = relocalize(tuple(anc["pose"]), live, ref, tuple(n.pose))
+    print(f"match: dx={m.dx:+.3f} m dy={m.dy:+.3f} m dyaw={math.degrees(m.dyaw):+.1f} deg   "
+          f"residual {m.residual_m*100:.1f} cm  margin {m.margin*100:.0f}%  "
+          f"(live {m.n_live} pts, ref {m.n_ref} pts)")
+    if T is None:
+        print(f"NOT APPLIED: {m.why_not()}", file=sys.stderr)
+        return 1
+    tx, ty, tyaw = T
+    print(f"frame correction: shift ({tx:+.3f}, {ty:+.3f}) m, rotate {math.degrees(tyaw):+.2f} deg")
+    d = load()
+    sid = odom_session_id(n)
+    out = {}
+    for k, v in d.items():
+        x2, y2, yaw2 = apply_transform(T, (v["x"], v["y"], v["yaw"]))
+        out[k] = {**v, "x": round(x2, 4), "y": round(y2, 4), "yaw": round(yaw2, 4),
+                  "odom_epoch": round(time.time()), SESSION_KEY: sid}
+        print(f"  {k:<12} ({v['x']:+7.3f},{v['y']:+7.3f},{math.degrees(v['yaw']):+7.1f}) -> "
+              f"({x2:+7.3f},{y2:+7.3f},{math.degrees(yaw2):+7.1f})")
+    if not a.go:
+        print("\nDRY RUN. Add --go to write.")
+        return 0
+    save(out)
+    print(f"\nrelocalized {len(out)} waypoints -> {STORE}")
+    return 0
+
+
 def cmd_derive(n: Pose, a) -> int:
     """A waypoint at an EXISTING one's spot, turned to face ANOTHER one. No driving, no /odom.
 
@@ -353,6 +454,12 @@ def main() -> int:
     pj.add_argument("name"); pj.add_argument("--from", dest="src", required=True)
     pj.add_argument("--forward", type=float, required=True, help="metres ahead, 0.3..6.0")
     pj.set_defaults(fn=cmd_project)
+    an = sub.add_parser("anchor", help="save a lidar landmark at the current pose")
+    an.add_argument("name"); an.set_defaults(fn=cmd_anchor)
+    rl = sub.add_parser("relocalize", help="match the live scan to an anchor and re-express "
+                                            "every waypoint in the current odom frame")
+    rl.add_argument("name"); rl.add_argument("--go", action="store_true")
+    rl.set_defaults(fn=cmd_relocalize)
     g = sub.add_parser("goto"); g.add_argument("name")
     g.add_argument("--force", action="store_true",
                    help="drive even if the waypoint is from a dead odom session (it will be wrong)")
