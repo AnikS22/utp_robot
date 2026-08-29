@@ -58,7 +58,9 @@ from rclpy.qos import qos_profile_sensor_data  # noqa: E402
 from sensor_msgs.msg import LaserScan  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
 
+from odom_session import odom_session_id  # noqa: E402
 from safety.mux_watch import MuxWatch  # noqa: E402
+from safety.waypoint_frame import check_session  # noqa: E402
 from safety.route_plan import ACTION, CHECK, GOTO, WAIT, RouteState, parse_route, validate_route  # noqa: E402
 from safety.waypoint_drive import Limits, corridor_blocked, plan_step, to_goal, wrap  # noqa: E402
 
@@ -325,6 +327,24 @@ def main() -> int:
         # Prove the mux is alive and permitting BEFORE the first leg. Every gate is fail-closed,
         # so the default state of this robot is "will not move"; starting a route without
         # checking means discovering that fact one 180 s leg timeout at a time.
+        # Are these coordinates even in the frame the robot is living in? Odom re-zeroes on
+        # every ranger_base restart. Checked for every waypoint the route VISITS, including the
+        # ones inside branches -- a branch that fires mid-run must not be the thing that
+        # discovers its waypoints are three days old.
+        visited = {st_.name for st_ in steps if st_.kind == GOTO}
+        # Only branches THIS route can actually reach. Checking every route in the file would
+        # refuse a run because some unrelated route mentions a stale waypoint.
+        for st_ in steps:
+            if st_.kind != CHECK:
+                continue
+            for raw in (routes.get(st_.params.get("if_blocked")) or []):
+                if isinstance(raw, dict) and raw.get("goto"):
+                    visited.add(raw["goto"])
+        ok, why = check_session(wps, odom_session_id(n), names=visited)
+        if not ok:
+            print(f"\nSTALE WAYPOINTS -- not driving.\n  {why}", file=sys.stderr)
+            return 1
+
         ok, why = n.wait_for_permission()
         if not ok:
             print(f"\nNOT DRIVING: {why}", file=sys.stderr)

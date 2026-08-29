@@ -50,6 +50,8 @@ from sensor_msgs.msg import LaserScan
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+from odom_session import odom_session_id  # noqa: E402
+from safety.waypoint_frame import SESSION_KEY, check_session  # noqa: E402
 from safety.waypoint_drive import Limits, corridor_blocked, plan_step, to_goal, wrap  # noqa: E402
 
 # UTP_WAYPOINTS: alternate store, so a SIM run (domain 42) can never read or clobber the
@@ -117,8 +119,14 @@ def cmd_record(n: Pose, a) -> int:
         return 1
     x, y, th = n.pose
     d = load()
+    sess = odom_session_id(n)
+    if sess is None:
+        print("cannot identify the /odom publisher (absent, or more than one -- run "
+              "bringup/health.py). Refusing to record a waypoint that cannot be validated later.",
+              file=sys.stderr)
+        return 1
     d[a.name] = {"x": round(x, 4), "y": round(y, 4), "yaw": round(th, 4),
-                 "odom_epoch": round(x*0 + time.time())}
+                 "odom_epoch": round(time.time()), SESSION_KEY: sess}
     save(d)
     print(f"recorded '{a.name}': x={x:+.3f} y={y:+.3f} yaw={math.degrees(th):+.1f} deg")
     print(f"  -> {STORE}")
@@ -169,13 +177,22 @@ def cmd_rebase(n: Pose, a) -> int:
     if not d:
         print("no waypoints to rebase", file=sys.stderr)
         return 1
+    new_session = odom_session_id(n)
+    if new_session is None:
+        print("cannot identify the /odom publisher -- start ranger_bringup first, so the rebased "
+              "waypoints can be stamped with the session they are valid in.", file=sys.stderr)
+        return 1
     c, s_ = math.cos(oyaw), math.sin(oyaw)
     out = {}
     for k, v in d.items():
         dx, dy = v["x"] - ox, v["y"] - oy
+        # Re-stamp with the CURRENT session. Rebasing that left the old id in place would
+        # produce waypoints that are correct and still refused; dropping it, as this did before,
+        # produced waypoints that are correct and unverifiable.
         out[k] = {"x": round(dx*c + dy*s_, 4),
                   "y": round(-dx*s_ + dy*c, 4),
-                  "yaw": round(wrap(v["yaw"] - oyaw), 4)}
+                  "yaw": round(wrap(v["yaw"] - oyaw), 4),
+                  "odom_epoch": round(time.time()), SESSION_KEY: new_session}
         print(f"  {k:<18} ({v['x']:+7.3f},{v['y']:+7.3f},{math.degrees(v['yaw']):+7.1f}) -> "
               f"({out[k]['x']:+7.3f},{out[k]['y']:+7.3f},{math.degrees(out[k]['yaw']):+7.1f})")
     if not a.go:
@@ -195,6 +212,14 @@ def cmd_goto(n: Pose, a) -> int:
     if not n.wait_for_pose():
         print("no /odom -- is ranger_bringup running?", file=sys.stderr)
         return 1
+
+    ok, why = check_session(d, odom_session_id(n), names={a.name})
+    if not ok:
+        print(f"\nSTALE WAYPOINT -- not driving.\n  {why}", file=sys.stderr)
+        if not a.force:
+            return 1
+        print("  --force given: driving anyway. The coordinate may be meaningless.",
+              file=sys.stderr)
 
     lim = Limits()
     pub = n.create_publisher(Twist, CMD_TOPIC, 10)
@@ -266,7 +291,8 @@ def cmd_derive(n: Pose, a) -> int:
         return 1
     yaw = math.atan2(dy, dx)
     d[a.name] = {"x": src["x"], "y": src["y"], "yaw": round(yaw, 4),
-                 "odom_epoch": src.get("odom_epoch", 0)}
+                 "odom_epoch": src.get("odom_epoch", 0),
+                 SESSION_KEY: src.get(SESSION_KEY)}
     save(d)
     print(f"derived '{a.name}': at '{a.at}' (x={src['x']:+.3f} y={src['y']:+.3f}), "
           f"facing '{a.facing}' -> yaw={math.degrees(yaw):+.1f} deg")
@@ -292,7 +318,8 @@ def cmd_project(n: Pose, a) -> int:
     src = d[a.src]
     d[a.name] = {"x": round(src["x"] + a.forward * math.cos(src["yaw"]), 4),
                  "y": round(src["y"] + a.forward * math.sin(src["yaw"]), 4),
-                 "yaw": src["yaw"], "odom_epoch": src.get("odom_epoch", 0)}
+                 "yaw": src["yaw"], "odom_epoch": src.get("odom_epoch", 0),
+                 SESSION_KEY: src.get(SESSION_KEY)}
     save(d)
     v = d[a.name]
     print(f"projected '{a.name}': {a.forward:.2f} m ahead of '{a.src}' -> "
@@ -324,6 +351,8 @@ def main() -> int:
     pj.add_argument("--forward", type=float, required=True, help="metres ahead, 0.3..6.0")
     pj.set_defaults(fn=cmd_project)
     g = sub.add_parser("goto"); g.add_argument("name")
+    g.add_argument("--force", action="store_true",
+                   help="drive even if the waypoint is from a dead odom session (it will be wrong)")
     g.add_argument("--go", action="store_true", help="actually move the robot")
     g.add_argument("--timeout", type=float, default=120.0)
     g.set_defaults(fn=cmd_goto)

@@ -1,6 +1,14 @@
 # Waypoints in the ODOM frame. Only meaningful within one continuous run of the ranger
 # driver: restarting it re-zeros odom and silently invalidates every entry here.
-# The 'odom_epoch' field is how you tell. See bringup/waypoints.py.
+# The 'odom_session' field is how you tell: it is the DDS GID of the /odom publisher,
+# which is a new value for every driver instance. Entries below have none -- they were
+# recorded 2026-08-26 20:10 EDT, before the guard existed, and the driver has restarted
+# many times since. They are kept only as a record of what was recorded; every one of
+# these coordinates is in a frame that no longer exists. Re-record before driving.
+#
+# 'odom_epoch' is wall-clock-at-record-time. It is human-readable provenance and NOTHING
+# reads it: it differs for every recording by construction, so it never could identify a
+# session. See safety/waypoint_frame.py.
 button:
   odom_epoch: 1787789468
   x: 2.0477
