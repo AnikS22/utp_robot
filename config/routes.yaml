@@ -89,6 +89,12 @@ routes:
   # taken there. approach_blockage has no idea what a button is, and must not.
   press_and_pass_visual:
     - action: approach_blockage
+    # Then bring the CONTROL into reach. approach_blockage stops 0.55 m from the DOOR; the plate
+    # is on the wall beside it, measured 2026-08-29 at 5.51 m range and +25.1 deg bearing from
+    # the door-facing pose -- out of the 0.88 m arm envelope by 4.63 m. Grounding it perfectly
+    # would still have reached nothing.
+    - action: reach_control
+      query: "the accessible door push button"
     - action: press_button
       query: "the accessible door push button"
       standoff: 60

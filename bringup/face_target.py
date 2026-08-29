@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""Put a grounded control within arm reach: yaw to face it, step in to the press standoff.
+
+    python3 bringup/face_target.py captures/button_probe --dry-run
+    python3 bringup/face_target.py captures/button_probe --standoff 0.55
+
+THE ROBOT DRIVES unless --dry-run. It steps toward a wall and stops at the standoff.
+
+THE GAP THIS FILLS. approach_blockage stops the base ~0.55 m from the OBSTRUCTION -- the door.
+The control that opens it is on the wall BESIDE the door, so from a door-facing pose it is
+routinely outside the arm's 0.88 m envelope, and the grounder having found it perfectly changes
+nothing. isaac_world.act() has solved this since it was written ("POSITION the base within arm
+reach of the target, then let the arm IK make the final reach"; _approach_press_pose faces the
+grounded button and steps in). ros_world.act() went straight from detection to the arm, so on
+hardware the base never repositioned at all.
+
+RE-GROUND AFTERWARDS, ALWAYS. The 3D point is expressed in the camera frame AT THE MOMENT OF
+CAPTURE. Move the base and it is stale, and staleness here is silent: isaac_world records a case
+where the base yawed 0.69 rad between observing and pressing, which swings a target 1 m out by
+about half a metre -- the arm reached confidently at blank wall and the trial was booked as a
+GROUNDING failure although the detector and the reasoner had both been right. The sim solves that
+by lifting the point with the OBSERVATION pose. Hardware can do better: take a fresh frame from
+the new pose and ground again, so the number the arm aims at was measured from where the arm
+actually is. This tool therefore MOVES ONLY. It never hands a transformed point to the arm.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+import time
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(REPO / "bringup"))
+from _ros_env import require_ros  # noqa: E402
+require_ros()
+
+import rclpy  # noqa: E402
+from geometry_msgs.msg import Twist, Vector3  # noqa: E402
+from nav_msgs.msg import Odometry  # noqa: E402
+from rclpy.node import Node  # noqa: E402
+from rclpy.qos import qos_profile_sensor_data  # noqa: E402
+from sensor_msgs.msg import LaserScan  # noqa: E402
+from std_msgs.msg import String  # noqa: E402
+
+from safety.mux_watch import MuxWatch  # noqa: E402
+from safety.waypoint_drive import Limits, corridor_blocked, wrap  # noqa: E402
+
+CMD_TOPIC = "/cmd_vel_teleop"
+RATE_HZ = 20.0
+ARM_REACH_M = 0.88          # xArm6 envelope with the riser fitted (HARDWARE_SPECS)
+PRESS_STANDOFF_M = 0.55     # the press pose proven on 2026-08-25
+YAW_TOL = math.radians(4.0)
+POS_TOL_M = 0.06
+
+
+def yaw_of(q) -> float:
+    return math.atan2(2*(q.w*q.z + q.x*q.y), 1 - 2*(q.y*q.y + q.z*q.z))
+
+
+class Facer(Node):
+    def __init__(self) -> None:
+        super().__init__("utp_face_target")
+        self.pose = None
+        self.stamp = 0.0
+        self.scan = None
+        self.tfb = None
+        self.create_subscription(Odometry, "/odom", self._odom, 10)
+        self.create_subscription(LaserScan, "/scan_filtered", self._scan, qos_profile_sensor_data)
+        self.create_subscription(String, "/safety/status", self._safety, 10)
+        self.pub = self.create_publisher(Twist, CMD_TOPIC, 10)
+        self.mux = MuxWatch(time.monotonic())
+        from tf2_ros import Buffer, TransformListener
+        self.tfb = Buffer()
+        self.tfl = TransformListener(self.tfb, self, spin_thread=False)
+
+    def _odom(self, m) -> None:
+        p = m.pose.pose
+        self.pose = (p.position.x, p.position.y, yaw_of(p.orientation))
+        self.stamp = time.monotonic()
+
+    def _scan(self, m) -> None:
+        self.scan = m
+
+    def _safety(self, m) -> None:
+        try:
+            self.mux.note_status(json.loads(m.data).get("blocked_by"), time.monotonic())
+        except (ValueError, TypeError):
+            pass
+
+    def wait(self, t: float = 8.0) -> bool:
+        end = time.monotonic() + t
+        while rclpy.ok() and time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if self.pose is not None:
+                return True
+        return False
+
+    def to_base(self, p_cam, frame: str, timeout: float = 5.0):
+        """Camera optical frame -> base_link, via /tf. None if the transform never arrives."""
+        import numpy as np
+        end = time.monotonic() + timeout
+        while rclpy.ok() and time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if self.tfb.can_transform("base_link", frame, rclpy.time.Time()):
+                break
+        else:
+            return None
+        if not self.tfb.can_transform("base_link", frame, rclpy.time.Time()):
+            return None
+        t = self.tfb.lookup_transform("base_link", frame, rclpy.time.Time())
+        q, v = t.transform.rotation, t.transform.translation
+        x, y, z, w = q.x, q.y, q.z, q.w
+        R = np.array([
+            [1-2*(y*y+z*z), 2*(x*y-z*w),   2*(x*z+y*w)],
+            [2*(x*y+z*w),   1-2*(x*x+z*z), 2*(y*z-x*w)],
+            [2*(x*z-y*w),   2*(y*z+x*w),   1-2*(x*x+y*y)]])
+        return (R @ np.asarray(p_cam, dtype=float)) + np.array([v.x, v.y, v.z])
+
+    def stop(self) -> None:
+        for _ in range(5):
+            self.pub.publish(Twist())
+            time.sleep(0.02)
+
+    def _drive(self, v: float, w: float) -> bool:
+        self.pub.publish(Twist(linear=Vector3(x=v), angular=Vector3(z=w)))
+        now = time.monotonic()
+        self.mux.note_command(not (v == 0.0 and w == 0.0), now)
+        return self.mux.verdict(now).ok
+
+    def turn_to(self, target_yaw_err: float, lim: Limits, timeout: float = 40.0) -> tuple[bool, str]:
+        """Rotate by a FIXED amount, closed-loop on odometry.
+
+        Fixed, not recomputed: the target does not move in the world, so re-deriving the error
+        from a fresh scan every tick is what produced the door livelock (a steering command
+        re-issued at 20 Hz is a mode change the 4WS firmware answers by re-steering all four
+        wheels, and the body never commits)."""
+        self.mux.resume(time.monotonic())
+        start_yaw = self.pose[2]
+        goal_yaw = wrap(start_yaw + target_yaw_err)
+        end = time.monotonic() + timeout
+        while rclpy.ok() and time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=1.0/RATE_HZ)
+            err = wrap(goal_yaw - self.pose[2])
+            if abs(err) <= YAW_TOL:
+                self.stop()
+                return True, ""
+            w = max(-lim.w_max, min(lim.w_max, 1.2 * err))
+            if abs(w) < 0.12:
+                w = math.copysign(0.12, w)      # below this the chassis stalls rather than creeps
+            if not self._drive(0.0, w):
+                self.stop()
+                return False, self.mux.verdict(time.monotonic()).reason
+        self.stop()
+        return False, f"turn timed out with {math.degrees(wrap(goal_yaw - self.pose[2])):+.1f} deg left"
+
+    def advance(self, dist_m: float, lim: Limits, timeout: float = 60.0) -> tuple[bool, str]:
+        self.mux.resume(time.monotonic())
+        x0, y0, _ = self.pose
+        end = time.monotonic() + timeout
+        while rclpy.ok() and time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=1.0/RATE_HZ)
+            gone = math.hypot(self.pose[0]-x0, self.pose[1]-y0)
+            if gone >= dist_m - POS_TOL_M:
+                self.stop()
+                return True, f"advanced {gone:.2f} m"
+            if self.scan is not None and corridor_blocked(self.scan.ranges, self.scan.angle_min,
+                                                          self.scan.angle_increment):
+                # Squared up against the target's wall IS positioned. The arm envelope and the
+                # press standoff absorb the residual; only stopping far away is a real failure.
+                self.stop()
+                return (gone > 0.10), (f"stopped on the corridor veto after {gone:.2f} m "
+                                       f"of {dist_m:.2f} m")
+            if not self._drive(min(0.10, lim.v_max), 0.0):
+                self.stop()
+                return False, self.mux.verdict(time.monotonic()).reason
+        self.stop()
+        return False, "advance timed out"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("capture", type=Path, help="capture dir holding detection.json")
+    ap.add_argument("--standoff", type=float, default=PRESS_STANDOFF_M)
+    ap.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args()
+
+    det_file = a.capture / "detection.json"
+    if not det_file.exists():
+        print(f"no {det_file} -- ground the target first (detect_frame.py)", file=sys.stderr)
+        return 2
+    det = json.loads(det_file.read_text())
+    p_cam = det.get("point3d_cam_m")
+    if not p_cam:
+        print("detection has no 3D point; refusing to move", file=sys.stderr)
+        return 2
+    frame = det.get("frame") or det.get("cam_frame") or "mast_cam_color_optical_frame"
+
+    from rclpy.signals import SignalHandlerOptions
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    n = Facer()
+    lim = Limits()
+    try:
+        if not n.wait():
+            print("no /odom", file=sys.stderr)
+            return 1
+        p_base = n.to_base(p_cam, frame)
+        if p_base is None:
+            print(f"no TF base_link <- {frame}", file=sys.stderr)
+            return 1
+        tx, ty = float(p_base[0]), float(p_base[1])
+        dist = math.hypot(tx, ty)
+        bear = math.atan2(ty, tx)
+        step_in = dist - a.standoff
+
+        print(f"  target in base_link: x={tx:+.3f} y={ty:+.3f} z={float(p_base[2]):+.3f}")
+        print(f"  range {dist:.2f} m, bearing {math.degrees(bear):+.1f} deg")
+        print(f"  arm reach is {ARM_REACH_M:.2f} m -> "
+              + ("ALREADY IN REACH; no base move needed"
+                 if dist <= ARM_REACH_M else
+                 f"OUT OF REACH by {dist-ARM_REACH_M:.2f} m"))
+        print(f"  plan: turn {math.degrees(bear):+.1f} deg, then advance {step_in:+.2f} m "
+              f"to a {a.standoff:.2f} m standoff")
+        if dist <= ARM_REACH_M and abs(bear) <= YAW_TOL:
+            print("  nothing to do.")
+            return 0
+        if a.dry_run:
+            print("\n  DRY RUN. Nothing moved.")
+            return 0
+        if step_in < -0.05:
+            print("  target is CLOSER than the standoff; backing off is not implemented here",
+                  file=sys.stderr)
+            return 1
+
+        ok, why = n.turn_to(bear, lim)
+        print(f"  turn: {'ok' if ok else 'FAILED'} {why}")
+        if not ok:
+            return 1
+        if step_in > POS_TOL_M:
+            ok, why = n.advance(step_in, lim)
+            print(f"  advance: {'ok' if ok else 'FAILED'} {why}")
+            if not ok:
+                return 1
+        print("\n  positioned. RE-GROUND from here before reaching -- the old 3D point was "
+              "measured from the pose you just left.")
+        return 0
+    finally:
+        try:
+            n.stop()
+        except Exception:
+            pass
+        n.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

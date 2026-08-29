@@ -100,6 +100,9 @@ ACTIONS = {
     # Close the gap to the obstruction before grounding. Depth is noise at 8-10 m and the plate
     # is a few pixels, so a reasoner asked from there abstains -- correctly and uselessly.
     "approach_blockage": [sys.executable, str(REPO / "bringup" / "approach_blockage.py")],
+    # Look, ground, and drive the BASE until the control is inside the arm envelope. Moves no
+    # arm and presses nothing; press_button re-grounds from the pose this leaves.
+    "reach_control": [str(REPO / "bringup" / "reach_control.sh")],
 }
 # UTP_SIM=1: same route, same step names, but the press goes to the Isaac trial server's
 # /arm_reach action instead of the real xArm SDK. Everything upstream of the action --
