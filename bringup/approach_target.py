@@ -215,6 +215,20 @@ def main() -> int:
     print(f"target (link_base): {p_arm.round(4)}   |from base| {np.linalg.norm(p_arm):.3f} m")
     print(f"approach dir     : {approach.round(3)}")
 
+    # REFUSE A TARGET THE ARM CANNOT REACH, rather than discovering it at the joint stop.
+    # Commanding a Cartesian goal outside the envelope does not produce a short reach: the IK
+    # drives a joint into its limit and the controller faults. On 2026-08-29 the base stopped
+    # 1.23 m from a plate with a 0.88 m arm, this was commanded anyway, and it faulted with
+    # ControllerError 21 -- after which the tool exited 0 and the route logged "complete".
+    # The fix for being out of reach is to move the BASE (bringup/face_target.py), never to ask
+    # the arm for reach it does not have.
+    sys.path.insert(0, str(REPO))
+    from safety.reach_envelope import check_before_reach
+    _ok, _why = check_before_reach(float(np.linalg.norm(p_arm)))
+    if not _ok:
+        print(f"\nNOT REACHING: {_why}", file=sys.stderr)
+        return 1
+
     from xarm.wrapper import XArmAPI
     arm = XArmAPI(ARM_IP, is_radian=False, do_not_open=False)
     if arm.error_code:
@@ -250,6 +264,7 @@ def main() -> int:
         return 0
 
     arm.motion_enable(enable=True); arm.set_mode(0); arm.set_state(0); time.sleep(0.5)
+    failed = False
     try:
         for i, s in enumerate(stops, 1):
             tgt = p_arm - approach * s
@@ -260,6 +275,11 @@ def main() -> int:
                                     speed=SPEED_MM_S, is_radian=False, wait=True)
             if code != 0 or arm.error_code:
                 print(f"  STOPPED: code={code} err={arm.error_code}")
+                # A FAULTED ARM IS A FAILED PRESS. This used to break, retreat, and return 0, so
+                # press_run.sh's `set -e` saw success and route_run printed "complete (4/4)" over
+                # a ControllerError 21 -- a failed trial recorded as a successful one, which is
+                # the worst outcome available to a benchmark. Observed 2026-08-29 at the doors.
+                failed = True
                 if arm.error_code == 23:
                     print("  error 23 = joint limit. The IK needed a joint past its stop for this")
                     print("  Cartesian goal. Reposition the BASE rather than forcing the arm.")
@@ -302,7 +322,7 @@ def main() -> int:
         else:
             print(f"  arm error {arm.error_code}: NOT moving it. Clear the fault with eyes on it.")
         arm.disconnect()
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

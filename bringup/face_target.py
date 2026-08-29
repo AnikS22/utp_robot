@@ -47,6 +47,8 @@ from sensor_msgs.msg import LaserScan  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
 
 from safety.mux_watch import MuxWatch  # noqa: E402
+from safety.reach_envelope import (ARM_REACH_M as ENVELOPE_M, check_before_reach,  # noqa: E402
+                                   lidar_stop_for)
 from safety.waypoint_drive import Limits, corridor_blocked, wrap  # noqa: E402
 
 CMD_TOPIC = "/cmd_vel_teleop"
@@ -157,7 +159,8 @@ class Facer(Node):
         self.stop()
         return False, f"turn timed out with {math.degrees(wrap(goal_yaw - self.pose[2])):+.1f} deg left"
 
-    def advance(self, dist_m: float, lim: Limits, timeout: float = 60.0) -> tuple[bool, str]:
+    def advance(self, dist_m: float, lim: Limits, stop_range: float,
+                timeout: float = 60.0) -> tuple[bool, str]:
         self.mux.resume(time.monotonic())
         x0, y0, _ = self.pose
         end = time.monotonic() + timeout
@@ -167,13 +170,23 @@ class Facer(Node):
             if gone >= dist_m - POS_TOL_M:
                 self.stop()
                 return True, f"advanced {gone:.2f} m"
-            if self.scan is not None and corridor_blocked(self.scan.ranges, self.scan.angle_min,
-                                                          self.scan.angle_increment):
-                # Squared up against the target's wall IS positioned. The arm envelope and the
-                # press standoff absorb the residual; only stopping far away is a real failure.
+            # STOP ON RANGE TO THE WALL, NOT ON THE DRIVING VETO.
+            #
+            # corridor_blocked() has a 0.90 m look-ahead measured from the LIDAR, which sits
+            # 0.318 m forward of base_link -- so it halts the chassis with the wall ~1.21 m from
+            # base_link, permanently outside the 0.88 m arm. Letting it govern the final approach
+            # is why the first real press attempt stopped at 1.23 m and faulted the arm with
+            # ControllerError 21 (2026-08-29). The rule that keeps the robot off walls while
+            # DRIVING also guarantees it can never reach anything mounted on one.
+            #
+            # Approaching a grounded, vetoed target is a different job: close deliberately, at
+            # 0.10 m/s, to a distance chosen from the ARM's geometry. The veto stays as a hard
+            # floor via MIN_LIDAR_RANGE_M inside lidar_stop_for().
+            near = self.nearest_ahead()
+            if near is not None and near <= stop_range:
                 self.stop()
-                return (gone > 0.10), (f"stopped on the corridor veto after {gone:.2f} m "
-                                       f"of {dist_m:.2f} m")
+                return True, (f"stopped {near:.2f} m from the wall ahead after {gone:.2f} m "
+                              f"(target lidar range {stop_range:.2f} m)")
             if not self._drive(min(0.10, lim.v_max), 0.0):
                 self.stop()
                 return False, self.mux.verdict(time.monotonic()).reason
@@ -241,9 +254,23 @@ def main() -> int:
         if not ok:
             return 1
         if step_in > POS_TOL_M:
-            ok, why = n.advance(step_in, lim)
+            ok, why = n.advance(step_in, lim, lidar_stop_for(a.standoff))
             print(f"  advance: {'ok' if ok else 'FAILED'} {why}")
             if not ok:
+                return 1
+
+        # DID IT ACTUALLY GET INTO REACH? Reporting success while still 1.23 m from a 0.88 m arm
+        # is what handed press_run a target it could only fault on. Re-measure and refuse.
+        for _ in range(20):
+            rclpy.spin_once(n, timeout_sec=0.05)
+        p2 = n.to_base(p_cam, frame)
+        if p2 is not None:
+            r2 = math.hypot(float(p2[0]), float(p2[1]))
+            ok2, why2 = check_before_reach(r2)
+            print(f"  after moving, target is {r2:.2f} m from base_link (arm reaches "
+                  f"{ENVELOPE_M:.2f} m)")
+            if not ok2:
+                print(f"\n  NOT IN REACH: {why2}", file=sys.stderr)
                 return 1
         print("\n  positioned. RE-GROUND from here before reaching -- the old 3D point was "
               "measured from the pose you just left.")
