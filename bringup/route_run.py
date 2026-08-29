@@ -258,6 +258,10 @@ def main() -> int:
                          "`waypoints.py record <name>`, then drive them.")
     ap.add_argument("--list", action="store_true", help="list routes and waypoints, then exit")
     ap.add_argument("--go", action="store_true", help="actually drive")
+    ap.add_argument("--loops", type=int, default=1,
+                    help="repeat the whole route N times. With --goto start,finish this drives "
+                         "start->finish->start->finish..., re-squaring on the recorded start "
+                         "pose every lap, which is what makes run 1 and run 100 comparable.")
     ap.add_argument("--confirm", action="store_true",
                     help="pause before EVERY step: Enter runs it, q stops the route")
     a = ap.parse_args()
@@ -292,6 +296,13 @@ def main() -> int:
         return 2
 
     steps = parse_route(routes[a.route])
+    if a.loops < 1:
+        print("--loops must be >= 1", file=sys.stderr)
+        return 2
+    if a.loops > 1:
+        # Repeat the PARSED steps, so every lap is the same validated sequence. Done before
+        # validation so a bad route is still caught once, not N times.
+        steps = [st_ for _ in range(a.loops) for st_ in steps]
     # Every OTHER route is a candidate branch target for a `check` step in this one.
     subroutes = {}
     for rname, rspec in routes.items():
@@ -366,10 +377,10 @@ def main() -> int:
         # can see that, so it is checked here on the bus itself.
         try:
             from chassis_mode import ADVICE, GOOD, chassis_mode
-            st = chassis_mode()
-            if st is not None and st[1] != GOOD:
-                print(f"\nNOT DRIVING: chassis control_mode={st[1]} -- "
-                      f"{ADVICE.get(st[1], '')}", file=sys.stderr)
+            chassis = chassis_mode()      # NOT `st` -- that is the RouteState
+            if chassis is not None and chassis[1] != GOOD:
+                print(f"\nNOT DRIVING: chassis control_mode={chassis[1]} -- "
+                      f"{ADVICE.get(chassis[1], '')}", file=sys.stderr)
                 return 1
         except Exception:
             pass    # no CAN access is not itself a reason to refuse; the mux watch still applies

@@ -97,6 +97,32 @@ python3 bringup/route_run.py --goto p1,p2,p3 --go --confirm
 An ad-hoc `--goto` route is parsed, validated and session-checked exactly like a route in
 `config/routes.yaml`. Convenience is not a second, less-checked way to move the robot.
 
+## You will not park it back on the start mark, and you do not have to
+
+Hand-driving the robot back to "roughly where it started" is the normal case -- parking it on the
+exact recorded pose by RC is not realistic. That is what the recorded `start` waypoint is for:
+put it FIRST in the route and the robot squares itself onto the exact recorded start pose,
+position and heading, before it sets off.
+
+```bash
+python3 bringup/route_run.py --goto start,finish --go --confirm
+```
+
+It corrects heading even when it is already inside the 15 cm arrival radius -- the controller
+runs `final_heading` before `arrived`, so a robot parked on the right spot facing 20 deg off
+still turns to match. Without that leading leg, every run starts from a different pose and the
+finish scatter is measuring your RC parking, not the navigation.
+
+For repeat runs, which is the same need:
+
+```bash
+python3 bringup/route_run.py --goto start,finish --loops 10 --go
+```
+
+That drives start -> finish -> start -> finish..., re-squaring on the recorded start every lap,
+so run 1 and run 100 are actually comparable. Drop `--confirm` once you trust it, or keep it and
+press Enter per leg.
+
 ## The path between waypoints is straight
 
 Each leg is turn-to-bearing, then drive, then settle on the final heading. A "curvy" path is

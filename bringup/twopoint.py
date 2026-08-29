@@ -234,10 +234,10 @@ def main() -> int:
         # can see that, so it is checked here on the bus itself.
         try:
             from chassis_mode import ADVICE, GOOD, chassis_mode
-            st = chassis_mode()
-            if st is not None and st[1] != GOOD:
-                print(f"\nNOT DRIVING: chassis control_mode={st[1]} -- "
-                      f"{ADVICE.get(st[1], '')}", file=sys.stderr)
+            chassis = chassis_mode()      # never `st`: too easy to shadow
+            if chassis is not None and chassis[1] != GOOD:
+                print(f"\nNOT DRIVING: chassis control_mode={chassis[1]} -- "
+                      f"{ADVICE.get(chassis[1], '')}", file=sys.stderr)
                 return 1
         except Exception:
             pass    # no CAN access is not itself a reason to refuse; the mux watch still applies
