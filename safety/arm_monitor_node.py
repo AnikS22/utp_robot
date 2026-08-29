@@ -62,6 +62,8 @@ class ArmMonitorNode(Node):
                 String, mon.get("scene_state_topic", "/scene/state"), self._on_scene_state, 10)
         elif self.backend == "xarm_sdk":
             self._init_xarm(mon.get("xarm", {}))
+        elif self.backend == "absent":
+            self._init_absent(mon.get("xarm", {}))
         else:
             raise ValueError(f"unknown arm_monitor backend '{self.backend}'")
 
@@ -77,6 +79,53 @@ class ArmMonitorNode(Node):
             return    # malformed -> no evidence -> goes stale -> False
         self._stowed = (st.get("arm_state") == "idle")
         self._note_evidence()
+
+    # ---- arm-not-fitted backend ------------------------------------------------------------
+    def _init_absent(self, xc: dict) -> None:
+        """Operator declares the arm is not on the robot. VERIFIED, not taken on trust.
+
+        WHY THIS EXISTS AND WHY IT IS NOT A BYPASS. For a navigation-only trial the arm interlock
+        guards nothing: there is no arm to sweep 0.88 m through space the costmap believes is
+        empty. Refusing to drive would be safety theatre. But the honest way to express "no arm"
+        is a DECLARATION THAT CAN BE FALSIFIED, not a flag that forces the gate true -- because
+        the dangerous case is an operator who believes the arm is off the robot while it is
+        actually fitted and extended.
+
+        So the declaration is checked against the one piece of reality we can observe: if the
+        controller answers on the network, the arm IS present, the declaration is false, and this
+        node REFUSES TO START rather than publishing a gate value that is a lie. Selecting this
+        backend on a robot with a live arm gets you an error, not permission.
+
+        What it still cannot see: an arm that is fitted but powered down. That is why the
+        declaration is explicit, loud, repeated in the log for the whole run, and surfaced by
+        health.py -- so it appears in the record of any trial run this way.
+        """
+        import socket as _s
+        ip = xc.get("ip")
+        for port in (502, 30000, 30003):    # Modbus + the xArm SDK control/report ports
+            try:
+                with _s.create_connection((ip, port), timeout=1.0):
+                    raise RuntimeError(
+                        f"backend 'absent' declares no arm is fitted, but something IS answering "
+                        f"at {ip}:{port}. The declaration is false. Use --backend xarm_sdk, or "
+                        f"physically disconnect the arm if it really is not part of this trial.")
+            except (OSError, _s.timeout):
+                continue
+        self._absent_ip = ip
+        self.get_logger().warn(
+            f"ARM DECLARED ABSENT -- nothing answers at {ip}. Publishing arm_stowed=True on an "
+            f"OPERATOR DECLARATION, not a measurement. Valid only while no arm is fitted. This "
+            f"is recorded for every trial run this way.")
+        self.create_timer(1.0, self._poll_absent)
+        self._absent_warns = 0
+
+    def _poll_absent(self) -> None:
+        self._stowed = True
+        self._note_evidence()
+        # Repeat in the log every 30 s. A declaration that scrolls away once is not a record.
+        self._absent_warns += 1
+        if self._absent_warns % 30 == 0:
+            self.get_logger().warn("arm_stowed=True by DECLARATION (backend=absent), not measured")
 
     # ---- hardware backend ------------------------------------------------------------------
     def _init_xarm(self, xc: dict) -> None:
@@ -169,22 +218,38 @@ class ArmMonitorNode(Node):
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    ap.add_argument("--backend", choices=["scene_state", "xarm_sdk"], default=None)
+    ap.add_argument("--backend", choices=["scene_state", "xarm_sdk", "absent"], default=None)
     args, ros_args = ap.parse_known_args(argv)
 
-    rclpy.init(args=ros_args)
+    # Take the signals OURSELVES. rclpy's default handler shuts the context down before the
+    # `finally` below runs, so the parting False was published into a dead context and silently
+    # swallowed by the except, and then rclpy.shutdown() raised
+    # "rcl_shutdown already called". Measured 2026-08-29 on a plain SIGTERM.
+    #
+    # It mattered because that parting False is what CLOSES the gate the instant the monitor
+    # stops, rather than leaving the mux to notice 0.2 s later on staleness. Two independent
+    # fail-closed mechanisms is the design; one of them was not running.
+    from rclpy.signals import SignalHandlerOptions
+    rclpy.init(args=ros_args, signal_handler_options=SignalHandlerOptions.NO)
+    stop = {"v": False}
+    import signal as _sig
+    _sig.signal(_sig.SIGINT, lambda *_: stop.__setitem__("v", True))
+    _sig.signal(_sig.SIGTERM, lambda *_: stop.__setitem__("v", True))
+
     node = ArmMonitorNode(load_config(args.config), args.backend)
     try:
-        rclpy.spin(node)
+        while rclpy.ok() and not stop["v"]:
+            rclpy.spin_once(node, timeout_sec=0.1)
     except KeyboardInterrupt:
         pass
     finally:
         try:
-            node.pub.publish(Bool(data=False))   # part on the safe value
-        except Exception:
-            pass
+            node.pub.publish(Bool(data=False))   # part on the safe value, context still alive
+        except Exception as e:
+            node.get_logger().error(f"could not publish the parting arm_stowed=False: {e}")
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

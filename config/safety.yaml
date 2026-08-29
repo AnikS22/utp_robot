@@ -87,6 +87,8 @@ arm_monitor:
   scene_state:
     stale_after_s: 4.0        # /scene/state is nominally 5 Hz but MEASURED 0.55 Hz headless
                               # on this laptop (2026-08-27) -- real time factor, not a fault
+  absent:
+    stale_after_s: 3.0        # self-generated at 1 Hz; only a dead node makes this go stale
   xarm:
     ip: "${ENV:UTP_XARM_IP:192.168.1.221}"   # VERIFIED reachable 2026-08-25 via enx00e04c674c60 (192.168.1.100/24)
     stow_pose_deg: [0.0, -45.0, -45.0, 0.0, 90.0, 0.0]

@@ -91,8 +91,13 @@ sleep 6
 # SLAM never consumes /scan directly. First remove the chassis-occluded rear sector, then block
 # mapping scans unless fresh chassis state says DualAckermann. The 2026-08-24 run demonstrated
 # metre-scale map jumps in spinning mode; allowing that data into the pose graph is unrecoverable.
-start "rear-sector lidar filter -> /scan_filtered" \
-    python3 "$REPO/bringup/filter_scan.py"
+# lidar.sh now starts this too (the veto needs it outside mapping). Only one, ever.
+if pgrep -f "filter_scan.py" >/dev/null 2>&1; then
+    echo "  rear-sector lidar filter already running -- not starting a second"
+else
+    start "rear-sector lidar filter -> /scan_filtered" \
+        python3 "$REPO/bringup/filter_scan.py"
+fi
 start "Ackermann-only mapping gate -> /scan_mapping" \
     python3 "$REPO/bringup/mapping_scan_gate.py"
 

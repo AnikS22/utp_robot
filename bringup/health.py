@@ -210,6 +210,19 @@ n.destroy_node(); rclpy.shutdown()
 
 
 
+def _arm_declared_absent() -> bool:
+    """Is the arm_stowed gate being satisfied by a declaration rather than a measurement?
+
+    A gate reading 100% looks identical whether it was measured or asserted. It must not.
+    """
+    try:
+        r = subprocess.run(["pgrep", "-af", "arm_monitor_node.py"],
+                           capture_output=True, text=True, timeout=5)
+        return "absent" in r.stdout
+    except Exception:
+        return False
+
+
 def check_gates(rep):
     """Would the base move if something asked it to?
 
@@ -267,6 +280,9 @@ n.destroy_node(); rclpy.shutdown()
         if name == "estop_latched" and pct >= 1.0:
             detail += "  <- LATCHED. Clear it with the /safety/clear_estop service; releasing " \
                       "the physical button is not enough."
+        elif name == "arm_stowed" and permitting and _arm_declared_absent():
+            detail += "  <- by DECLARATION (arm_monitor backend=absent), NOT measured. Valid " \
+                      "only while no arm is fitted; record this against any trial."
         elif name == "arm_stowed" and not permitting:
             detail += "  <- base blocked. Either stow the arm, or the monitor's evidence is " \
                       "going stale between messages (see arm_monitor.<backend>.stale_after_s)."

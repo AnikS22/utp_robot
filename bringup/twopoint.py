@@ -150,6 +150,8 @@ def main() -> int:
                          "enters the circle, so every lap reports an error of about --tol until "
                          "real drift exceeds it. Use 0.05 to measure repeatability."
                          % Limits().pos_tol_m)
+    ap.add_argument("--no-veto", action="store_true",
+                    help="drive with NO obstacle check (requires /scan_filtered otherwise)")
     ap.add_argument("--go", action="store_true", help="actually drive")
     a = ap.parse_args()
 
@@ -203,6 +205,23 @@ def main() -> int:
                 return 1
         except Exception:
             pass    # no CAN access is not itself a reason to refuse; the mux watch still applies
+
+        # No scan means the corridor veto silently does NOTHING: the guard is
+        # `blocked = scan is not None and corridor_blocked(...)`, so a missing topic reads as
+        # "clear" rather than "unknown". Failing open is the wrong direction for an obstacle
+        # check, so it is refused here instead of discovered by driving into something.
+        for _ in range(40):
+            rclpy.spin_once(n, timeout_sec=0.1)
+            if n.scan is not None:
+                break
+        if n.scan is None and not a.no_veto:
+            print("\nNOT DRIVING: no /scan_filtered, so the corridor veto would be inactive and "
+                  "the robot would drive with NO obstacle check.\n"
+                  "  Start it with bringup/lidar.sh, or pass --no-veto to drive blind "
+                  "deliberately.", file=sys.stderr)
+            return 1
+        if n.scan is None:
+            print("\n  WARNING: --no-veto, driving with NO obstacle check.")
 
         print("\n  MARK THE FLOOR under the robot now -- odom cannot measure its own drift.")
         print(f"  {a.laps} lap(s). Ctrl-C stops; E-stop is faster.\n")

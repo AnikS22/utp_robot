@@ -77,6 +77,25 @@ EOF
     CHILDREN+=($!)
 fi
 
+# The rear-sector filter belongs WITH the lidar, not with mapping.
+#
+# It used to be started only by mapping.sh. So outside a mapping session /scan_filtered did not
+# exist -- and route_run.py and twopoint.py both subscribe to it for the corridor veto. Their
+# guard reads `blocked = (self.scan is not None and corridor_blocked(...))`, so a MISSING scan
+# means never blocked: the veto failed OPEN and the robot drove with no obstacle check at all,
+# on every autonomous run ever made. CLAUDE.md documents the /scan -> /scan_filtered chain as
+# though it always runs; it ran only while mapping.
+#
+# Guarded, because mapping.sh still starts one too and two publishers on one topic is the
+# duplicate-publisher bug this repo has already paid for twice.
+if pgrep -f "filter_scan.py" >/dev/null 2>&1; then
+    echo "[lidar] rear-sector filter already running -- not starting a second"
+else
+    echo "[lidar] rear-sector filter -> /scan_filtered (keep +-${KEEP:-148} deg)"
+    setsid python3 "$REPO/bringup/filter_scan.py" &
+    CHILDREN+=($!)
+fi
+
 echo "[lidar] $PORT @ $BAUD, frame=$FRAME, ROS_DOMAIN_ID=$ROS_DOMAIN_ID"
 
 # The driver occasionally fails to start on a cold open (the CP2102 reopen path -- see
