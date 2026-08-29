@@ -21,6 +21,13 @@
 # collision. On 2026-08-18 a careless cleanup of mine killed 22 of the sim campaign's TF publishers;
 # every guard here exists because of that.
 export ROS_DOMAIN_ID="${UTP_ROBOT_DOMAIN:-9}"
+# A SIM run must never resolve to the hardware domain. UTP_SIM=1 means the caller intends domain
+# 42; if it still lands on 9 something upstream forgot UTP_ROBOT_DOMAIN, and the next thing this
+# shell does may be to publish a twist at the real chassis. Refuse here, before any of that.
+if [ "${UTP_SIM:-}" = "1" ] && [ "$ROS_DOMAIN_ID" = "9" ]; then
+    echo "env.sh: UTP_SIM=1 but ROS_DOMAIN_ID resolved to 9 (hardware). Set UTP_ROBOT_DOMAIN=42." >&2
+    return 1 2>/dev/null || exit 1
+fi
 
 # ---------------------------------------------------------------------------------------------
 # conda must not shadow ROS's python

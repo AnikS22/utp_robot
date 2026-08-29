@@ -118,6 +118,13 @@ if os.environ.get("UTP_SIM") == "1":
     ACTIONS["press_button"] = [sys.executable, str(REPO / "sim" / "sim_press.py")]
     # every child that captures a frame (blockage check, sim press) needs the sim's depth topic
     os.environ.setdefault("UTP_DEPTH_TOPIC", "/mast_cam/depth/image_rect_raw")
+    # Every shell action (reach_control.sh, press_run.sh, find_control.sh) sources bringup/env.sh,
+    # which FORCES ROS_DOMAIN_ID=9 -- the hardware domain -- unless UTP_ROBOT_DOMAIN overrides it.
+    # Without this a sim run's grab_frame looked for the camera on the real robot's graph and its
+    # face_target would have published /cmd_vel_teleop at the real chassis (2026-08-29, caught
+    # only because the hardware mux had been stopped for the night). Pin the override.
+    os.environ.setdefault("UTP_ROBOT_DOMAIN", "42")
+    os.environ["ROS_DOMAIN_ID"] = os.environ["UTP_ROBOT_DOMAIN"]
 PIPELINE_VENV = Path.home() / "unlocking-the-path" / "env" / ".venv" / "bin" / "python"
 
 
