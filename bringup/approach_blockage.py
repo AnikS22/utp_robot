@@ -2,7 +2,7 @@
 """Drive up to whatever is blocking the way, so perception happens at a usable range.
 
     python3 bringup/approach_blockage.py --dry-run
-    python3 bringup/approach_blockage.py --go --stop-at 0.55
+    python3 bringup/approach_blockage.py --stop-at 0.55
 
 THE ROBOT DRIVES FORWARD unless --dry-run. It stops at the lidar veto and never commands contact.
 
@@ -167,8 +167,13 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--stop-at", type=float, default=0.55,
                     help="metres from the obstruction to stop at (default 0.55, the press pose)")
-    ap.add_argument("--go", action="store_true")
-    ap.add_argument("--dry-run", action="store_true")
+    # THE ROBOT DRIVES UNLESS --dry-run, matching press_run.sh and approach_target.py. It is the
+    # convention route_run's run_action() relies on: it appends --dry-run for a dry run and
+    # nothing for a live one, so an action that needed an explicit --go would silently no-op in
+    # the middle of a real trial and look like a robot that decided not to move.
+    ap.add_argument("--dry-run", action="store_true", help="plan and report; move nothing")
+    ap.add_argument("--go", action="store_true", help="accepted for symmetry; motion is the "
+                                                      "default and --dry-run is what stops it")
     a = ap.parse_args()
     if not (0.3 <= a.stop_at <= 2.0):
         print("--stop-at must be 0.3-2.0 m", file=sys.stderr)
@@ -181,7 +186,7 @@ def main() -> int:
         if not n.wait_ready():
             print("no /odom or no /scan_filtered -- is the stack up?", file=sys.stderr)
             return 1
-        ok, why = n.run(a.stop_at, dry=(a.dry_run or not a.go))
+        ok, why = n.run(a.stop_at, dry=a.dry_run)
         print(f"approach_blockage: {why}")
         return 0 if ok else 1
     finally:

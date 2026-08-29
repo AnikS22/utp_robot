@@ -85,6 +85,9 @@ _INTERRUPT = {"v": False}   # set by the SIGINT handler in main(); read inside t
 # needs rclpy. Different interpreters, so the boundary is a process, not an import.
 ACTIONS = {
     "press_button": [str(REPO / "bringup" / "press_run.sh")],
+    # Close the gap to the obstruction before grounding. Depth is noise at 8-10 m and the plate
+    # is a few pixels, so a reasoner asked from there abstains -- correctly and uselessly.
+    "approach_blockage": [sys.executable, str(REPO / "bringup" / "approach_blockage.py")],
 }
 # UTP_SIM=1: same route, same step names, but the press goes to the Isaac trial server's
 # /arm_reach action instead of the real xArm SDK. Everything upstream of the action --
@@ -275,7 +278,7 @@ def run_blockage_check() -> dict:
 # this robot is recorded as chosen-but-unexecutable, which is an honest outcome and not a failure
 # of the reasoner that chose it.
 ACTION_ROUTES = {
-    "press_button": "press_and_pass",
+    "press_button": "press_and_pass_visual",
 }
 # Reasoned conclusions that are ACTIONS OF RESTRAINT, not failures. On a negative control
 # (nothing is actually operable) these are the CORRECT answer, and scoring them as errors would

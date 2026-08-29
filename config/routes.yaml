@@ -82,6 +82,18 @@ routes:
   # is ALREADY at the doors when this fires, and an extra leg is an extra turn, which is where
   # 4WS odometry is worst. After the wait the doors are opening; benchmark's final leg drives
   # through while they are -- and if they never opened, the corridor veto stops on the tape.
+  # THE BRANCH A REASONED TRIAL USES. No `goto button` -- that waypoint was a human pointing at
+  # the control, which hollows out the grounding claim: the robot would not be FINDING the plate,
+  # it would be driven to it. Instead the base closes the gap to the OBSTRUCTION geometrically
+  # (no map, no waypoint, stop ~0.55 m out) and the grounder locates the control from a frame
+  # taken there. approach_blockage has no idea what a button is, and must not.
+  press_and_pass_visual:
+    - action: approach_blockage
+    - action: press_button
+      query: "the accessible door push button"
+      standoff: 60
+    - wait: 6
+
   press_and_pass:
     - goto: button
     - action: press_button

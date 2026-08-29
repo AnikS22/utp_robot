@@ -15,19 +15,19 @@ door:
   y: 1.2225
   yaw: 0.4136
 finish:
-  odom_epoch: 1788024333
-  odom_session: 010fcecdab27ee77
-  x: 6.3253
-  y: 6.1505
-  yaw: 1.6433
+  odom_epoch: 1788026892
+  odom_session: 010fcecd093fdba1
+  x: 6.7961
+  y: -4.1236
+  yaw: -0.7857
 outside:
   odom_epoch: 1787789436
   x: 5.1
   y: 2.2273
   yaw: 0.4136
 start:
-  odom_epoch: 1788024313
-  odom_session: 010fcecdab27ee77
-  x: 5.3166
-  y: 3.2208
-  yaw: 0.8821
+  odom_epoch: 1788026797
+  odom_session: 010fcecd093fdba1
+  x: -0.0001
+  y: -0.0007
+  yaw: -0.0012
