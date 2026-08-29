@@ -86,9 +86,27 @@ def main() -> int:
     # runtime.world drives is_mock inside the registry. It must NOT say "mock" here or the
     # registry hands back mock modules and the whole run is a simulation wearing a robot's name.
     cfg.data.setdefault("runtime", {})["world"] = "ros"
+    # The survey needs enough attempts to WALK the bearing list. fsm.py spends one recovery
+    # attempt per look, and the campaign default is 2 -- so with four bearings the last two were
+    # never tried, and on this building the control is at ~80 deg, which is exactly where the
+    # untried ones point. Raised for hardware only; the sim campaign keeps its own default.
+    cfg.data["runtime"]["max_recovery_attempts"] = max(
+        4, int(cfg.data["runtime"].get("max_recovery_attempts", 2)))
 
-    world = RosWorld(goal=a.goal, dry_run=a.dry_run, capture_prefix=f"trial_{a.method}")
+    # The one slot through which the VLM may say where to look next. The reasoner writes it, the
+    # world reads it (RosWorld.strafe_view). Reasoners that never write it -- heuristic, passive --
+    # leave the world on the blind sweep, so what varies across methods is still the reasoner.
+    from steered_reasoner import LookHints, SteeredReasoner
+    hints = LookHints()
+    world = RosWorld(goal=a.goal, dry_run=a.dry_run, capture_prefix=f"trial_{a.method}",
+                     hints=hints)
     modules = build_modules(cfg, method, world)
+    if method.get("reasoning") == "vlm":
+        # Same model, same system prompt, same parser as the pipeline's GPT5Reasoner; two
+        # hardware-only changes in the USER text (see steered_reasoner.py). Substituted here
+        # rather than in the registry so the pipeline repo stays untouched.
+        modules.reasoner = SteeredReasoner(cfg.data["methods"].get("vlm", {}), hints)
+        print("reasoner : SteeredReasoner (fresh second look + VLM-steered look-around)")
     print(f"method   : {method.get('label', a.method)}  "
           f"(reasoning={method.get('reasoning')} grounding={method.get('grounding')} "
           f"execution={method.get('execution')} verification={method.get('verification')})")

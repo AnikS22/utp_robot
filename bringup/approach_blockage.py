@@ -251,7 +251,19 @@ def main() -> int:
         if a.back > 0.0:
             ok, why = n.reverse(a.back, dry=a.dry_run)
         else:
-            ok, why = n.run(a.stop_at, dry=a.dry_run)
+            # ACHIEVE the standoff, in whichever direction that needs. This used to only ever
+            # close, so a robot already too near surveyed from wherever it happened to be and
+            # abstained -- and widen_view could not rescue it either, because fsm.py takes the
+            # FIRST rung that returns True, scan_view always answers first, and
+            # max_recovery_attempts is 2, so the third rung is never reached. Measured
+            # 2026-08-29: parked 0.77 m out with a 1.40 m survey standoff, it reported
+            # "stopped 0.77 m after 0.00 m" and called that success.
+            near0 = n.nearest_ahead()
+            if near0 is not None and near0 < a.stop_at - 0.15:
+                ok, why = n.reverse(min(1.0, a.stop_at - near0), dry=a.dry_run)
+                why = f"too close to survey ({near0:.2f} m of {a.stop_at:.2f} m): {why}"
+            else:
+                ok, why = n.run(a.stop_at, dry=a.dry_run)
         print(f"approach_blockage: {why}")
         return 0 if ok else 1
     finally:
