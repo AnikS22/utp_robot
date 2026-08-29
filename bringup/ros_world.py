@@ -151,6 +151,31 @@ class RosWorld:
         self._last_nav = "timeout"
         return NavOutcome(status="timeout")
 
+    def approach_blockage(self) -> None:
+        """Close the gap to the obstruction BEFORE perception and the arm reach.
+
+        fsm.py:421 calls this when the world provides it. isaac_world does; this did not, so the
+        hasattr check silently skipped it on hardware and grounding ran from wherever navigation
+        stopped. The sim version states the cost: "Depth is invalid/noisy at 8-10 m -- grounding
+        from there lifts the target to a garbage 3D point and the arm IKs out of reach."
+
+        Measured here 2026-08-29 at ~9 m: the camera read "closed double glass doors" correctly,
+        and the reasoner then abstained -- "I cannot see a button or a card reader on or near the
+        glass double doors." Correct, and useless. From 9 m the plate is a few pixels.
+
+        This also removes the last operator-supplied advantage in the hardware trial. Without it,
+        getting within arm reach needs a PRE-RECORDED `button` waypoint -- a human pointing at the
+        control -- which hollows out the grounding claim entirely. Approaching geometrically needs
+        no waypoint and no map, and it approaches the BLOCKAGE, not the button: what the control is
+        and where it sits stays the grounder's job, from a frame taken here.
+        """
+        args = [ROS_PY, str(REPO / "bringup" / "approach_blockage.py"),
+                "--dry-run" if self.dry_run else "--go"]
+        r = _ros(args, timeout=150)
+        tail = (r.stdout or r.stderr or "").strip().splitlines()
+        if tail:
+            print(f"[ros_world] {tail[-1][:160]}")
+
     def current_blockage(self) -> BlockageEvent | None:
         """Ask the VLM what is in the way. Describes only; the reasoner decides the action."""
         if self._last_capture is None:
