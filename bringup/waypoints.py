@@ -78,7 +78,10 @@ def save(d: dict) -> None:
     STORE.write_text(
         "# Waypoints in the ODOM frame. Only meaningful within one continuous run of the ranger\n"
         "# driver: restarting it re-zeros odom and silently invalidates every entry here.\n"
-        "# The 'odom_epoch' field is how you tell. See bringup/waypoints.py.\n"
+        "# The 'odom_session' field is how you tell: the DDS GID of the /odom publisher, a new\n"
+        "# value for every driver instance. goto and route_run REFUSE a waypoint whose session\n"
+        "# does not match the running one. 'odom_epoch' is wall-clock provenance only -- nothing\n"
+        "# reads it. See safety/waypoint_frame.py.\n"
         + yaml.safe_dump(d, sort_keys=True))
 
 

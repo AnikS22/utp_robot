@@ -252,6 +252,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("route", nargs="?", help="route name from config/routes.yaml")
+    ap.add_argument("--goto", metavar="A,B,C",
+                    help="ad-hoc route: drive these waypoints in order, no YAML editing. "
+                         "For a plain navigation test -- record the poses with "
+                         "`waypoints.py record <name>`, then drive them.")
     ap.add_argument("--list", action="store_true", help="list routes and waypoints, then exit")
     ap.add_argument("--go", action="store_true", help="actually drive")
     ap.add_argument("--confirm", action="store_true",
@@ -260,6 +264,18 @@ def main() -> int:
 
     wps = yaml.safe_load(WAYPOINTS.read_text()) if WAYPOINTS.exists() else {}
     routes = (yaml.safe_load(ROUTES.read_text()) or {}).get("routes", {}) if ROUTES.exists() else {}
+
+    # An ad-hoc path is a real route built in memory: it goes through the SAME parse,
+    # the SAME validation, and the SAME stale-waypoint check as anything in routes.yaml.
+    # Convenience must not mean a second, less-checked way to move the robot.
+    if a.goto:
+        names = [w.strip() for w in a.goto.split(",") if w.strip()]
+        if not names:
+            print("--goto needs at least one waypoint name", file=sys.stderr)
+            return 2
+        routes = dict(routes)
+        routes["--goto"] = [{"goto": w} for w in names]
+        a.route = "--goto"
 
     if a.list or not a.route:
         print(f"waypoints ({len(wps)}): {sorted(wps) or 'none -- record some first'}")

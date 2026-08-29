@@ -1,0 +1,94 @@
+# Navigation test — exact commands
+
+Navigation only. No arm, no camera, no press.
+
+## Once per session — bring the stack up
+
+Four terminals. **Leave them running.** Restarting `ranger_base` re-zeroes odom and invalidates
+every waypoint you recorded, which is the single most expensive mistake available here.
+
+```bash
+# 1  chassis
+ros2 launch ranger_bringup ranger_mini_v3.launch.py
+
+# 2  lidar (also starts the rear-sector filter -> /scan_filtered, which the corridor veto needs)
+bash bringup/lidar.sh
+
+# 3  safety mux + arm gate.  UTP_ARM_BACKEND=absent = "no arm is fitted", and the node
+#    REFUSES to start if anything answers at the arm's IP, so the declaration cannot be false.
+UTP_ARM_BACKEND=absent bash bringup/safety.sh
+
+# 4  check before every run
+python3 bringup/health.py --skip-arm
+```
+
+`health.py` must show:
+
+| check | required |
+|---|---|
+| `chassis mode` | **CAN** — if it says RC, flip **SWB up**; in RC the chassis silently discards every command |
+| `gate arm_stowed` | **100%** |
+| `/odom` | ~50 Hz, **1 publisher** |
+| `/scan` | ~6 Hz, **1 publisher** |
+| `blocking:` | only `no_source` |
+
+## A — straight line, no setup
+
+Start point is wherever the robot is standing. There is nothing to set.
+
+```bash
+python3 bringup/twopoint.py                      # dry run, prints P1 and P2, no motion
+python3 bringup/twopoint.py --go --pause         # stops at each end so you can measure
+python3 bringup/twopoint.py --go --laps 10 --tol 0.05   # repeatability
+```
+
+Mark the floor first — **two marks per point**, not one. One gives position error only; two also
+give heading error, and on a 4WS base heading is what accumulates. P2 is `--dist` metres (default
+2.0) forward along the heading the robot has when you start.
+
+## B — curvy path, any number of points
+
+Drive by RC (**SWB down**), stopping at each pose you want, and record it. Recording works fine
+under RC: odometry comes from the wheel encoders regardless of who is commanding.
+
+```bash
+python3 bringup/waypoints.py record p1     # at the start pose
+#   ... drive to the next spot ...
+python3 bringup/waypoints.py record p2
+#   ... drive to the next spot ...
+python3 bringup/waypoints.py record p3
+
+python3 bringup/waypoints.py list          # check they are all there
+```
+
+Then **flip SWB up** (the chassis will not obey the computer otherwise) and drive it:
+
+```bash
+python3 bringup/route_run.py --goto p1,p2,p3            # dry run
+python3 bringup/route_run.py --goto p1,p2,p3 --go --confirm
+```
+
+`--confirm` pauses before every leg: Enter runs it, `q` stops. Drop it once you trust the path.
+
+An ad-hoc `--goto` route is parsed, validated and session-checked exactly like a route in
+`config/routes.yaml`. Convenience is not a second, less-checked way to move the robot.
+
+## The path between waypoints is straight
+
+Each leg is turn-to-bearing, then drive, then settle on the final heading. A "curvy" path is
+therefore a polyline: more waypoints, closer together, is how you follow a curve. That is also
+where the error goes — on a 4WS base odometry degrades in TURNS, not in distance, so ten short
+legs drift more than one long one.
+
+## If it will not move
+
+Every one of these prints the reason and stops, rather than timing out:
+
+| message | meaning |
+|---|---|
+| `chassis control_mode=RC` | SWB is down. The chassis is discarding commands; ROS cannot see this. |
+| `STALE WAYPOINTS` | `ranger_base` restarted since you recorded. Re-record, or `waypoints.py rebase` if the robot has not physically moved. |
+| `safety mux is blocking: arm_not_stowed` | the arm gate. Check `health.py`. |
+| `no /safety/status` | the safety stack is not running (terminal 3). |
+| `no /scan_filtered` | the lidar filter is not running; the corridor veto would be inactive, so it refuses. `--no-veto` overrides deliberately. |
+| `corridor blocked` | something is inside the 0.90 x 0.80 m box ahead. |
