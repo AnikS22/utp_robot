@@ -173,6 +173,14 @@ n.create_subscription(LaserScan,"/scan",lambda m:c.__setitem__("scan",c["scan"]+
 n.create_subscription(CameraInfo,"/mast_cam/color/camera_info",lambda m:c.__setitem__("cam",c["cam"]+1),qos_profile_sensor_data)
 n.create_subscription(Odometry,"/odom",od,10)
 n.create_subscription(TFMessage,"/tf",lambda m:[edges.add((t.header.frame_id,t.child_frame_id)) for t in m.transforms],10)
+# /tf_static too, with TRANSIENT_LOCAL -- static transforms are LATCHED and published once, so a
+# subscriber that only watches /tf sees none of them and reports every static edge MISSING. That
+# is what this did until 2026-08-29: base_link->lidar_link and base_link->mast_cam_link were both
+# alive and both reported missing, one of them as a CRITICAL. A health check that cries wolf is
+# worse than none, because the next real failure is read as noise.
+from rclpy.qos import QoSProfile, DurabilityPolicy, HistoryPolicy
+_qs = QoSProfile(depth=100, durability=DurabilityPolicy.TRANSIENT_LOCAL, history=HistoryPolicy.KEEP_LAST)
+n.create_subscription(TFMessage,"/tf_static",lambda m:[edges.add((t.header.frame_id,t.child_frame_id)) for t in m.transforms],_qs)
 t0=n.get_clock().now().nanoseconds
 while n.get_clock().now().nanoseconds-t0 < 5e9: rclpy.spin_once(n,timeout_sec=0.2)
 d=(n.get_clock().now().nanoseconds-t0)/1e9
@@ -203,10 +211,16 @@ n.destroy_node(); rclpy.shutdown()
                 f"{moving} of {int(odom*5)} samples non-zero"
                 + ("" if moving else "  <- all zeros. Correct if the robot is stationary; if it "
                                      "is MOVING, the CAN link is dead"), INFO)
-    for want in ("odom>base_link", "map>odom", "base_link>lidar_link"):
-        rep.add(f"tf {want}", want in edges,
-                "present" if want in edges else "MISSING",
-                CRITICAL if want == "odom>base_link" else INFO)
+    for want in ("odom>base_link", "map>odom", "base_link>lidar_link",
+                 "base_link>mast_cam_link"):
+        detail = "present" if want in edges else "MISSING"
+        if want == "odom>base_link" and want not in edges:
+            # ranger_mini_v3.launch.py sets publish_odom_tf: 0, so this edge is absent BY
+            # CONFIGURATION. Nothing in the odometry-driven stack needs it -- route_run,
+            # twopoint and face_target all read /odom directly, and the corridor veto works in
+            # the scan frame -- but Nav2 and slam_toolbox do. Reported, not failed.
+            detail += "  <- ranger publish_odom_tf:=0. Nav2/SLAM need it; this stack does not."
+        rep.add(f"tf {want}", want in edges, detail, INFO)
 
 
 

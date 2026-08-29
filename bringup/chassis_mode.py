@@ -73,6 +73,23 @@ def main() -> int:
     if vehicle == "ESTOP":
         print("\nE-STOP is engaged. Nothing will move until it is released.", file=sys.stderr)
         return 1
+    if vehicle == "EXCEPTION":
+        # This outranks the control_mode advice below: in EXCEPTION the chassis REFUSES mode
+        # changes, so "flip SWB up" is useless and reads as the whole story when it is not.
+        # error is 0x0000 for both causes, so the code cannot tell them apart -- name both.
+        # Observed 2026-08-29 the moment the RC transmitter was disconnected while the chassis
+        # was in RC mode: disconnecting the RC does not hand authority to the computer, it trips
+        # a lost-link failsafe and takes the robot further from drivable, not closer.
+        print(f"\nCHASSIS IS IN EXCEPTION (mode {mode}, error 0x{err:04X}). It will refuse mode\n"
+              f"changes while faulted, so nothing the computer sends can help. Two causes, and\n"
+              f"the error code is 0x0000 for both:\n"
+              f"  * an E-stop is pressed -- release it; or\n"
+              f"  * the RC TRANSMITTER IS OFF or disconnected while the chassis is in RC mode\n"
+              f"    (a lost-link failsafe). Turn the transmitter back ON, leave the sticks\n"
+              f"    alone, and flip SWB UP for command control.\n"
+              f"If it stays faulted: transmitter on with sticks untouched, power-cycle the rover\n"
+              f"(it boots to STANDBY), then run bringup/claim_can.py immediately.", file=sys.stderr)
+        return 1
     if mode != GOOD:
         print(f"\nNOT DRIVABLE BY THE COMPUTER: {ADVICE.get(mode, 'unexpected mode ' + mode)}",
               file=sys.stderr)
