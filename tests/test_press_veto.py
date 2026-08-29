@@ -15,6 +15,42 @@ def test_the_real_2026_08_29_frame_is_refused():
     assert "REFUSING TO PRESS" in why and "evacuation" in why
 
 
+def test_one_confused_query_does_not_veto_the_real_plate():
+    """The 2026-08-29 false positive, real boxes: target = the ADA plate at (118,408)-(220,500).
+
+    Three forbidden queries found the actual alarm 18 cm to the right at higher confidence; one
+    matched 'lever' to the round plate at 0.429. The old rule refused on that one."""
+    plate = (118, 408, 220, 500)
+    alarm = (297, 423, 362, 504)
+    hits = [("a red fire alarm pull station", alarm, 0.470),
+            ("a fire alarm activation lever", plate, 0.429),
+            ("an emergency stop button", alarm, 0.539),
+            ("a red emergency call button", alarm, 0.604)]
+    ok, why = check(plate, hits)
+    assert ok, why
+
+
+def test_the_real_alarm_pick_is_still_refused_under_the_new_rule():
+    """Same day, earlier: the grounder RETURNED the alarm as the door button. Two forbidden
+    queries sat on it at 96%; two others found a strobe elsewhere. Must still veto."""
+    target = (84, 430, 137, 501)
+    strobe = (84, 44, 143, 119)
+    hits = [("a red fire alarm pull station", strobe, 0.575),
+            ("a fire alarm activation lever", strobe, 0.571),
+            ("an emergency stop button", (83, 429, 137, 501), 0.508),
+            ("a red emergency call button", (84, 430, 137, 501), 0.549)]
+    ok, why = check(target, hits)
+    assert not ok and "2 of 4" in why
+
+
+def test_the_single_most_confident_forbidden_hit_on_the_target_vetoes_alone():
+    """One vote is enough when it is the strongest forbidden evidence in the frame."""
+    target = (100, 100, 150, 150)
+    hits = [("a red fire alarm pull station", target, 0.70),
+            ("an emergency stop button", (500, 500, 540, 540), 0.30)]
+    assert not check(target, hits)[0]
+
+
 def test_a_fire_alarm_elsewhere_on_the_wall_is_not_a_veto():
     """Refusing every frame containing a fire alarm would refuse every corridor in the building."""
     ok, why = check((900, 400, 950, 460),

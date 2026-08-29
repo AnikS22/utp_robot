@@ -67,17 +67,38 @@ def check(target_bbox, forbidden_hits, *, iou_veto: float = IOU_VETO) -> tuple[b
         return False, "no target box to check; refusing"
     if forbidden_hits is None:
         return False, "the forbidden-target check did not run; refusing to press"
-    worst = None
+    # ONE CONFUSED QUERY MUST NOT VETO THE RIGHT TARGET. This used to refuse on the single worst
+    # overlap. Measured 2026-08-29, robot at the button wall, target = the ADA plate (0.526):
+    #   'a red fire alarm pull station'   -> the real FIRE alarm, 18 cm right   0.470
+    #   'an emergency stop button'        -> the real FIRE alarm                0.539
+    #   'a red emergency call button'     -> the real FIRE alarm                0.604
+    #   'a fire alarm activation lever'   -> THE PLATE                          0.429
+    # Three queries agreed on where the alarm actually was, at higher confidence; one matched
+    # "lever" to a round plate. The old rule took the one, refused the correct target, and the
+    # base never drove to it. The refusal has to be a WEIGHT of evidence, not a single vote.
+    #
+    # Veto when EITHER: two or more forbidden queries land on the target (the earlier real case,
+    # where the target WAS the alarm: 'emergency stop button' 0.508 and 'red emergency call
+    # button' 0.549 both sat on it at 96%), OR the single most confident forbidden hit lands on
+    # it. Both real frames are pinned in tests/test_press_veto.py.
+    on_target = []
+    best = None
     for q, bbox, score in forbidden_hits:
         if bbox is None:
             continue
         o = iou(target_bbox, bbox)
-        if worst is None or o > worst[0]:
-            worst = (o, q, score)
-    if worst and worst[0] >= iou_veto:
-        o, q, score = worst
+        if best is None or score > best[2]:
+            best = (o, q, score)
+        if o >= iou_veto:
+            on_target.append((o, q, score))
+    best_on_target = best is not None and best[0] >= iou_veto
+    if len(on_target) >= 2 or best_on_target:
+        o, q, score = max(on_target, key=lambda t: t[2]) if on_target else best
         return False, (f"REFUSING TO PRESS: the target overlaps {o:.0%} with what the detector "
-                       f"identifies as {q!r} (score {score:.3f}). Pressing a fire alarm is not a "
-                       f"failed trial, it is an evacuation. Reposition so the real control is in "
-                       f"frame, or press it by hand.")
-    return True, (f"clear (worst forbidden overlap {worst[0]:.0%})" if worst else "clear")
+                       f"identifies as {q!r} (score {score:.3f}; {len(on_target)} of "
+                       f"{len(forbidden_hits)} forbidden queries agree). Pressing a fire alarm is "
+                       f"not a failed trial, it is an evacuation. Reposition so the real control "
+                       f"is in frame, or press it by hand.")
+    note = (f"clear ({len(on_target)} of {len(forbidden_hits)} forbidden queries on the target; "
+            f"best forbidden hit {best[2]:.3f} lands elsewhere)" if best else "clear")
+    return True, note
