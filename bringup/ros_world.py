@@ -73,6 +73,9 @@ class RosWorld:
         self.goal = goal
         self.dry_run = dry_run
         self.capture_prefix = capture_prefix
+        self._scan_i = 0            # next bearing in SCAN_BEARINGS_DEG
+        self._scan_offset = 0.0     # degrees currently turned away from the approach heading
+        self._looks: list = []      # audit trail for last_look_info()
         self._n = 0
         self._last_nav = "reached"
         self._last_capture: Path | None = None
@@ -184,6 +187,73 @@ class RosWorld:
         if tail:
             print(f"[ros_world] {tail[-1][:160]}")
 
+    # ---- look-around ladder -----------------------------------------------------------------
+    # fsm.py walks (strafe_view, scan_view, widen_view) when the reasoner abstains because the
+    # target is not visible, taking the FIRST that returns True, and each rung must return True
+    # ONLY if the base actually moved so a wedged base falls through to the next.
+    #
+    # WHY THIS IS THE BLOCKER ON HARDWARE. Measured 2026-08-29 at the FAU atrium doors, twice,
+    # with the base already approached to ~0.97 m:
+    #   "I can see the closed glass double doors labeled 'The Atrium', but I cannot see a button,
+    #    card reader, or handle to interact with them. I NEED TO LOOK CLOSER to find the control
+    #    mechanism."   -> planned_action none, failure_detail target_offscreen
+    # The D435 is ~69 deg wide and the ADA plate is on the wall BESIDE the doors, so from a pose
+    # square to them it is simply not in the picture. The reasoner was right to abstain; there was
+    # nothing in the frame to reason about. With no rung implemented the FSM's survey was inert
+    # and every trial ended there.
+    # isaac_world.SCAN_BEARINGS_RAD = (0.785, -0.785, 0.393, -0.393) -- "+/-45 deg then
+    # +/-22.5 deg, in call order". Same values, same order: wide first because a flank-mounted
+    # plate is usually well off axis, then narrow to catch anything just past the frame edge.
+    SCAN_BEARINGS_DEG = (45.0, -45.0, 22.5, -22.5)
+
+    def scan_view(self) -> bool:
+        """Rotate in place to the next unvisited bearing. True only if the base actually turned.
+
+        Rotation, not translation, because the plate sits BESIDE the door: sweeping the camera
+        across the flanking wall is what brings it into frame, and backing off (widen_view) only
+        makes an already-small target smaller. The sweep is bounded and returns to the starting
+        heading when exhausted, so the run ends facing the obstruction rather than somewhere
+        arbitrary.
+        """
+        if self._scan_i >= len(self.SCAN_BEARINGS_DEG):
+            return False
+        want = self.SCAN_BEARINGS_DEG[self._scan_i]
+        self._scan_i += 1
+        delta = want - self._scan_offset
+        if self.dry_run:
+            self._scan_offset = want
+            self._looks.append({"rung": "scan_view", "bearing_deg": want, "moved": False,
+                                "note": "dry run"})
+            return False
+        # SCAN_BUDGET_S = 12.0 in the sim: a hard ceiling PER bearing, so a wedged base costs
+        # seconds rather than the trial budget. turn_by has its own 60 s internal timeout; this
+        # bounds the subprocess as well.
+        r = _ros([ROS_PY, str(REPO / "bringup" / "turn_by.py"), "--deg", f"{delta:.1f}"],
+                 timeout=30)
+        moved = r.returncode == 0
+        if moved:
+            self._scan_offset = want
+        self._looks.append({"rung": "scan_view", "bearing_deg": want, "moved": moved,
+                            "detail": (r.stdout or r.stderr or "").strip().splitlines()[-1:]})
+        print(f"[ros_world] scan_view -> {want:+.0f} deg  moved={moved}")
+        return moved
+
+    def recentre_view(self) -> None:
+        """Undo the sweep. Called after a survey so the robot ends facing the obstruction."""
+        if self._scan_offset and not self.dry_run:
+            _ros([ROS_PY, str(REPO / "bringup" / "turn_by.py"),
+                  "--deg", f"{-self._scan_offset:.1f}"], timeout=90)
+        self._scan_offset = 0.0
+
+    def last_look_info(self) -> dict:
+        """What the survey actually did, for row["look_around"] in the trial record.
+
+        A recovery that CLAIMS a new viewpoint must be checkable against the record rather than
+        taken on faith -- isaac_world makes the same point about its widen-that-did-not-move.
+        """
+        return {"rungs_taken": len(self._looks), "offset_deg": self._scan_offset,
+                "bearings": list(self.SCAN_BEARINGS_DEG), "history": self._looks[-6:]}
+
     def current_blockage(self) -> BlockageEvent | None:
         """Ask the VLM what is in the way. Describes only; the reasoner decides the action."""
         if self._last_capture is None:
@@ -241,12 +311,39 @@ class RosWorld:
         # so the arm reached at blank wall and the trial was booked as a GROUNDING failure though
         # the detector had been right. Hardware can do better than re-projecting: take a fresh
         # frame from where the arm actually is.
+        # READY -> REACH -> STOW, the three steps press_run.sh does. act() did only the middle
+        # one, and both ends matter:
+        #
+        #   READY. "Stow and press are different orientations: stow folds the wrist to J5=90 so
+        #   the tool points up out of the way; a press needs it pointing AT the wall (J5 ~ 2.5).
+        #   approach_target.py holds whatever orientation the arm starts in, so approaching
+        #   straight out of stow reaches at the stow angle and skids off a round button."
+        #   The pose is the OPERATOR'S, captured with stow_arm.py --save-ready, not invented here.
+        #
+        #   STOW. approach_target retreats to its START pose -- wherever the arm happened to be --
+        #   not to stow. config/safety.yaml gates ALL base motion on measured joint angles, so
+        #   without this the FSM's next navigate is refused with blocked_by="arm_not_stowed" and
+        #   the failure looks like a navigation fault immediately after a SUCCESSFUL press.
+        ARM_PY = str(REPO / ".venv-arm" / "bin" / "python")
+        mode = "--dry-run" if self.dry_run else "--go"
+        rr = _ros([ARM_PY, str(REPO / "bringup" / "stow_arm.py"), "--ready"]
+                  + ([] if self.dry_run else ["--go"]), timeout=180)
+        if rr.returncode != 0 and not self.dry_run:
+            return ExecResult(False, "could not reach the press-ready wrist pose; not approaching")
+
         args = [ROS_PY, str(REPO / "bringup" / "approach_target.py"),
                 "--capture", str(self._last_capture),
                 "--target-cam", f"{x:.6f}", f"{y:.6f}", f"{z:.6f}",
-                "--min-standoff", "60", "--dry-run" if self.dry_run else "--go"]
+                "--min-standoff", "60", mode]
         r = _ros(args, timeout=300)
         ok = r.returncode == 0
+
+        if not self.dry_run:
+            sr = _ros([ARM_PY, str(REPO / "bringup" / "stow_arm.py"), "--go"], timeout=180)
+            if sr.returncode != 0:
+                # Say so loudly: the base is now gated off and every later leg will be refused
+                # with arm_not_stowed, which reads as a navigation problem.
+                print("[ros_world] STOW FAILED after the press -- the base will refuse to move.")
         tail = (r.stdout or r.stderr or "").strip().splitlines()
         return ExecResult(ok, tail[-1][:200] if tail else ("ok" if ok else "failed"))
 

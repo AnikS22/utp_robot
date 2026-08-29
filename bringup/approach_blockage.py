@@ -52,6 +52,7 @@ from sensor_msgs.msg import LaserScan  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
 
 from safety.mux_watch import MuxWatch  # noqa: E402
+from safety.reach_envelope import MIN_LIDAR_RANGE_M  # noqa: E402
 from safety.waypoint_drive import corridor_blocked  # noqa: E402
 
 CMD_TOPIC = "/cmd_vel_teleop"
@@ -133,13 +134,29 @@ class Approach(Node):
                        corridor_blocked(self.scan.ranges, self.scan.angle_min,
                                         self.scan.angle_increment))
 
-            # Stop on EITHER signal. corridor_blocked is the veto that also protects the drive;
-            # the range test catches a wall the veto's 3-hit minimum has not latched on yet.
-            if blocked or (near is not None and near <= stop_at):
+            # STOP ON RANGE STRAIGHT AHEAD, NOT ON THE DRIVING VETO.
+            #
+            # corridor_blocked watches a 0.90 x 0.80 m BOX, so it latches on anything within
+            # ~24 deg -- a bench, a pillar, the flanking wall -- and stops the robot before it
+            # has closed on the thing it is actually approaching. Measured 2026-08-29: the FSM
+            # logged "stopped 0.98 m from what is ahead after 0.00 m" and never moved, while the
+            # doors it was approaching were 2.65 m away and the ADA plate 1.83 m. The reasoner was
+            # then asked to identify a ~50 px disc from 1.83 m and, correctly, could not. From the
+            # operator's side it "looked like it was going to the doors but really did nothing".
+            #
+            # This is the same mistake as letting the veto govern the press approach, one stage
+            # earlier: a rule for not hitting unknown obstacles while driving is the wrong rule
+            # for deliberately closing on a known one. nearest_ahead() uses a narrow +-15 deg, so
+            # it tracks what is actually in front. The veto survives as a hard floor below.
+            if near is not None and near <= stop_at:
                 self.stop()
-                return True, (f"stopped {near:.2f} m from what is ahead after "
-                              f"{advanced:.2f} m" if near else
-                              f"stopped on the corridor veto after {advanced:.2f} m")
+                return True, f"stopped {near:.2f} m from what is ahead after {advanced:.2f} m"
+            if blocked and (near is None or near <= MIN_LIDAR_RANGE_M):
+                # Hard floor: the veto is latched AND nothing usable is resolvable straight
+                # ahead, so we are wedged against something. Stop regardless of the range test.
+                self.stop()
+                return True, (f"stopped on the corridor veto after {advanced:.2f} m "
+                              f"(nothing resolvable straight ahead)")
             if advanced >= MAX_ADVANCE_M:
                 self.stop()
                 return False, (f"advanced {advanced:.2f} m without meeting anything -- the way "
