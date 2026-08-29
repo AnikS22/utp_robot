@@ -87,6 +87,12 @@ def main() -> int:
         return 1
     xo, yo, ao = n.odom
     xw, yw, aw = n.world
+    # Stamp the /odom publisher's session, or route_run's stale-frame guard refuses every one of
+    # these -- it did not exist when this was written. The trial server re-zeroes odom on every
+    # launch, so the stamp is exactly as meaningful here as on hardware.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bringup"))
+    from odom_session import odom_session_id
+    sid = odom_session_id(n)
     n.destroy_node(); rclpy.shutdown()
 
     dyaw = ao - aw
@@ -99,7 +105,7 @@ def main() -> int:
         out[name] = {"x": round(c * x - s * y + tx, 4),
                      "y": round(s * x + c * y + ty, 4),
                      "yaw": round(math.atan2(math.sin(yaw + dyaw), math.cos(yaw + dyaw)), 4),
-                     "odom_epoch": round(time.time())}
+                     "odom_epoch": round(time.time()), "odom_session": sid}
     Path(store).parent.mkdir(parents=True, exist_ok=True)
     yaml.safe_dump(out, open(store, "w"), sort_keys=True)
     print(f"world->odom: dyaw={math.degrees(dyaw):+.1f} deg  t=({tx:+.3f},{ty:+.3f})")

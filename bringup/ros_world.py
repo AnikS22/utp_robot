@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -471,23 +472,40 @@ class RosWorld:
             return ExecResult(False, "could not position within arm reach: "
                                      + (tail[-1][:180] if tail else "face_target failed"))
 
+        # SIM: the arm is the trial server's IK, driven by sim/sim_press.py over /arm_reach.
+        # Same grab -> ground -> refuse-without-a-3D-point as hardware, then the server presses
+        # and physically opens the door -- so a wrong point FAILS here exactly as it would there.
+        # No READY/STOW: those are xArm SDK calls with no counterpart in the sim.
+        if os.environ.get("UTP_SIM") == "1":
+            r = _ros([ROS_PY, str(REPO / "sim" / "sim_press.py"), "--query", query]
+                     + (["--dry-run"] if self.dry_run else []), timeout=300)
+            tail = (r.stdout or r.stderr or "").strip().splitlines()
+            for ln in tail[-4:]:
+                print(f"[ros_world] {ln}")
+            return ExecResult(r.returncode == 0,
+                              tail[-1][:200] if tail else ("ok" if r.returncode == 0 else "failed"))
+
         # 3. RE-GROUND FROM THE PRESS POSE. The arm aims at a point measured from HERE.
+        #    HARDWARE ORDER MATTERS: raise the arm to READY first -- with it STOWED the folded arm
+        #    fills the lower-centre of the mast camera's view, exactly where a plate 0.7 m ahead
+        #    sits (measured 2026-08-29: grounder returned the fire alarm, veto refused it; with
+        #    the arm up the same camera saw the plate plainly). press_run.sh has the same order.
+        ARM_PY = str(REPO / ".venv-arm" / "bin" / "python")
         if not self.dry_run:
-            cap = self._reground(query, "re-grounded at the press pose")
+            rr = _ros([ARM_PY, str(REPO / "bringup" / "stow_arm.py"), "--ready", "--go"],
+                      timeout=180)
+            if rr.returncode != 0:
+                return ExecResult(False, "could not reach the press-ready wrist pose; not approaching")
+            cap = self._reground(query, "re-grounded at the press pose, arm up")
             if cap is None:
+                _ros([ARM_PY, str(REPO / "bringup" / "stow_arm.py"), "--go"], timeout=180)
                 return ExecResult(False, "control not localised from the press pose; arm not moved")
 
         # 4. READY -> REACH -> STOW, the three steps press_run.sh does. Stow and press are
         #    different wrist orientations ("approaching straight out of stow reaches at the stow
         #    angle and skids off a round button"), and without the trailing stow every later leg
         #    is refused with arm_not_stowed, which reads as a navigation fault after a success.
-        ARM_PY = str(REPO / ".venv-arm" / "bin" / "python")
         mode = "--dry-run" if self.dry_run else "--go"
-        rr = _ros([ARM_PY, str(REPO / "bringup" / "stow_arm.py"), "--ready"]
-                  + ([] if self.dry_run else ["--go"]), timeout=180)
-        if rr.returncode != 0 and not self.dry_run:
-            return ExecResult(False, "could not reach the press-ready wrist pose; not approaching")
-
         r = _ros([ROS_PY, str(REPO / "bringup" / "approach_target.py"),
                   "--capture", str(cap), "--min-standoff", "60", mode], timeout=300)
         ok = r.returncode == 0

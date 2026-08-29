@@ -12,6 +12,13 @@ python3 "$REPO/safety/arm_monitor_node.py" --backend scene_state &
 AM=$!
 python3 "$REPO/safety/twist_mux_node.py" &
 MUX=$!
-trap 'kill $AM $MUX 2>/dev/null' EXIT
+# The rear-sector filter, so /scan_filtered exists on 42 -- approach_blockage, face_target and
+# route_run all subscribe to it, and without it the corridor veto silently fails OPEN (the same
+# gap lidar.sh closes on hardware). Guarded: two filters = two publishers.
+if pgrep -f "filter_scan.py" >/dev/null 2>&1; then echo "[safety_sim] filter already running"; else
+python3 "$REPO/bringup/filter_scan.py" &
+FILT=$!
+fi
+trap 'kill $AM $MUX ${FILT:-} 2>/dev/null' EXIT
 echo "[safety_sim] arm_monitor pid $AM, mux pid $MUX (domain 42). Ctrl-C stops both."
 wait

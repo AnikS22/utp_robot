@@ -180,6 +180,19 @@ routes:
     - goto: doors
     - goto: final
 
+  # SIM twin of recorded_press: the exact join that failed on hardware -- waypoint to the button
+  # wall, reposition on the grounded control, press, exit. Waypoints from make_sim_waypoints.py.
+  recorded_press_sim:
+    - goto: door
+    - goto: button
+    - action: reach_control
+      query: "the door release button on the wall"
+    - action: press_button
+      query: "the door release button on the wall"
+    - wait: 3
+    - goto: door
+    - goto: outside
+
   # SIM twins of benchmark/press_and_pass (Isaac trial server, domain 42, UTP_SIM=1).
   # Same step kinds, same executor, same check -> the workflow is what gets tested.
   # One geometric difference: in the sim scene the button's wall FACES the robot, and the
