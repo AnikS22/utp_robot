@@ -161,6 +161,25 @@ routes:
     - goto: doors
     - goto: final
 
+  # The back half of recorded_press, for running from the button wall without the loop.
+  press_and_exit:
+    - action: reach_control
+      query: "the accessible door push button"
+    - action: press_button
+      query: "the accessible door push button"
+      standoff: 60
+    - goto: doors
+    - goto: final
+
+  # From the press pose: press, then out. reach_control is NOT repeated here -- at 0.7 m the
+  # plate is behind the robot's own arm in the camera and a re-ground returns the fire alarm.
+  press_then_exit:
+    - action: press_button
+      query: "the accessible door push button"
+      standoff: 60
+    - goto: doors
+    - goto: final
+
   # SIM twins of benchmark/press_and_pass (Isaac trial server, domain 42, UTP_SIM=1).
   # Same step kinds, same executor, same check -> the workflow is what gets tested.
   # One geometric difference: in the sim scene the button's wall FACES the robot, and the

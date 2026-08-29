@@ -128,6 +128,26 @@ class Facer(Node):
             self.pub.publish(Twist())
             time.sleep(0.02)
 
+    def nearest_ahead(self, half_deg: float = 15.0) -> float | None:
+        """Nearest lidar return within +-half_deg of straight ahead, or None.
+
+        Used ONLY as the hard floor in servo_to_press_pose. It was referenced there and never
+        defined on this class -- the method lives on approach_blockage.Approach -- so the first
+        live reposition crashed with AttributeError one line before it would have driven, with
+        the plate grounded at 0.521 and the veto passed. 2026-08-29."""
+        if self.scan is None:
+            return None
+        s = self.scan
+        best = None
+        for i, r in enumerate(s.ranges):
+            if r != r or abs(r) == float("inf") or r <= 0:
+                continue
+            a = math.atan2(math.sin(s.angle_min + i * s.angle_increment),
+                           math.cos(s.angle_min + i * s.angle_increment))
+            if abs(math.degrees(a)) <= half_deg:
+                best = r if best is None else min(best, r)
+        return best
+
     def _drive(self, v: float, w: float) -> bool:
         self.pub.publish(Twist(linear=Vector3(x=v), angular=Vector3(z=w)))
         now = time.monotonic()
@@ -270,12 +290,24 @@ def main() -> int:
         tx = rx + c*tx_b - sn*ty_b
         ty = ry + sn*tx_b + c*ty_b
         print(f"  target in odom: ({tx:+.3f}, {ty:+.3f})   press standoff {PRESS_STANDOFF_M:.2f} m")
+        # Persist it. The re-ground at the press pose is structurally blind (the plate sits
+        # behind the robot's own stowed arm at 0.7 m dead ahead -- measured 2026-08-29, the
+        # grounder returned the fire alarm and the veto refused it), so the ARM's target is this
+        # world point re-expressed after positioning: bringup/reproject_target.py.
+        (a.capture / "target_odom.json").write_text(json.dumps(
+            {"odom_xy": [tx, ty], "z_base": float(p_base[2]), "frame": frame,
+             "score": float(det.get("score", 0.0)), "query": det.get("query")}, indent=2))
 
         ok, why = n.servo_to_press_pose(tx, ty, lim)
         print(f"  approach: {'ok' if ok else 'FAILED'} {why}")
         if not ok:
             return 1
 
+        rp = __import__("subprocess").run(
+            [sys.executable, str(REPO / "bringup" / "reproject_target.py"), str(a.capture)],
+            capture_output=True, text=True)
+        for ln in (rp.stdout or rp.stderr or "").strip().splitlines():
+            print(f"  {ln}")
         print("\n  positioned. RE-GROUND from here before reaching -- the old 3D point was "
               "measured from the pose you just left.")
         return 0

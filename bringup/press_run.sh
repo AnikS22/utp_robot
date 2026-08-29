@@ -51,19 +51,28 @@ echo "=============================================================="
 echo " 2/6  GROUND    running the shipped detector on that frame"
 echo "=============================================================="
 [ -x "$VENV" ] || { echo "pipeline venv not found at $VENV" >&2; exit 1; }
-if [ -n "$QUERY" ]; then
+# PREFER A FRESH REPROJECTED TARGET. At the press standoff the plate is dead ahead at ~0.7 m,
+# behind the robot's own stowed arm in the mast camera's view; grounding from here returned the
+# FIRE alarm (2026-08-29) and the veto refused it. face_target/reproject_target write the plate's
+# position -- grounded and vetoed from further back -- re-expressed at THIS pose. Use it if it is
+# recent; otherwise ground as before. The veto still runs on the fresh frame either way.
+PT="$REPO/captures/press_target.json"
+if [ -f "$PT" ] && python3 -c "import json,sys,time; d=json.load(open('$PT')); sys.exit(0 if time.time()-d.get('written_at',0) < 300 else 1)"; then
+    echo "  using reprojected target from $PT ($(python3 -c "import json;print(json.load(open('$PT'))['source'])"))"
+    cp "$PT" "$CAP/detection.json"
+elif [ -n "$QUERY" ]; then
     "$VENV" "$REPO/bringup/detect_frame.py" "$CAP" --query "$QUERY"
 
-# The last gate before the ARM moves. reach_control checks too, but this is the one that matters:
-# it is the only check between a grounded box and a fingertip on it, and press_run is runnable on
-# its own. Fails closed -- if it cannot answer, nothing is pressed. See safety/press_veto.py.
-"$VENV" "$REPO/bringup/check_press_safe.py" "$CAP" || {
-    echo "[press] REFUSED -- the arm will not be commanded at that target." >&2
-    exit 1
-}
 else
     "$VENV" "$REPO/bringup/detect_frame.py" "$CAP"
 fi
+# The last gate before the ARM moves. reach_control checks too, but this is the one that matters:
+# it is the only check between a grounded box and a fingertip on it, and press_run is runnable on
+# its own. Fails closed -- if it cannot answer, nothing is pressed. See safety/press_veto.py.
+[ -f "$CAP/detection.json" ] && "$VENV" "$REPO/bringup/check_press_safe.py" "$CAP" || {
+    echo "[press] REFUSED -- the arm will not be commanded at that target." >&2
+    exit 1
+}
 # detect_frame writes detection.json ONLY when it has a 3D point. No point, no aiming.
 [ -f "$CAP/detection.json" ] || {
     echo >&2
