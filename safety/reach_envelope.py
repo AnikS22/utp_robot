@@ -35,6 +35,24 @@ PRESS_YAW_TOL_RAD = 0.25      # ~14.3 deg off the press axis is still reachable
 # Approach budget and stall test, also isaac_world's. Latency here is a DATA-INTEGRITY concern in
 # its words: "a doomed approach that eats the trial budget turns a would-be report_unreachable
 # into a scored timeout".
+# SURVEY standoff -- where to stop in order to LOOK, which is not where to stop in order to
+# PRESS. Getting this wrong is why three trials in a row abstained.
+#
+# The reasoner's prompt forbids naming a control it cannot see ("Do NOT describe a control you
+# cannot actually see in the image"), which is deliberate: at temperature 0 it once invented an
+# ADA button on a sealed door. So the control has to be genuinely IN FRAME and big enough to
+# recognise before any tool can be chosen.
+#
+# An ADA plate sits on the wall BESIDE the door, so closing on the DOOR swings it further off
+# axis, not nearer. Measured 2026-08-29: from 0.54 m the plate was at the extreme left edge,
+# half cut off, and both the VLM and the grounder missed it. From further back -- the frame where
+# find_control succeeded -- the same plate was 81x88 px and grounded at 0.489, with the fire
+# alarm beside it correctly ranked below.
+#
+# So: survey from here, and only close to PRESS_STANDOFF_M once the control has been grounded and
+# there is a specific thing to drive at (face_target).
+SURVEY_STANDOFF_M = 1.40
+
 APPROACH_BUDGET_S = 25.0
 APPROACH_STALL_WINDOW_S = 4.0
 APPROACH_STALL_D_M = 0.03

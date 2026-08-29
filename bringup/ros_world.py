@@ -76,6 +76,7 @@ class RosWorld:
         self._scan_i = 0            # next bearing in SCAN_BEARINGS_DEG
         self._scan_offset = 0.0     # degrees currently turned away from the approach heading
         self._looks: list = []      # audit trail for last_look_info()
+        self._widened = False       # widen_view is once per blockage; see the note there
         self._n = 0
         self._last_nav = "reached"
         self._last_capture: Path | None = None
@@ -180,7 +181,14 @@ class RosWorld:
         no waypoint and no map, and it approaches the BLOCKAGE, not the button: what the control is
         and where it sits stays the grounder's job, from a frame taken here.
         """
+        # Stop at the SURVEY standoff, not the press standoff. approach_blockage exists so the
+        # reasoner can SEE the blockage; closing all the way to 0.55 m puts a side-mounted plate
+        # at the frame edge and the reasoner -- forbidden by its prompt from naming a control it
+        # cannot see -- abstains. Driving the last metre is face_target's job, and only once
+        # there is a grounded target to drive at.
+        from safety.reach_envelope import SURVEY_STANDOFF_M
         args = [ROS_PY, str(REPO / "bringup" / "approach_blockage.py"),
+                "--stop-at", f"{SURVEY_STANDOFF_M:.2f}",
                 "--dry-run" if self.dry_run else "--go"]
         r = _ros(args, timeout=150)
         tail = (r.stdout or r.stderr or "").strip().splitlines()
@@ -236,6 +244,30 @@ class RosWorld:
         self._looks.append({"rung": "scan_view", "bearing_deg": want, "moved": moved,
                             "detail": (r.stdout or r.stderr or "").strip().splitlines()[-1:]})
         print(f"[ros_world] scan_view -> {want:+.0f} deg  moved={moved}")
+        return moved
+
+    def widen_view(self, delta_m: float = 0.35) -> bool:
+        """Back the base off so the camera frames more of the blockage. True only if it moved.
+
+        fsm.py's third rung, and on this robot a real one rather than a fallback. The reasoner
+        cannot name a control it cannot see (its prompt forbids it, deliberately -- at temperature
+        0 it once invented an ADA button on a sealed door), and an ADA plate BESIDE a door goes
+        FURTHER off-axis the closer the base gets. Measured 2026-08-29: from 0.54 m the plate was
+        half out of frame and the VLM and the grounder both missed it; from further back the same
+        plate was 81x88 px and grounded at 0.489.
+
+        Bounded to one use per blockage: reversing repeatedly walks the robot away from its own
+        mission, and the sweep is the better tool once the distance is right.
+        """
+        if self._widened or self.dry_run:
+            return False
+        self._widened = True
+        r = _ros([ROS_PY, str(REPO / "bringup" / "approach_blockage.py"),
+                  "--back", f"{delta_m:.2f}"], timeout=90)
+        moved = r.returncode == 0
+        self._looks.append({"rung": "widen_view", "delta_m": delta_m, "moved": moved,
+                            "detail": (r.stdout or r.stderr or "").strip().splitlines()[-1:]})
+        print(f"[ros_world] widen_view -> back {delta_m:.2f} m  moved={moved}")
         return moved
 
     def recentre_view(self) -> None:

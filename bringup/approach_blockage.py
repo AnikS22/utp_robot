@@ -44,7 +44,7 @@ from _ros_env import require_ros  # noqa: E402
 require_ros()
 
 import rclpy  # noqa: E402
-from geometry_msgs.msg import Twist  # noqa: E402
+from geometry_msgs.msg import Twist, Vector3  # noqa: E402
 from nav_msgs.msg import Odometry  # noqa: E402
 from rclpy.node import Node  # noqa: E402
 from rclpy.qos import qos_profile_sensor_data  # noqa: E402
@@ -119,6 +119,47 @@ class Approach(Node):
                 best = r if best is None else min(best, r)
         return best
 
+    def reverse(self, dist_m: float, dry: bool) -> tuple[bool, str]:
+        """Back straight up by a fixed distance. True only if the base actually moved.
+
+        WHY BACKING OFF IS A REAL RECOVERY. The reasoner's prompt forbids naming a control it
+        cannot see, and an ADA plate sits BESIDE the door -- so the closer the robot gets to the
+        DOOR, the further off-axis the plate swings. Measured 2026-08-29: from 0.54 m the plate
+        was at the extreme left edge, half cut off, and the VLM and the grounder both missed it.
+        From further back the same plate was 81x88 px and grounded at 0.489. When the robot is
+        already too close, closing further cannot help; only reversing can.
+
+        NO LIDAR BEHIND. The A1M8's rear sector is filtered out because it is the robot seeing
+        ITSELF (measured self-hits at 0.17 m), so there is no obstacle check astern -- which is
+        why this is bounded, slow, and deliberate, and never a general-purpose reverse.
+        """
+        if not (0.05 <= dist_m <= 1.0):
+            return False, f"refusing to reverse {dist_m:.2f} m; bounded to 0.05-1.00 m"
+        if dry:
+            return True, f"DRY RUN: would reverse {dist_m:.2f} m"
+        x0, y0, _ = self.pose
+        self.mux.resume(time.monotonic())
+        end = time.monotonic() + 40.0
+        while rclpy.ok() and time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=1.0/RATE_HZ)
+            if self.pose is None or (time.monotonic() - self.stamp) > 0.5:
+                self.pub.publish(Twist())
+                continue
+            gone = math.hypot(self.pose[0]-x0, self.pose[1]-y0)
+            if gone >= dist_m:
+                self.stop()
+                return True, f"reversed {gone:.2f} m"
+            self.pub.publish(Twist(linear=Vector3(x=-V_APPROACH)))
+            now = time.monotonic()
+            self.mux.note_command(True, now)
+            v = self.mux.verdict(now)
+            if not v.ok:
+                self.stop()
+                return False, v.reason
+        self.stop()
+        gone = math.hypot(self.pose[0]-x0, self.pose[1]-y0)
+        return (gone > 0.05), f"reverse timed out after {gone:.2f} m"
+
     def run(self, stop_at: float, dry: bool) -> tuple[bool, str]:
         x0, y0, _ = self.pose
         self.mux.resume(time.monotonic())
@@ -188,6 +229,10 @@ def main() -> int:
     # convention route_run's run_action() relies on: it appends --dry-run for a dry run and
     # nothing for a live one, so an action that needed an explicit --go would silently no-op in
     # the middle of a real trial and look like a robot that decided not to move.
+    ap.add_argument("--back", type=float, default=0.0,
+                    help="REVERSE this many metres instead of approaching. Used by widen_view: "
+                         "when the robot is already too close to survey, closing further cannot "
+                         "help and only backing off gets the blockage in frame.")
     ap.add_argument("--dry-run", action="store_true", help="plan and report; move nothing")
     ap.add_argument("--go", action="store_true", help="accepted for symmetry; motion is the "
                                                       "default and --dry-run is what stops it")
@@ -203,7 +248,10 @@ def main() -> int:
         if not n.wait_ready():
             print("no /odom or no /scan_filtered -- is the stack up?", file=sys.stderr)
             return 1
-        ok, why = n.run(a.stop_at, dry=a.dry_run)
+        if a.back > 0.0:
+            ok, why = n.reverse(a.back, dry=a.dry_run)
+        else:
+            ok, why = n.run(a.stop_at, dry=a.dry_run)
         print(f"approach_blockage: {why}")
         return 0 if ok else 1
     finally:
