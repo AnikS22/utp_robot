@@ -82,6 +82,25 @@ class MuxWatch:
         elif self._asking_since is None:
             self._asking_since = now
 
+    def resume(self, now: float) -> None:
+        """Restart the clocks after a stretch where we deliberately were not spinning.
+
+        WHY. Staleness here means "the mux stopped talking". It cannot tell that apart from "we
+        stopped listening", and we stop listening on purpose: input() at a --confirm prompt
+        blocks the thread, and so does every action subprocess and every wait step. Measured
+        2026-08-29 -- an operator read the confirm prompt for four seconds and the run aborted
+        with "the safety mux stopped publishing", while the mux was alive and had been logging
+        "base motion permitted" throughout.
+
+        So every blocking stretch ends with a resume, and the watch re-establishes from the next
+        message. A genuinely dead mux is still caught: nothing arrives, and startup_grace_s
+        expires exactly as it does at launch."""
+        self._started = now
+        self._last_status = None
+        self._blocked_by = None
+        self._blocked_since = None
+        self._asking_since = None
+
     # ---- output ----------------------------------------------------------------------------
     def verdict(self, now: float) -> Verdict:
         if self._last_status is None:

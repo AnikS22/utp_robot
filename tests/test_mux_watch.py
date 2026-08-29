@@ -83,3 +83,28 @@ def test_clock_starts_when_we_start_asking_not_when_the_block_started():
         w.note_status("arm_not_stowed", t)
         w.note_command(True, t)
     assert not w.verdict(6.1).ok
+
+
+def test_a_blocking_pause_is_not_a_dead_mux():
+    """The --confirm prompt blocks the thread, so no status is processed while it waits.
+
+    Without resume() the run aborted with "the safety mux stopped publishing" after four
+    seconds at a prompt, while the mux was alive and logging "base motion permitted".
+    """
+    w = MuxWatch(0.0, stale_s=1.0)
+    w.note_status(None, 0.0)
+    w.note_command(True, 0.0)
+    assert not w.verdict(4.0).ok          # looks dead: nobody spun for 4 s
+    w.resume(4.0)                          # operator pressed Enter; we spin again
+    assert w.verdict(4.0).ok
+    w.note_status(None, 4.1)
+    assert w.verdict(4.2).ok
+
+
+def test_resume_still_catches_a_genuinely_dead_mux():
+    """Resuming must not blind the check -- silence after a resume is still a failure."""
+    w = MuxWatch(0.0, stale_s=1.0, startup_grace_s=5.0)
+    w.resume(100.0)
+    assert w.verdict(104.0).ok             # inside the fresh grace window
+    v = w.verdict(105.1)
+    assert not v.ok and "not running" in v.reason

@@ -163,6 +163,10 @@ class Runner(Node):
 
     def drive_leg(self, goal: dict, lim: Limits) -> tuple[bool, str]:
         deadline = time.monotonic() + LEG_TIMEOUT_S
+        # Anything before this leg may have blocked the thread for seconds without spinning
+        # (a --confirm prompt, an action subprocess, a wait). Staleness cannot tell "the mux
+        # went quiet" from "we stopped listening", so the clocks start fresh here.
+        self.mux.resume(time.monotonic())
         last = None
         while rclpy.ok() and time.monotonic() < deadline:
             if _INTERRUPT["v"]:

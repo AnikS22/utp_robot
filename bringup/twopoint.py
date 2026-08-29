@@ -102,6 +102,10 @@ class Driver(Node):
 
     def drive_to(self, gx: float, gy: float, gyaw: float, lim: Limits) -> tuple[bool, str]:
         deadline = time.monotonic() + LEG_TIMEOUT_S
+        # Anything before this leg may have blocked the thread for seconds without spinning
+        # (a --confirm prompt, an action subprocess, a wait). Staleness cannot tell "the mux
+        # went quiet" from "we stopped listening", so the clocks start fresh here.
+        self.mux.resume(time.monotonic())
         last = None
         while rclpy.ok() and time.monotonic() < deadline:
             rclpy.spin_once(self, timeout_sec=1.0/RATE_HZ)
