@@ -47,8 +47,9 @@ from sensor_msgs.msg import LaserScan  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
 
 from safety.mux_watch import MuxWatch  # noqa: E402
-from safety.reach_envelope import (ARM_REACH_M as ENVELOPE_M, check_before_reach,  # noqa: E402
-                                   lidar_stop_for)
+from safety.reach_envelope import (APPROACH_BUDGET_S, ARM_REACH_M as ENVELOPE_M,  # noqa: E402
+                                   MIN_LIDAR_RANGE_M, PRESS_STANDOFF_M, check_before_reach,
+                                   press_pose_ok, stalled)
 from safety.waypoint_drive import Limits, corridor_blocked, wrap  # noqa: E402
 
 CMD_TOPIC = "/cmd_vel_teleop"
@@ -133,65 +134,77 @@ class Facer(Node):
         self.mux.note_command(not (v == 0.0 and w == 0.0), now)
         return self.mux.verdict(now).ok
 
-    def turn_to(self, target_yaw_err: float, lim: Limits, timeout: float = 40.0) -> tuple[bool, str]:
-        """Rotate by a FIXED amount, closed-loop on odometry.
+    def servo_to_press_pose(self, tx: float, ty: float, lim: Limits) -> tuple[bool, str]:
+        """Face the grounded target and step to the press standoff. Target-relative, on odometry.
 
-        Fixed, not recomputed: the target does not move in the world, so re-deriving the error
-        from a fresh scan every tick is what produced the door livelock (a steering command
-        re-issued at 20 Hz is a mode change the 4WS firmware answers by re-steering all four
-        wheels, and the body never commits)."""
-        self.mux.resume(time.monotonic())
-        start_yaw = self.pose[2]
-        goal_yaw = wrap(start_yaw + target_yaw_err)
-        end = time.monotonic() + timeout
-        while rclpy.ok() and time.monotonic() < end:
-            rclpy.spin_once(self, timeout_sec=1.0/RATE_HZ)
-            err = wrap(goal_yaw - self.pose[2])
-            if abs(err) <= YAW_TOL:
-                self.stop()
-                return True, ""
-            w = max(-lim.w_max, min(lim.w_max, 1.2 * err))
-            if abs(w) < 0.12:
-                w = math.copysign(0.12, w)      # below this the chassis stalls rather than creeps
-            if not self._drive(0.0, w):
-                self.stop()
-                return False, self.mux.verdict(time.monotonic()).reason
-        self.stop()
-        return False, f"turn timed out with {math.degrees(wrap(goal_yaw - self.pose[2])):+.1f} deg left"
+        THIS IS isaac_world._approach_press_pose, PORTED. Its own comment says why it must not use
+        the lidar: "Two interleaved controls, target-relative (NOT lidar -- the self-hit filter
+        can't guard the < 0.30 m close range; PRESS_STANDOFF_X keeps the chassis clear of the
+        door/wall)". My first hardware version serviced the final approach on lidar range, and
+        corridor_blocked's 0.90 m look-ahead is measured from a sensor 0.318 m FORWARD of
+        base_link -- so it halted the chassis 1.23 m from the plate, outside the 0.88 m arm, and
+        the press faulted with ControllerError 21. The lidar is the wrong sensor for this job.
 
-    def advance(self, dist_m: float, lim: Limits, stop_range: float,
-                timeout: float = 60.0) -> tuple[bool, str]:
+        (tx, ty) is the target in the ODOM frame, fixed at entry. It does not move as the robot
+        does, which is the whole point -- a target re-derived from a fresh frame each tick is the
+        4WS mode thrash that produced the 90-second livelock.
+
+        Also ported: the honest exits. Latency here is a data-integrity concern in the sim's
+        words -- "a doomed approach that eats the trial budget turns a would-be
+        report_unreachable into a scored timeout" -- so it stops on evidence of not converging
+        rather than running the clock out.
+        """
         self.mux.resume(time.monotonic())
-        x0, y0, _ = self.pose
-        end = time.monotonic() + timeout
-        while rclpy.ok() and time.monotonic() < end:
+        t0 = time.monotonic()
+        hist: list = []
+        while rclpy.ok() and time.monotonic() - t0 < APPROACH_BUDGET_S:
             rclpy.spin_once(self, timeout_sec=1.0/RATE_HZ)
-            gone = math.hypot(self.pose[0]-x0, self.pose[1]-y0)
-            if gone >= dist_m - POS_TOL_M:
+            if self.pose is None or (time.monotonic() - self.stamp) > 0.5:
+                self.pub.publish(Twist())
+                continue
+            x, y, th = self.pose
+            dist = math.hypot(tx - x, ty - y)
+            yaw_err = wrap(math.atan2(ty - y, tx - x) - th)
+
+            if press_pose_ok(dist, yaw_err):
                 self.stop()
-                return True, f"advanced {gone:.2f} m"
-            # STOP ON RANGE TO THE WALL, NOT ON THE DRIVING VETO.
-            #
-            # corridor_blocked() has a 0.90 m look-ahead measured from the LIDAR, which sits
-            # 0.318 m forward of base_link -- so it halts the chassis with the wall ~1.21 m from
-            # base_link, permanently outside the 0.88 m arm. Letting it govern the final approach
-            # is why the first real press attempt stopped at 1.23 m and faulted the arm with
-            # ControllerError 21 (2026-08-29). The rule that keeps the robot off walls while
-            # DRIVING also guarantees it can never reach anything mounted on one.
-            #
-            # Approaching a grounded, vetoed target is a different job: close deliberately, at
-            # 0.10 m/s, to a distance chosen from the ARM's geometry. The veto stays as a hard
-            # floor via MIN_LIDAR_RANGE_M inside lidar_stop_for().
+                return True, (f"positioned: {dist:.2f} m from the target, "
+                              f"{math.degrees(yaw_err):+.1f} deg off the press axis")
+
+            now = time.monotonic()
+            hist.append((now, abs(dist), abs(yaw_err)))
+            while len(hist) > 2 and now - hist[1][0] >= 4.0:
+                hist.pop(0)
+            if stalled(hist, now):
+                self.stop()
+                return False, (f"approach STALLED at {dist:.2f} m, "
+                               f"{math.degrees(yaw_err):+.1f} deg -- neither error improved over "
+                               f"4 s. The base is against something, or that point is not "
+                               f"drivable-to. Driving longer cannot help.")
+
+            # HARD FLOOR ONLY. The lidar no longer decides when to stop; it just refuses to let
+            # the chassis close on anything inside MIN_LIDAR_RANGE_M.
             near = self.nearest_ahead()
-            if near is not None and near <= stop_range:
+            if near is not None and near < MIN_LIDAR_RANGE_M:
                 self.stop()
-                return True, (f"stopped {near:.2f} m from the wall ahead after {gone:.2f} m "
-                              f"(target lidar range {stop_range:.2f} m)")
-            if not self._drive(min(0.10, lim.v_max), 0.0):
+                return False, (f"hard floor: something is {near:.2f} m ahead, closer than the "
+                               f"{MIN_LIDAR_RANGE_M:.2f} m minimum. Not driving into it.")
+
+            # Yaw first while badly off axis, then drive and steer together.
+            w = max(-lim.w_max, min(lim.w_max, 1.2 * yaw_err))
+            if abs(w) < 0.12 and abs(yaw_err) > YAW_TOL:
+                w = math.copysign(0.12, w)
+            v = 0.0 if abs(yaw_err) > 0.6 else min(0.10, max(0.0, dist - PRESS_STANDOFF_M))
+            if 0.0 < v < 0.05:
+                v = 0.05
+            self.pub.publish(Twist(linear=Vector3(x=v), angular=Vector3(z=w)))
+            self.mux.note_command(not (v == 0.0 and w == 0.0), now)
+            vd = self.mux.verdict(now)
+            if not vd.ok:
                 self.stop()
-                return False, self.mux.verdict(time.monotonic()).reason
+                return False, vd.reason
         self.stop()
-        return False, "advance timed out"
+        return False, f"approach timed out after {APPROACH_BUDGET_S:.0f}s"
 
 
 def main() -> int:
@@ -225,12 +238,12 @@ def main() -> int:
         if p_base is None:
             print(f"no TF base_link <- {frame}", file=sys.stderr)
             return 1
-        tx, ty = float(p_base[0]), float(p_base[1])
-        dist = math.hypot(tx, ty)
-        bear = math.atan2(ty, tx)
+        tx_b, ty_b = float(p_base[0]), float(p_base[1])
+        dist = math.hypot(tx_b, ty_b)
+        bear = math.atan2(ty_b, tx_b)
         step_in = dist - a.standoff
 
-        print(f"  target in base_link: x={tx:+.3f} y={ty:+.3f} z={float(p_base[2]):+.3f}")
+        print(f"  target in base_link: x={tx_b:+.3f} y={ty_b:+.3f} z={float(p_base[2]):+.3f}")
         print(f"  range {dist:.2f} m, bearing {math.degrees(bear):+.1f} deg")
         print(f"  arm reach is {ARM_REACH_M:.2f} m -> "
               + ("ALREADY IN REACH; no base move needed"
@@ -249,29 +262,20 @@ def main() -> int:
                   file=sys.stderr)
             return 1
 
-        ok, why = n.turn_to(bear, lim)
-        print(f"  turn: {'ok' if ok else 'FAILED'} {why}")
+        # Lift the target into ODOM once, from the pose the observation was taken at. The
+        # camera->base transform is rigid, so with the base stationary this is exact -- and
+        # fixing it here is what lets the servo run without re-deriving a moving goal.
+        rx, ry, rth = n.pose
+        c, sn = math.cos(rth), math.sin(rth)
+        tx = rx + c*tx_b - sn*ty_b
+        ty = ry + sn*tx_b + c*ty_b
+        print(f"  target in odom: ({tx:+.3f}, {ty:+.3f})   press standoff {PRESS_STANDOFF_M:.2f} m")
+
+        ok, why = n.servo_to_press_pose(tx, ty, lim)
+        print(f"  approach: {'ok' if ok else 'FAILED'} {why}")
         if not ok:
             return 1
-        if step_in > POS_TOL_M:
-            ok, why = n.advance(step_in, lim, lidar_stop_for(a.standoff))
-            print(f"  advance: {'ok' if ok else 'FAILED'} {why}")
-            if not ok:
-                return 1
 
-        # DID IT ACTUALLY GET INTO REACH? Reporting success while still 1.23 m from a 0.88 m arm
-        # is what handed press_run a target it could only fault on. Re-measure and refuse.
-        for _ in range(20):
-            rclpy.spin_once(n, timeout_sec=0.05)
-        p2 = n.to_base(p_cam, frame)
-        if p2 is not None:
-            r2 = math.hypot(float(p2[0]), float(p2[1]))
-            ok2, why2 = check_before_reach(r2)
-            print(f"  after moving, target is {r2:.2f} m from base_link (arm reaches "
-                  f"{ENVELOPE_M:.2f} m)")
-            if not ok2:
-                print(f"\n  NOT IN REACH: {why2}", file=sys.stderr)
-                return 1
         print("\n  positioned. RE-GROUND from here before reaching -- the old 3D point was "
               "measured from the pose you just left.")
         return 0

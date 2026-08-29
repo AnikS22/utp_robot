@@ -209,6 +209,38 @@ class RosWorld:
         if self._last_capture is None:
             return ExecResult(False, "no capture to act from")
         x, y, z = detection.point3d
+
+        # POSITION THE BASE FIRST -- isaac_world.act() has done this since it was written:
+        #   "POSITION the base within arm reach of the target, then let the arm IK make the final
+        #    reach. The target sits on/at an obstacle (a button on the door / wall), so the exact
+        #    press standoff is usually unreachable by a strict drive..."
+        # via _approach_press_pose, which FACES the grounded button and steps in to
+        # PRESS_STANDOFF_X. This went straight from detection to the arm, so on hardware the base
+        # never repositioned at all: 2026-08-29 the grounder found the ADA plate correctly at
+        # 1.97 m, the base ended 1.23 m away, and a 0.88 m arm was commanded at it and faulted
+        # with ControllerError 21.
+        #
+        # bringup/face_target.py is that algorithm on this robot -- same constants, same
+        # acceptance test (dist <= standoff + 0.18, yaw_err <= 0.25), same stall evidence, same
+        # budget, and target-relative on odometry rather than on the lidar for the reason the sim
+        # states: the self-hit filter cannot guard the close range, so the standoff is what keeps
+        # the chassis clear.
+        pos = _ros([ROS_PY, str(REPO / "bringup" / "face_target.py"),
+                    str(self._last_capture)] + (["--dry-run"] if self.dry_run else []),
+                   timeout=180)
+        for ln in (pos.stdout or "").strip().splitlines()[-3:]:
+            print(f"[ros_world] {ln}")
+        if pos.returncode != 0 and not self.dry_run:
+            tail = (pos.stderr or pos.stdout or "").strip().splitlines()
+            return ExecResult(False, "could not position within arm reach: "
+                                     + (tail[-1][:180] if tail else "face_target failed"))
+
+        # RE-GROUND FROM THE NEW POSE. The 3D point above was measured from where the robot WAS.
+        # isaac_world lifts it with the OBSERVATION pose for the same reason -- it records the
+        # base yawing 0.69 rad between observing and pressing, swinging a 1 m target half a metre,
+        # so the arm reached at blank wall and the trial was booked as a GROUNDING failure though
+        # the detector had been right. Hardware can do better than re-projecting: take a fresh
+        # frame from where the arm actually is.
         args = [ROS_PY, str(REPO / "bringup" / "approach_target.py"),
                 "--capture", str(self._last_capture),
                 "--target-cam", f"{x:.6f}", f"{y:.6f}", f"{z:.6f}",

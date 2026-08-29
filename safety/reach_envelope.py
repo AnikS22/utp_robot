@@ -24,7 +24,21 @@ from __future__ import annotations
 
 ARM_REACH_M = 0.88          # xArm6 + riser, from HARDWARE_SPECS
 LIDAR_FORWARD_M = 0.318     # base_link -> lidar_link x, CAD-derived and cross-validated
-PRESS_STANDOFF_M = 0.55     # base standoff proven for the press pose, 2026-08-25
+# FROM THE SIM, NOT INVENTED HERE. isaac_world.PRESS_STANDOFF_X = 0.50, "base-center to
+# press-point x at the press pose", raised there from 0.425. The acceptance band and yaw tolerance
+# below are isaac_world._press_pose_ok verbatim: dist <= d_goal + 0.18 and yaw_err <= 0.25. 0.68 m
+# sits comfortably inside the 0.88 m arm; the hardware attempt that faulted had stopped at 1.23 m.
+PRESS_STANDOFF_M = 0.50
+PRESS_ACCEPT_SLACK_M = 0.18   # positioned if within standoff + this
+PRESS_YAW_TOL_RAD = 0.25      # ~14.3 deg off the press axis is still reachable
+
+# Approach budget and stall test, also isaac_world's. Latency here is a DATA-INTEGRITY concern in
+# its words: "a doomed approach that eats the trial budget turns a would-be report_unreachable
+# into a scored timeout".
+APPROACH_BUDGET_S = 25.0
+APPROACH_STALL_WINDOW_S = 4.0
+APPROACH_STALL_D_M = 0.03
+APPROACH_STALL_YAW_RAD = 0.03
 MIN_LIDAR_RANGE_M = 0.20    # never command the base closer than this to anything, ever.
                             # The chassis front is ~0.375 m forward of base_link and the lidar
                             # ~0.318 m, so the bumper leads the sensor by ~0.06 m: a 0.20 m lidar
@@ -52,6 +66,38 @@ def lidar_stop_for(standoff_m: float = PRESS_STANDOFF_M,
 def shortfall(range_m: float, *, reach_m: float = ARM_REACH_M) -> float:
     """Metres the base must still close before the arm can touch this. 0 when already in reach."""
     return max(0.0, range_m - reach_m)
+
+
+def press_pose_ok(dist_m: float, yaw_err_rad: float,
+                  *, standoff_m: float = PRESS_STANDOFF_M,
+                  slack_m: float = PRESS_ACCEPT_SLACK_M,
+                  yaw_tol_rad: float = PRESS_YAW_TOL_RAD) -> bool:
+    """isaac_world._press_pose_ok, verbatim: the honest geometric test for "positioned".
+
+    TARGET-RELATIVE, NOT LIDAR-RELATIVE, and the sim says why in its own comment: the self-hit
+    filter cannot guard the sub-0.30 m close range, so the standoff is what keeps the chassis
+    clear of the door. Servoing the final approach on the lidar instead is what left the hardware
+    base 1.23 m from a plate a 0.88 m arm then faulted trying to reach.
+    """
+    return dist_m <= standoff_m + slack_m and abs(yaw_err_rad) <= yaw_tol_rad
+
+
+def stalled(history, now: float,
+            *, window_s: float = APPROACH_STALL_WINDOW_S,
+            d_tol: float = APPROACH_STALL_D_M,
+            yaw_tol: float = APPROACH_STALL_YAW_RAD) -> bool:
+    """Has the approach stopped converging? ``history`` is [(t, |radial|, |yaw_err|), ...].
+
+    Evidence, not a guess: over a full window neither error improved enough. The base is pressed
+    against something, or the grounded point is not drivable-to, and driving longer cannot help.
+    """
+    if len(history) < 2:
+        return False
+    t0, d0, y0 = history[0]
+    if now - t0 < window_s:
+        return False
+    _, d_now, y_now = history[-1]
+    return (d0 - d_now) < d_tol and (y0 - y_now) < yaw_tol
 
 
 def check_before_reach(range_m: float, *, reach_m: float = ARM_REACH_M) -> tuple[bool, str]:
