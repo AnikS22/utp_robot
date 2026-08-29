@@ -1409,3 +1409,95 @@ config says +0.379 -- the lidar is configured 34 cm too high.** Not yet changed:
 entry recorded z as a DESIGN estimate with a +-0.07 caveat and the scans were sane, so this needs
 one tape-measure check before editing. The camera and the Ouster in the new box are not in the
 ROS config at all.
+
+## 2026-08-29 — first autonomous runs at the FAU atrium doors, and every reason they stopped
+
+Hardware day. The route is `start -> doors -> button -> press -> doors -> final`. By the end the
+navigation legs closed every time, the base positioned itself into arm reach of the plate on its
+own, the arm reached the wall, and the press missed by 10 cm. Every stop had a measured cause.
+Listed in the order found, with the fix and the evidence, because the operator's standing
+question all day was the right one: *why is the path planning failing* — and it never was.
+
+### Silent-discard, the failure class of the day
+
+Six separate faults shared one signature: the system worked as designed and said so somewhere
+nobody was listening. In order of discovery:
+
+| fault | where it was reported | who was listening |
+|---|---|---|
+| safety mux discarding every command (`arm_not_stowed`) | `/safety/status` | the teleop web page only |
+| no publisher for `/safety/arm_stowed` on hardware | nothing | nobody — `arm_monitor_node` appeared in docs, in no launcher |
+| chassis in RC mode discarding CAN motion (`control_mode=RC`) | CAN frame 0x211 | nobody in ROS; odom and the mux look healthy |
+| waypoints from a dead odom frame | `odom_epoch` (wall clock, never read) | nobody |
+| no `/scan_filtered` outside a mapping session → corridor veto fails OPEN | nothing | nobody — every autonomous run ever made had no obstacle check |
+| `ROS_DOMAIN_ID` unset → node on an empty graph, "is ranger_bringup running?" | the wrong error | operator, misled |
+
+Each now refuses loudly with the remedy: `mux_watch.py` (2 s abort naming the gate), `safety.sh`
+(the launcher hardware never had), `chassis_mode.py` (reads 0x211; `EXCEPTION` outranks the
+SWB advice — disconnecting the RC trips a lost-link failsafe and makes things worse),
+`waypoint_frame.py` (DDS GID of the `/odom` publisher as the session id; a chassis power-cycle is
+still invisible to it, documented), `lidar.sh` now starts the filter, `_ros_env.require_domain`.
+
+### Measurements
+
+* **Twist characterisation, first time run.** Linear scale 0.94, angular **0.59** then **0.80**
+  on repeat — inconsistent, i.e. a fixed 4WS re-steer startup cost, not a gain. Signs correct.
+  Lidar scan-match on a 27° spin: odom/lidar = **1.02**. Odometry is honest; the chassis
+  under-rotates. No correction applied — a constant would over-rotate long turns.
+* **Lidar height settled without a tape.** Near returns (<0.35 m) only astern, none forward →
+  scan plane is above the 0.345 m deck. `z=+0.379` stands; the newer CAD part was mis-identified.
+* **Door livelock.** 90 s pinned at 2.69 m, heading ±4°, avoidance reporting a way round every
+  cycle. Two causes: the avoid bearing re-derived each tick (a mode change the firmware answers
+  by re-steering all four wheels) and no livelock detection. Fixed: steer-while-driving, latched
+  command (re-issue only on >8° change), 25 s / 10 cm no-progress watchdog that raises `STUCK`.
+* **Odometry vs waypoints.** From one recorded `button` pose, three runs put the robot
+  1.58 / 1.72 / 1.66 m from the plate at +30…36°. Repeatable → the offset lives in the recorded
+  coordinate; `reach_control` (the sim's `_approach_press_pose`, ported) closed it to
+  **0.68 m / 0.0°**. Lidar anchor (`scan_anchor.py`, `waypoints.py anchor/relocalize`) written and
+  unit-tested for the run-to-run drift; not yet exercised on the robot.
+
+### The pipeline on the robot
+
+`run_trial.py` runs the pipeline's own FSM/reasoner/grounder/verifier against `RosWorld` — the
+runner's `make_world()` never knew it. Five FSM trials at the doors, all abstaining; the reasoner
+was right each time and each abstention pointed at the harness:
+
+1. Asked from 2 m out, square to the doors → "I need to move closer". Approach was after the
+   question; `fsm.py:421` has it before. Fixed.
+2. Closed to 0.55 m (the *press* standoff) → plate half out of frame. Survey standoff is a
+   different number (1.40 m). `widen_view` implemented; approach now achieves the standoff in
+   either direction.
+3. At +80° with the plate **dead centre**: "I cannot see any button". Same image, asked cold:
+   `press_button`, "a silver ADA push-button plate visible". The difference was one prompt line —
+   *"you reported no control you could operate in any of them"* — held at temperature 0.
+   `SteeredReasoner` (subclass, pipeline untouched) neutralises it and lets the model say
+   `params.look = left|right|closer|back`; `RosWorld.strafe_view` executes one bounded motion.
+   Verified live: the VLM steered `closer`, `left`, `right`, `left`.
+4. Steering oscillated around the plate with a 60° step; blind bearings ±45° (the sim's) never
+   reach a control ~80–100° off the door normal in this building. Widened to ±80° first.
+5. The grounder at 1.38 m ranks the two wall signs above a ~50 px plate; at ~1.0 m the plate
+   wins at 0.489 (81×88 px). `act()` closes in and re-grounds when the first detection is weak.
+
+Operator decision, late afternoon: record the button pose too. `recorded_press` route.
+
+### The press
+
+* First arm motion: base at 1.23 m from a 0.88 m arm, `ControllerError 21`, and `approach_target`
+  returned 0 → route logged `complete (4/4)`. Fixed: fault exits non-zero; `reach_envelope.py`
+  refuses out-of-envelope targets; positioning is target-relative on odom, never on the lidar
+  (its 0.90 m box, measured from a sensor 0.318 m forward, halts the base 1.21 m out for ever).
+* Grounder returned the **fire alarm** as "the accessible door push button", highest confidence
+  of the session; two rephrasings returned the same box. `press_veto.py` asks the same detector
+  what a fire alarm looks like and refuses on overlap — caught it twice more later (97 %, 4 of 4
+  agreeing). One false positive (a "lever" query matching the round plate) fixed by weighing
+  evidence: ≥2 queries on target, or the top-scoring one.
+* At the press pose the plate sits **behind the stowed arm** in the mast camera; re-grounding
+  there returns the alarm. Reprojecting the 1.66 m detection through odometry sent the arm
+  **10 cm left, 5 cm low** of a 12 cm plate — the sim's "base yawed between observing and
+  pressing" warning at small scale. With the arm in READY the camera sees the plate plainly
+  (0.413, SAFE, direct lift agrees with the miss). Fix: `press_run` READY → LOOK → GROUND →
+  REACH; the reprojected point demoted to a >20 cm disagreement cross-check.
+
+### Not done
+
+Full run end to end. Lidar anchor on the robot. Elevator: never run on any system.
