@@ -116,6 +116,37 @@ routes:
       standoff: 60
     - wait: 6
 
+  # THE RECORDED-BUTTON RUN. Four poses, piloted and recorded back to back in ONE driver session:
+  #   start    where the run begins
+  #   doors    square to the closed doors, ~1.5 m off, both leaves in frame
+  #   button   THE PRESS POSE: square to the ADA plate's wall, ~0.5 m off, plate centred in frame
+  #   final    outside, past the doorway
+  # then: start -> doors -> button -> press -> doors -> final.
+  #
+  # WHY THE BUTTON IS RECORDED. Five FSM trials at these doors ended in abstention: the plate is
+  # on the wall ~80-100 deg off the door normal, and from any pose the survey reached it was
+  # either out of frame, half-cropped, or ~50 px and lost to the wall signs. A recorded press
+  # pose sidesteps all of it -- the robot is DRIVEN to the plate, and press_run only has to
+  # ground it from ~0.5 m, where it is ~160 px and unambiguous.
+  #
+  # BE HONEST ABOUT WHAT THIS MEASURES. With the button pose recorded, the grounder is finding a
+  # plate the operator already pointed the camera at. That tests the press, the navigation and
+  # the door transit; it does NOT test whether the system can find a control it was not led to.
+  # Score this route as the transit-and-press benchmark, not as the search benchmark.
+  #
+  # TIMING. ADA openers hold for as little as 5 s (ANSI A156.19). press -> stow -> drive to
+  # 'doors' is ~20-25 s, so the leaves may be closing by the time the final leg starts. The lidar
+  # sees the tape on the doors, so a re-closed door STOPS the robot rather than being driven into;
+  # if that happens, shorten the path by removing the `goto: doors` after the press.
+  recorded_press:
+    - goto: doors
+    - goto: button
+    - action: press_button
+      query: "the accessible door push button"
+      standoff: 60
+    - goto: doors
+    - goto: final
+
   # SIM twins of benchmark/press_and_pass (Isaac trial server, domain 42, UTP_SIM=1).
   # Same step kinds, same executor, same check -> the workflow is what gets tested.
   # One geometric difference: in the sim scene the button's wall FACES the robot, and the
