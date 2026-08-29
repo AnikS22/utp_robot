@@ -36,8 +36,19 @@ angle_compensate: true
 # chassis body. Nav2's costmap obstacle-height reasoning depends on this being right.
 #
 # z CAVEAT: 0.379 is the STEP part origin of the A1M8 kit, which is not necessarily the scan
-# plane; the kit is ~70 mm tall. Treat as +-0.07 m until measured with a tape. x and y are
-# unaffected by that uncertainty.
+# plane; the kit is ~70 mm tall. Treat as +-0.07 m. x and y are unaffected by that uncertainty.
+#
+# z CONFIRMED BY THE SCAN ITSELF, 2026-08-29. A newer STEP file put this part at ROS z = +0.034,
+# 34 cm lower, and that reading is WRONG -- the live scan settles it without a tape measure.
+# Near returns (<0.35 m, the robot seeing itself) appear ONLY behind the sensor:
+#     -180..-150 deg : 170 returns, median 0.172 m
+#     -150..-120 deg :  30 returns, median 0.186 m
+#     +150..+180 deg : 187 returns, median 0.171 m
+# and NOWHERE in the forward hemisphere. At z = +0.034 the scan plane would sit 31 cm BELOW the
+# 0.345 m deck and the chassis body would occlude in every direction, giving near returns all
+# round. Seeing them only astern means the plane is ABOVE the deck, looking over the chassis at
+# the superstructure behind it -- the arm riser, battery and mast -- exactly as scan_filter.py
+# derived independently. 0.379 stands; the newer CAD part was mis-identified.
 mount:
   x_m: 0.318
   y_m: -0.013
