@@ -1847,18 +1847,6 @@ def main(argv=None):
                 result_impulse.set(True)
 
             world.step(render=True)   # render=True so the RTX lidar render product produces /scan
-            # UTP-LAPTOP: drive the replicator graph EXPLICITLY. isaac_worker/robot/add_sensors.py:
-            # "world.step(render=True) does NOT tick the replicator SDG graph in this kit config, so
-            # the annotators only fill when rep.orchestrator.step() is called." Under
-            # orchestrator.run() alone the bridge's rgb helper filled but its depth helper published
-            # 100% inf on every frame (measured 2026-08-29, 40/40 frames, no finite pixel). The
-            # repo's own verification uses step(rt_subframes=8); 2 keeps the RTF tolerable.
-            if i % 2 == 0:
-                try:
-                    rep.orchestrator.step(rt_subframes=2, pause_timeline=False)
-                except Exception as _e:
-                    if i % 600 == 0:
-                        print(f"[srv] WARN orchestrator.step failed: {_e!r}", flush=True)
             t += dt
             if i % 600 == 0:
                 print(f"[srv] tick {i}/{steps} cmd=({vx:+.2f},{vy:+.2f},{wz:+.2f}) "

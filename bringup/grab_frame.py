@@ -79,6 +79,41 @@ class Grabber(Node):
         self.create_subscription(Image, depth_topic, self._on_depth, qos_profile_sensor_data)
         self.create_subscription(CameraInfo, f"/{ns}/color/camera_info",
                                  self._on_info, qos_profile_sensor_data)
+        # THE LIDAR RIDES ALONG WITH EVERY FRAME. Saved beside rgb/depth together with the
+        # camera<-base<-lidar transforms, so a detector can lift a box to 3D from the lidar range
+        # along that pixel's ray when depth has nothing: on glass (depth is garbage, the lidar sees
+        # the tape) and in the Isaac sim on this laptop (depth publishes 100% inf on every frame,
+        # measured 2026-08-29, while the RTX lidar is fine). Not a substitute for depth where depth
+        # works; detect_frame uses it only when the depth lift fails, and says so.
+        self.scan = None
+        from sensor_msgs.msg import LaserScan
+        self.create_subscription(LaserScan, os.environ.get("UTP_SCAN_TOPIC", "/scan_filtered"),
+                                 lambda m: setattr(self, "scan", m), qos_profile_sensor_data)
+        try:
+            from tf2_ros import Buffer, TransformListener
+            self.tfb = Buffer()
+            self.tfl = TransformListener(self.tfb, self, spin_thread=False)
+        except Exception:
+            self.tfb = None
+
+    def transform_matrix(self, target: str, source: str):
+        """4x4 T such that p_target = T @ p_source, or None."""
+        if self.tfb is None:
+            return None
+        try:
+            import rclpy.time
+            if not self.tfb.can_transform(target, source, rclpy.time.Time()):
+                return None
+            t = self.tfb.lookup_transform(target, source, rclpy.time.Time())
+        except Exception:
+            return None
+        q, v = t.transform.rotation, t.transform.translation
+        x, y, z, w = q.x, q.y, q.z, q.w
+        R = np.array([[1-2*(y*y+z*z), 2*(x*y-z*w),   2*(x*z+y*w)],
+                      [2*(x*y+z*w),   1-2*(x*x+z*z), 2*(y*z-x*w)],
+                      [2*(x*z-y*w),   2*(y*z+x*w),   1-2*(x*x+y*y)]])
+        T = np.eye(4); T[:3, :3] = R; T[:3, 3] = [v.x, v.y, v.z]
+        return T
 
     def _on_rgb(self, msg):
         self.n_rgb += 1
@@ -145,10 +180,27 @@ def main() -> int:
         np.save(os.path.join(out, "rgb.npy"), rgb)
 
     np.save(os.path.join(out, "depth.npy"), depth_m)
+    cam_frame = node.info.header.frame_id
+    meta = {"K": K.tolist(), "frame": cam_frame,
+            "width": int(node.info.width), "height": int(node.info.height),
+            "rgb_shape": list(rgb.shape), "depth_shape": list(depth_m.shape)}
+    # A few spins so TF and the scan have arrived, then save what a lidar lift needs.
+    for _ in range(15):
+        rclpy.spin_once(node, timeout_sec=0.05)
+    if node.scan is not None:
+        sc = node.scan
+        with open(os.path.join(out, "scan.json"), "w") as f:
+            json.dump({"frame": sc.header.frame_id, "angle_min": float(sc.angle_min),
+                       "angle_increment": float(sc.angle_increment),
+                       "ranges": [float(r) for r in sc.ranges]}, f)
+        T_cb = node.transform_matrix(cam_frame, "base_link")
+        T_bl = node.transform_matrix("base_link", sc.header.frame_id)
+        if T_cb is not None and T_bl is not None:
+            meta["T_cam_base"] = T_cb.tolist()
+            meta["T_base_lidar"] = T_bl.tolist()
+            meta["lidar_frame"] = sc.header.frame_id
     with open(os.path.join(out, "cam.json"), "w") as f:
-        json.dump({"K": K.tolist(), "frame": node.info.header.frame_id,
-                   "width": int(node.info.width), "height": int(node.info.height),
-                   "rgb_shape": list(rgb.shape), "depth_shape": list(depth_m.shape)}, f, indent=2)
+        json.dump(meta, f, indent=2)
 
     valid = np.isfinite(depth_m)
     print(f"captured -> {out}")

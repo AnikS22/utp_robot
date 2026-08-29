@@ -1,24 +1,24 @@
 button:
-  odom_epoch: 1788036431
-  odom_session: 010fcecd3fa66185
-  x: 1.8672
+  odom_epoch: 1788037255
+  odom_session: 010fdd1e6cb0a031
+  x: 1.867
   y: 1.455
   yaw: 0.0
 door:
-  odom_epoch: 1788036431
-  odom_session: 010fcecd3fa66185
-  x: 1.0772
+  odom_epoch: 1788037255
+  odom_session: 010fdd1e6cb0a031
+  x: 1.077
   y: -0.095
   yaw: 0.0
 outside:
-  odom_epoch: 1788036431
-  odom_session: 010fcecd3fa66185
-  x: 4.0272
+  odom_epoch: 1788037255
+  odom_session: 010fdd1e6cb0a031
+  x: 4.027
   y: -0.095
   yaw: 0.0
 start:
-  odom_epoch: 1788036431
-  odom_session: 010fcecd3fa66185
-  x: 0.1272
+  odom_epoch: 1788037255
+  odom_session: 010fdd1e6cb0a031
+  x: 0.127
   y: -0.095
   yaw: 0.0
