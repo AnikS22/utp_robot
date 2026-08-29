@@ -61,6 +61,14 @@ def _ros(args: list[str], timeout: int = 120) -> subprocess.CompletedProcess:
 class RosWorld:
     """The World protocol, on hardware. Construct with the goal waypoint name."""
 
+    # NOT world_kind = "ros". fsm.py stamps TrialRecord with getattr(world, "world_kind",
+    # "mock"), but schema.py validates that field to mock|graph|isaac and raises on anything
+    # else, so a hardware trial is logged as world="mock" -- a hardware result filed as a
+    # simulation, which is the worst kind of wrong in a results table because nothing about it
+    # looks broken. Adding "ros" to the schema is a one-line change in the PIPELINE repo and is
+    # not mine to make. bringup/run_trial.py therefore stamps its own record instead, and the
+    # `world` field inside a hardware TrialRecord must be read as meaningless, not as "mock".
+
     def __init__(self, goal: str = "", dry_run: bool = True, capture_prefix: str = "fsm") -> None:
         self.goal = goal
         self.dry_run = dry_run
