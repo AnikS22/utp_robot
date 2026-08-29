@@ -139,6 +139,37 @@ class Driver(Node):
         return False, f"leg timed out after {LEG_TIMEOUT_S:.0f}s"
 
 
+def endpoint(n, label: str, gx: float, gy: float, gyaw: float, a) -> bool:
+    """Report where odom thinks we are, and optionally hold so the operator can measure.
+
+    ODOM CANNOT MEASURE ITS OWN ERROR. The numbers printed here are what the wheels believe. The
+    measurement that matters is the tape from the robot to the floor mark, and it only exists if
+    the robot STOPS at the endpoint long enough to take it -- which is why --pause exists.
+
+    Returns False if the operator asked to stop.
+    """
+    for _ in range(10):
+        rclpy.spin_once(n, timeout_sec=0.05)
+    x, y, th = n.pose
+    print(f"      at {label}: odom says x={x:+.3f} y={y:+.3f} yaw={math.degrees(th):+.1f} deg "
+          f"| off target by {math.hypot(x-gx, y-gy)*100:.1f} cm, "
+          f"{abs(math.degrees(wrap(th-gyaw))):.1f} deg")
+    if a.pause:
+        print(f"      MEASURE {label} against the floor mark now.")
+        try:
+            ans = input("      Enter to continue, q+Enter to stop: ")
+        except EOFError:
+            return False
+        if ans.strip().lower().startswith("q"):
+            return False
+    elif a.dwell > 0:
+        t_end = time.monotonic() + a.dwell
+        while time.monotonic() < t_end and rclpy.ok():
+            n.pub.publish(Twist())
+            rclpy.spin_once(n, timeout_sec=0.05)
+    return True
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -150,6 +181,11 @@ def main() -> int:
                          "enters the circle, so every lap reports an error of about --tol until "
                          "real drift exceeds it. Use 0.05 to measure repeatability."
                          % Limits().pos_tol_m)
+    ap.add_argument("--pause", action="store_true",
+                    help="stop at EACH endpoint and wait for Enter, so you can measure the "
+                         "robot against a floor mark before it moves on")
+    ap.add_argument("--dwell", type=float, default=0.0,
+                    help="seconds to hold at each endpoint (use --pause instead to measure)")
     ap.add_argument("--no-veto", action="store_true",
                     help="drive with NO obstacle check (requires /scan_filtered otherwise)")
     ap.add_argument("--go", action="store_true", help="actually drive")
@@ -223,7 +259,18 @@ def main() -> int:
         if n.scan is None:
             print("\n  WARNING: --no-veto, driving with NO obstacle check.")
 
-        print("\n  MARK THE FLOOR under the robot now -- odom cannot measure its own drift.")
+        print(f"""
+  MARK THE FLOOR BEFORE DRIVING -- odom cannot measure its own error.
+
+    P1  tape a cross under TWO fixed points on the chassis (the two front wheel contact
+        patches work well). Two marks, not one: one gives you position error only, two also
+        give you HEADING error, and on a 4WS base heading is what accumulates.
+    P2  measure {a.dist:.2f} m forward along the robot's current heading and mark it the same way.
+        This is the mark that matters for the benchmark -- it is where the camera has to see
+        the plate, so its repeatability is what decides whether the press works.
+
+  Then run with --pause: the robot stops at each endpoint and waits while you measure.
+""")
         print(f"  {a.laps} lap(s). Ctrl-C stops; E-stop is faster.\n")
 
         errs, yaw_errs = [], []
@@ -239,6 +286,8 @@ def main() -> int:
                 break
             if stop["v"]:
                 break
+            if not endpoint(n, "P2", x2, y2, th1, a):
+                break
             print("    back ->")
             ok, why = n.drive_to(x1, y1, th1, lim)
             if not ok:
@@ -249,6 +298,7 @@ def main() -> int:
             for _ in range(10):
                 rclpy.spin_once(n, timeout_sec=0.05)
             xe, ye, the = n.pose
+            endpoint(n, "P1", x1, y1, th1, a)
             err = math.hypot(xe - x1, ye - y1)
             yerr = abs(math.degrees(wrap(the - th1)))
             errs.append(err)
