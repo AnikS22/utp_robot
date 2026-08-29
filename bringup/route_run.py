@@ -663,14 +663,20 @@ def main() -> int:
         # Will the chassis even obey? With SWB down it is in RC mode and DISCARDS every
         # command, while odom flows at 50 Hz and the mux reports "permitted". Nothing in ROS
         # can see that, so it is checked here on the bus itself.
+        # No CAN chassis in the sim: the trial server drives on /cmd_vel directly. open_can()
+        # exits via SystemExit (not Exception) on a missing interface, which killed the first
+        # sim run of the night at this line -- so skip it outright under UTP_SIM, and catch
+        # SystemExit too for the hardware case of an unplugged adapter.
         try:
+            if os.environ.get("UTP_SIM") == "1":
+                raise LookupError("sim: no CAN chassis")
             from chassis_mode import ADVICE, GOOD, chassis_mode
             chassis = chassis_mode()      # NOT `st` -- that is the RouteState
             if chassis is not None and chassis[1] != GOOD:
                 print(f"\nNOT DRIVING: chassis control_mode={chassis[1]} -- "
                       f"{ADVICE.get(chassis[1], '')}", file=sys.stderr)
                 return 1
-        except Exception:
+        except (Exception, SystemExit):
             pass    # no CAN access is not itself a reason to refuse; the mux watch still applies
 
         ok, why = n.wait_for_permission()
