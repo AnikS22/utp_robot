@@ -33,6 +33,45 @@ def sessions_in(waypoints: dict) -> set:
     return {(w or {}).get(SESSION_KEY) for w in waypoints.values()}
 
 
+# Recording spread beyond which drift between waypoints is worth warning about. Odometry error
+# accumulates with DRIVING, not with wall-clock, but the time between two recordings is the only
+# proxy stored, and on this robot minutes between recordings has always meant metres of driving.
+DRIFT_WARN_S = 300.0
+
+
+def drift_warning(waypoints: dict, names=None) -> str:
+    """Warn when a route's waypoints were recorded far apart in time.
+
+    THE GAP THIS COVERS, and check_session cannot. The session id proves the odom frame was never
+    RE-ZEROED. It says nothing about the frame DRIFTING, and wheel odometry drifts continuously:
+    every metre driven, every turn, and worst of all every wheel rotation that does not move the
+    body. The 4WS re-steer thrash of 2026-08-29 spun wheels for 90 s while the chassis stayed
+    put -- encoders counting motion that never happened, straight into the pose estimate.
+
+    So two waypoints recorded 15 minutes and several runs apart are in the same SESSION and no
+    longer in the same FRAME, and the robot drives confidently to a coordinate that has moved out
+    from under it. There is no way to measure that here; the honest thing is to say the recordings
+    are far apart and that re-recording them together costs a minute.
+    """
+    sel = {k: v for k, v in waypoints.items()
+           if (names is None or k in names) and (v or {}).get("odom_epoch")}
+    if len(sel) < 2:
+        return ""
+    stamps = {k: float(v["odom_epoch"]) for k, v in sel.items()}
+    spread = max(stamps.values()) - min(stamps.values())
+    if spread < DRIFT_WARN_S:
+        return ""
+    oldest = min(stamps, key=stamps.get)
+    newest = max(stamps, key=stamps.get)
+    return (f"waypoints in this route were recorded {spread/60:.0f} minutes apart "
+            f"('{oldest}' oldest, '{newest}' newest). They share an odom session, so the frame "
+            f"was never re-zeroed -- but odometry DRIFTS within a session, and everything driven "
+            f"in between has accumulated into the pose estimate. The older coordinates may no "
+            f"longer point where they did.\n"
+            f"  If the robot drives somewhere unexpected, this is the first thing to suspect. "
+            f"Re-record them together, immediately before the run.")
+
+
 def check_session(waypoints: dict, current: str | None, names=None) -> tuple[bool, str]:
     """Can we trust these coordinates right now?
 

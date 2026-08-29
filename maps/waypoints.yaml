@@ -26,8 +26,8 @@ outside:
   y: 2.2273
   yaw: 0.4136
 start:
-  odom_epoch: 1788026797
+  odom_epoch: 1788027822
   odom_session: 010fcecd093fdba1
-  x: -0.0001
-  y: -0.0007
-  yaw: -0.0012
+  x: 5.3566
+  y: 5.8652
+  yaw: 0.0186

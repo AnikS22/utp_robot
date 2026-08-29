@@ -61,7 +61,7 @@ from std_msgs.msg import String  # noqa: E402
 from odom_session import odom_session_id  # noqa: E402
 from safety.local_avoid import choose_heading  # noqa: E402
 from safety.mux_watch import MuxWatch  # noqa: E402
-from safety.waypoint_frame import check_session  # noqa: E402
+from safety.waypoint_frame import check_session, drift_warning  # noqa: E402
 from safety.route_plan import ACTION, CHECK, GOTO, WAIT, RouteState, parse_route, validate_route  # noqa: E402
 from safety.waypoint_drive import Limits, corridor_blocked, plan_step, to_goal, wrap  # noqa: E402
 
@@ -616,6 +616,9 @@ def main() -> int:
         if not ok:
             print(f"\nSTALE WAYPOINTS -- not driving.\n  {why}", file=sys.stderr)
             return 1
+        drift = drift_warning(wps, names=visited)
+        if drift:
+            print(f"\nDRIFT WARNING: {drift}\n", file=sys.stderr)
 
         # Will the chassis even obey? With SWB down it is in RC mode and DISCARDS every
         # command, while odom flows at 50 Hz and the mux reports "permitted". Nothing in ROS

@@ -62,3 +62,28 @@ def test_the_real_shipped_file_is_caught():
     if d and not any(SESSION_KEY in (v or {}) for v in d.values()):
         ok, why = check_session(d, LIVE)
         assert not ok and "no odom session id" in why
+
+
+def test_waypoints_recorded_far_apart_are_flagged_for_drift():
+    """Same session is NOT the same frame. Odometry drifts within a session."""
+    from safety.waypoint_frame import drift_warning
+    wps = {"start": {**wp(LIVE), "odom_epoch": 1788027822},
+           "finish": {**wp(LIVE), "odom_epoch": 1788026892}}      # 930 s earlier
+    w = drift_warning(wps)
+    assert "16 minutes apart" in w and "DRIFTS" in w   # 930 s rounds up
+
+
+def test_waypoints_recorded_together_are_not_flagged():
+    from safety.waypoint_frame import drift_warning
+    wps = {"start": {**wp(LIVE), "odom_epoch": 1788027822},
+           "finish": {**wp(LIVE), "odom_epoch": 1788027840}}
+    assert drift_warning(wps) == ""
+
+
+def test_drift_warning_respects_the_route_being_run():
+    from safety.waypoint_frame import drift_warning
+    wps = {"start": {**wp(LIVE), "odom_epoch": 1788027822},
+           "finish": {**wp(LIVE), "odom_epoch": 1788027840},
+           "ancient": {**wp(LIVE), "odom_epoch": 1780000000}}
+    assert drift_warning(wps, names={"start", "finish"}) == ""
+    assert drift_warning(wps) != ""
