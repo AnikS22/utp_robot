@@ -139,6 +139,11 @@ routes:
   # sees the tape on the doors, so a re-closed door STOPS the robot rather than being driven into;
   # if that happens, shorten the path by removing the `goto: doors` after the press.
   recorded_press:
+    # 'start' FIRST. Hand-parking on the recorded pose is not realistic, so the robot squares
+    # itself onto it -- position AND heading -- before the first real leg. Omitted once
+    # (2026-08-29) and the very next leg to 'doors' was off, because it began from wherever
+    # the RC had left the robot pointing.
+    - goto: start
     - goto: doors
     - goto: button
     - action: press_button

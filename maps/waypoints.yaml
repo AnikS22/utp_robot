@@ -5,15 +5,28 @@
 # does not match the running one. 'odom_epoch' is wall-clock provenance only -- nothing
 # reads it. See safety/waypoint_frame.py.
 button:
-  odom_epoch: 1787789468
-  x: 2.0477
-  y: 1.1339
-  yaw: 2.192
+  odom_epoch: 1788034813
+  odom_session: 010fcecd093fdba1
+  x: 16.692
+  y: 13.7993
+  yaw: 1.2739
 door:
   odom_epoch: 1787789436
   x: 2.8108
   y: 1.2225
   yaw: 0.4136
+doors:
+  odom_epoch: 1788034770
+  odom_session: 010fcecd093fdba1
+  x: 17.3727
+  y: 12.7471
+  yaw: 1.0626
+final:
+  odom_epoch: 1788034856
+  odom_session: 010fcecd093fdba1
+  x: 18.8768
+  y: 16.4557
+  yaw: 1.1097
 finish:
   odom_epoch: 1788031176
   odom_session: 010fcecd093fdba1
@@ -26,8 +39,8 @@ outside:
   y: 2.2273
   yaw: 0.4136
 start:
-  odom_epoch: 1788031145
+  odom_epoch: 1788034752
   odom_session: 010fcecd093fdba1
-  x: 11.3828
-  y: 7.3186
-  yaw: 1.2039
+  x: 16.1086
+  y: 10.1126
+  yaw: 1.0604
