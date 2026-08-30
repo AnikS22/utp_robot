@@ -24,3 +24,11 @@ maps/*.data
 # Any recorded-frame dump, whatever the run is called. NOTE: gitignore has no inline
 # comments -- a trailing '# ...' becomes part of the pattern and silently matches nothing.
 maps/*/frames/
+
+# Credentials. Nothing matching these has ever been committed (verified across all 54 commits
+# before this repo was made public) and nothing ever should be: the reasoning endpoint's key
+# lives in a .env that stays on the machine. See docs/LLM_ENDPOINT.md.
+.env
+.env.*
+*.pem
+*.key

@@ -15,52 +15,10 @@
 # the camera frame. The grounder and the visual servo close the rest, to 3 mm measured.
 
 routes:
-  # The 2026-08-26 run: straight shot to the doors, sidestep to the ADA plate, press, return to
-  # the doors and go through. 'doors' is visited TWICE from one recording -- the pose you park in
-  # to face the doors is the same pose you come back to, so record it once.
-  #
-  # Why 'button' is a separate waypoint from 'doors': the ADA plate is on the wall BESIDE the
-  # door. The arm reaches 0.88 m and needs the plate square in frame; a pose good for driving
-  # through a doorway is neither. Park ~0.55 m off the plate's wall, square to it.
-  # Recorded 2026-08-26. start -> button -> press -> finish.
-  #
-  # NO SEPARATE 'doors' WAYPOINT, and that is not an omission. Measured from the recordings:
-  # start->button bears -98.1 deg and button->finish bears -104.0 deg -- six degrees apart, so the
-  # run really is a straight shot. 'button' already sits at the doors; its yaw of -1.4 deg is the
-  # robot turned ~99 deg off the direction of travel to face the wall the ADA plate is on. A
-  # 'doors' pose would be the same spot with a different heading, and each extra leg is an extra
-  # turn, which is where odometry on a 4WS base is worst.
-  full_run:
-    - goto: start
-    - goto: button
-    - action: press_button
-      query: "the accessible door push button"
-      standoff: 60
-    - wait: 6
-    - goto: finish
-
-  # The 2026-08-25 scene: drive to the atrium door, press the ADA plate, wait for it, go through.
-  atrium_door:
-    - goto: door_approach
-    - action: press_button
-      query: "the accessible door push button"
-      standoff: 60
-    - wait: 6
-    - goto: through_door
-
   # Smallest useful thing: drive one leg and stop. Use this to check a waypoint before
   # trusting it in a longer route.
   one_leg:
     - goto: start
-
-  # Just the press. No transit legs -- drive to the button and act, nothing else.
-  # Use this to prove the press end-to-end before trusting a multi-leg route.
-  to_button:
-    - goto: button
-    - action: press_button
-      query: "the accessible door push button"
-      standoff: 60
-
   # THE BENCHMARK. Piloted recording happens with the doors OPEN (you just drove through them);
   # the autonomous run meets them CLOSED. So the route cannot be a fixed list -- at the doors it
   # LOOKS: a `check` step captures a frame and asks the VLM whether the way is passable.
@@ -181,26 +139,6 @@ routes:
       standoff: 60
     - goto: doors
     - goto: final
-
-  # The back half of recorded_press, for running from the button wall without the loop.
-  press_and_exit:
-    - action: reach_control
-      query: "the accessible door push button"
-    - action: press_button
-      query: "the accessible door push button"
-      standoff: 60
-    - goto: doors
-    - goto: final
-
-  # From the press pose: press, then out. reach_control is NOT repeated here -- at 0.7 m the
-  # plate is behind the robot's own arm in the camera and a re-ground returns the fire alarm.
-  press_then_exit:
-    - action: press_button
-      query: "the accessible door push button"
-      standoff: 60
-    - goto: doors
-    - goto: final
-
   # SIM twin of recorded_press: the exact join that failed on hardware -- waypoint to the button
   # wall, reposition on the grounded control, press, exit. Waypoints from make_sim_waypoints.py.
   recorded_press_sim:

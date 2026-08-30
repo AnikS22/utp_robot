@@ -1,104 +1,215 @@
 # utp_robot — physical robot stack for *Unlocking the Path*
 
-Everything needed to run the interactive-navigation benchmark on the physical
-**AgileX Ranger Mini 3.0 + uFactory xArm6 + RPLIDAR A1M8**.
+The hardware half of an interactive-navigation benchmark: a mobile manipulator that reasons about
+a **closed door**, finds the **ADA push plate**, presses it, and drives through.
 
-Self-contained and portable on purpose: clone onto the rover laptop, run one script, and you have
-the same build as the workstation. Start at **[EXPERIMENT_LOG.md](EXPERIMENT_LOG.md)** — gate table
-and dated findings.
+Platform: **AgileX Ranger Mini 3.0** (4-wheel independent steering) + **uFactory xArm6** +
+**Intel RealSense D435** + **RPLIDAR A1M8**, on ROS 2 Jazzy / Ubuntu 24.04.
 
-## Quick start
+The simulation stack lives in a separate repository (`Unlocking_the_path`) and is never modified by
+anything here — code is copied out of it, not edited in place. This repo is what happens when that
+pipeline meets a real chassis.
 
-```bash
-git clone <this repo> ~/utp_robot && cd ~/utp_robot
-bash bringup/setup_workspace.sh     # clones + patches + builds the drivers (no sudo, ~30 s)
-bash bringup/lidar.sh               # publishes /scan
-```
+---
 
-## Why this is a separate repo
+## Status — read this first
 
-The simulation stack (`Unlocking_the_path`) works and is not touched by any of this. Hardware code
-lives here and diverges freely; anything needed from the sim side is copied, never edited in place.
-The one seam back is `make_world()` in the sim repo's `utp/runner/batch.py`, where a real world
-backend registers when it exists — `registry.py` already selects the real reasoner / grounder /
-navigator for any non-mock backend.
+The task decomposes into six stages. Five are demonstrated on the physical robot; the sixth is not.
 
-## Layout
+| stage | status | evidence |
+|---|---|---|
+| Navigate a recorded route leg | **working** | repeated arrivals within 0.15 m; one 2-leg run at 14.3 cm final error |
+| Detect that the way is blocked and escalate | **working** | corridor veto fires, route hands off to the pipeline instead of steering around |
+| Ground the ADA plate in the image | **working** | score 0.526, 99×90 px, correctly preferred over a FIRE alarm 18 cm away |
+| Refuse to press a fire alarm | **working** | veto refused a real alarm twice (4 of 4 forbidden queries on target) |
+| Drive the base into arm reach of the plate | **working** | `positioned: 0.68 m from target, +0.0° off the press axis` |
+| **The press landing on the plate** | **NOT DEMONSTRATED** | last attempt missed by ~10 cm; see below |
 
-```
-bringup/setup_workspace.sh   builds ros2_ws from pinned upstream commits + our patches
-bringup/lidar.sh             brings up the RPLIDAR, publishes /scan
-bringup/probe_rplidar.py     talks to the lidar over raw serial — no ROS, no driver, no sudo
-patches/                     our diffs against upstream drivers, applied by setup_workspace.sh
-safety/                      base-motion safety stack (arbiter + twist mux + arm monitor)
-config/safety.yaml           mux wiring, interlock gates, speed and slew ceilings
-tests/                       headless tests — no ROS, no Isaac
-ros2_ws/                     GITIGNORED. Rebuilt by setup_workspace.sh.
-```
+**The remaining failure is perception-at-range, not control.** The plate was grounded from 1.66 m,
+where a 12 cm plate subtends roughly 50 px. A half-plate error at that distance is ~10 cm of lateral
+error in the world, and the base then drove precisely onto the wrong point. The fix — re-ground from
+the press pose, with the arm raised so it does not occlude the lower-centre of the frame, and correct
+before committing — is implemented (`bringup/reach_control.sh`, `bringup/press_run.sh`) and has
+**never been executed on hardware**. Do not read this repo as claiming a completed door-opening run.
 
-`ros2_ws/` is deliberately not committed: it holds third-party checkouts with their own `.git`,
-7 MB of vendored asio headers, and build artifacts baked with absolute paths that would be wrong on
-the rover laptop. `setup_workspace.sh` is the reproducible artifact instead.
+Everything above is reproducible from `EXPERIMENT_LOG.md`, which is dated and includes the failures.
 
-## Two upstream decisions that are easy to get wrong
+---
 
-**`ranger_ros2`: build the `humble` branch, on Jazzy.** The `jazzy` branch does **not** support the
-Ranger Mini V3 — its `RangerSubType` enum stops at `kRangerMiniV2` and it ships no
-`ranger_mini_v3.launch.py`. Only `humble` has `kRangerMiniV3`. Switching to the jazzy branch
-silently loses V3 support.
+## The engineering result worth reporting
 
-**`rplidar_ros` needs our patch.** Our A1M8 runs firmware 1.29, which predates the scan-mode
-negotiation protocol, so the driver's default express path fails
-(`0x80008004` NOT_SUPPORT on mode enumeration, `0x80008000` INVALID_DATA on express scan). The patch
-adds a `legacy_scan` parameter that issues the legacy SCAN command, which works. See
-`patches/rplidar_ros-legacy-scan.patch`.
+Six separate failures during bring-up shared one signature: **the system worked as designed and
+reported the problem somewhere nobody was listening.**
 
-## Safety stack
-
-Software is **layer 2** of three — do not mistake it for the whole story:
-
-| Layer | Mechanism | Authority |
-|-------|-----------|-----------|
-| 0 | Chassis + arm-controller hardware E-stops | Cuts motor power. Nothing overrides it. |
-| 1 | Ranger RC transmitter | Revokes CAN command authority at the driver, below any software. **The person next to the robot holds this.** |
-| 2 | `safety/twist_mux_node.py` | Covers failures faster than a human reacts. |
-
-- **`safety/arbiter.py`** — all decision logic, pure Python, no rclpy. Priority mux + interlocks +
-  slew limiter. The part that can hurt someone is the part that is unit-tested.
-- **`safety/twist_mux_node.py`** — the **only** publisher of `/cmd_vel`. Nav2, the pipeline's servo
-  loops, and teleop each publish to their own topic and this node arbitrates. That single chokepoint
-  is what makes every interlock possible.
-- **`safety/arm_monitor_node.py`** — publishes `/safety/arm_stowed`. On hardware it reads **measured
-  joint angles**, never an FSM's belief about itself: an FSM reporting `idle` after its owning
-  process crashed is exactly what the interlock exists to catch.
-
-**Every gate is fail-closed** — never-seen and stale both mean *not permitted*. **The mux publishes
-every tick, zeros included**, because a mux that goes quiet when it blocks is indistinguishable
-downstream from a mux that died.
-
-```bash
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/ -q   # 23 tests
-python3 safety/twist_mux_node.py
-python3 safety/arm_monitor_node.py --backend scene_state   # sim
-python3 safety/arm_monitor_node.py --backend xarm_sdk      # hardware
-ros2 service call /safety/clear_estop std_srvs/srv/Trigger
-ros2 topic echo /safety/status
-```
-
-Status: arbiter logic is tested; **the nodes have never run against a moving robot.** Gate H4.
-
-## Documents
-
-| | |
+| what actually happened | what it looked like |
 |---|---|
-| `docs/AGENT_BRIEF.md` | start here — project, rules, order of work |
-| `docs/LAPTOP_SETUP.md` | 10-stage provisioning runbook, each stage gated by a CHECK |
-| `docs/HARDWARE_SPECS.md` | every device ID, baud, pinned commit, mount pose, known quirk |
-| `docs/CALIBRATION.md` | nine calibrations in dependency order, with acceptance criteria |
-| `docs/PIPELINE.md` | what a trial is: the loop, the method matrix, missions, metrics |
-| `docs/LLM_ENDPOINT.md` | the FAU OwlChat reasoning endpoint — config, verification, failure modes |
-| `EXPERIMENT_LOG.md` | what has actually been observed |
+| Safety mux discarding commands (gate not satisfied) | "the path planner is broken" |
+| No `arm_stowed` publisher on hardware — interlock never satisfiable | same |
+| Chassis latched in RC mode; CAN commands silently dropped | same |
+| Waypoints recorded in an odom frame that died with a power-cycle | robot drives somewhere random |
+| `/scan_filtered` absent, so the obstacle veto failed **open** | robot drives into things |
+| `ROS_DOMAIN_ID` unset — talking to the wrong graph | topics exist but nothing responds |
 
-## Background (in the sim repo)
+None of these were logic errors. Each was a silent-degradation path. The response was to make every
+one of them **refuse loudly**: `bringup/health.py` is a single preflight that fails on any of the six,
+and the safety mux is fail-closed by construction. This is the most transferable finding here — the
+hard part of moving a working simulated policy onto hardware was not the policy.
 
-`docs/REAL_ROBOT_PLAN.md`, `docs/REAL_ROBOT_DESIGN_REASONING.md`, `docs/integration_contract.md`.
+Also measured, and worth knowing before trusting any number from this platform:
+
+* **Odometry is honest but drifts** ~1 m per loop of the test course. Waypoints are odom-frame, so
+  they must be recorded and used in one session. `safety/scan_anchor.py` (lidar re-anchoring) removes
+  this tax — it is written and unit-tested but has **not** been run on the robot.
+* **Command scaling is not unity**: linear 0.94, angular 0.59–0.80 and *not* repeatable. Angular
+  open-loop commands are therefore never trusted; all turns close the loop on odometry.
+* **4WS mode-thrash**: re-issuing an angular command at 20 Hz re-steers all four wheels every cycle,
+  so the body never commits to the turn. Angular commands must be held, not re-sent.
+* **The lidar sits 0.318 m forward of `base_link`** at z = 0.379 m — confirmed independently by the
+  geometry of the robot's own self-hits in the scan.
+
+---
+
+## Architecture
+
+```
+              ┌─────────────────────────────────────────────┐
+   route  ──▶ │ route_run.py    waypoints + actions in order │
+   (yaml)     └──────┬──────────────────────────────┬────────┘
+                     │ leg blocked?                 │ action step
+                     ▼                              ▼
+          ┌──────────────────────┐      ┌────────────────────────────┐
+          │ escalation.py        │      │ VLM reasoner  (picks TOOL) │
+          │ geometry ran out —   │─────▶│   "look left" / "press"    │
+          │ ask the pipeline     │      └─────────────┬──────────────┘
+          └──────────────────────┘                    │ tool, never coordinates
+                                                      ▼
+                                        ┌────────────────────────────┐
+                                        │ GDINO grounder (LOCALIZES) │
+                                        │  + press_veto: not a fire  │
+                                        │    alarm                   │
+                                        └─────────────┬──────────────┘
+                                                      ▼
+                                        ┌────────────────────────────┐
+                                        │ reach_envelope → base moves│
+                                        │ into reach → xArm6 presses │
+                                        └────────────────────────────┘
+
+   every motion command, from every source, passes through:
+          ┌──────────────────────────────────────────────────────────┐
+          │ twist_mux_node.py — the ONLY publisher of /cmd_vel       │
+          │ fail-closed gates: estop · arm_stowed · enable · override │
+          └──────────────────────────────────────────────────────────┘
+```
+
+Two design commitments are load-bearing:
+
+1. **The reasoner never emits coordinates.** It selects from a fixed tool vocabulary; a separate
+   open-vocabulary detector does all localization. A VLM that hallucinates a pixel is a bug you cannot
+   see; a VLM that picks the wrong tool is one you can.
+2. **Motion is fail-closed.** `twist_mux_node` is the single `/cmd_vel` publisher and every gate must
+   be *affirmatively* satisfied. A missing publisher stops the robot; it does not free it.
+
+---
+
+## Repository layout
+
+```
+safety/        pure decision logic — no ROS imports, so it is testable headlessly
+               arbiter · twist_mux_node · route_plan · waypoint_drive · reach_envelope
+               press_veto · escalation · look_policy · local_avoid · scan_anchor
+               lidar_lift · scan_filter · mux_watch · waypoint_frame · teleop_guard
+bringup/       the executable layer: ROS nodes, run scripts, one-shot diagnostics
+               health.py       preflight — fails on any of the six silent-degradation paths
+               route_run.py    the route executor
+               waypoints.py    record / list / anchor odom-frame waypoints
+               press_run.sh    READY → LOOK → GROUND → REACH
+               reach_control.sh  ground, position, re-ground, press
+config/        routes.yaml (missions) · safety.yaml (gates, speed and slew ceilings) · slam.yaml
+nav2_bringup/  Nav2 config, ported for real hardware (use_sim_time:=false, spin removed)
+docs/          runbooks — start with MORNING.md, then NAVTEST.md and ROUTES.md
+tests/         243 tests, all headless: no ROS, no GPU, no hardware
+patches/       our diffs against upstream drivers, applied by setup_workspace.sh
+maps/          site maps from the SLAM attempt (see maps/README.md)
+ros2_ws/       GITIGNORED — rebuilt from pinned upstream commits by setup_workspace.sh
+```
+
+`safety/` holds no ROS imports on purpose. Every rule that can stop the robot is a pure function with
+a test, and the ROS nodes are thin shells over it. That is why the suite runs in 22 seconds on a
+laptop with nothing plugged in.
+
+---
+
+## Running it
+
+```bash
+git clone https://github.com/AnikS22/utp_robot ~/utp_robot && cd ~/utp_robot
+bash bringup/setup_workspace.sh     # clones + patches + builds drivers (no sudo, ~30 s)
+source bringup/env.sh
+```
+
+Tests need nothing but Python:
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/ -q     # 243 passed
+```
+
+With hardware, four terminals, left running:
+
+```bash
+ros2 launch ranger_bringup ranger_mini_v3.launch.py   # 1  chassis
+bash bringup/lidar.sh                                 # 2  lidar + /scan_filtered
+bash bringup/camera.sh                                # 3  camera
+bash bringup/safety.sh                                # 4  safety mux + arm gate
+```
+
+Then, **before anything moves**:
+
+```bash
+python3 bringup/health.py
+```
+
+It must report chassis mode `CAN` (not `RC`), `arm_stowed` at 100%, and exactly one publisher each on
+`/odom`, `/scan`, `/cmd_vel`. It refuses rather than warns.
+
+Record a route and run it (waypoints are odom-frame — record and run in one session):
+
+```bash
+python3 bringup/waypoints.py record start
+#  ... drive to the door ...
+python3 bringup/waypoints.py record doors
+#  ... drive to the press pose ...
+python3 bringup/waypoints.py record button
+python3 bringup/route_run.py press_and_out --go --confirm
+```
+
+`--confirm` pauses before every step; `--go` is required for any motion at all. Full procedure,
+including what to watch and when to stop it, is in **[docs/MORNING.md](docs/MORNING.md)**.
+
+`ROS_DOMAIN_ID` is **9 for hardware, 42 for simulation**, set by `bringup/env.sh`. This separation is
+not cosmetic — it is what keeps a simulated route from ever reaching a real chassis.
+
+---
+
+## Known-open
+
+1. **The press.** Untested since the READY → LOOK → GROUND → REACH reorder. This is the one thing
+   between here and a complete run.
+2. **Lidar re-anchoring** (`waypoints.py anchor` / `relocalize`). Written, unit-tested, never run on
+   the robot. It is what removes the re-record-before-every-run tax caused by odom drift.
+3. **Isaac depth is dead on this laptop** — the depth topic publishes 100% `inf` on every frame; the
+   Isaac log names it (`Illegal cycle connection … WriterSyncGate … ignored`, an SDG graph problem).
+   Fixing it would mean editing the simulation repo, which project policy forbids. Consequence: the
+   sim can validate navigation and the state machine, but **cannot** validate grounding. This is why
+   `safety/lidar_lift.py` exists — it lifts a 2D box to 3D from lidar when depth has nothing, which
+   also covers glass doors, where depth genuinely fails on hardware too.
+4. **Elevator interaction.** Never run on any system.
+
+---
+
+## Reading order for a reviewer
+
+1. `EXPERIMENT_LOG.md` — dated findings, including everything that failed.
+2. `docs/MORNING.md` — current state and the exact runbook.
+3. `safety/route_plan.py` and `safety/reach_envelope.py` — the mission and geometry rules, with the
+   constants ported from the simulator and the reasoning for each.
+4. `tests/test_press_veto.py` — the safety case that matters most: never press a fire alarm.
