@@ -32,3 +32,9 @@ maps/*/frames/
 .env.*
 *.pem
 *.key
+
+# MOLA 3D maps. Same policy as the slam_toolbox posegraphs above: these are map DATA, they are
+# megabytes of binary per drive, and they are regenerable from a drive. Read them back with
+#   mm-info -l /opt/ros/jazzy/lib/x86_64-linux-gnu/libmola_metric_maps.so* <map>.mm
+maps/*.mm
+maps/*.simplemap
