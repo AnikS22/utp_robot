@@ -6,7 +6,7 @@ ouster/os_driver:
     # MUST be this laptop on the sensor's subnet. The sensor was found configured to stream to
     # 192.168.1.106 -- not this machine -- while reporting "status": "RUNNING" over HTTP.
     udp_dest: '192.168.1.100'
-    lidar_mode: '1024x10'
+    lidar_mode: '512x10'
     timestamp_mode: 'TIME_FROM_ROS_TIME'
     udp_profile_lidar: 'RNG19_RFL8_SIG16_NIR16'
     # The driver publishes base_link->os_sensor itself if these are left default, which would

@@ -1,0 +1,78 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Tree Height: 700
+Visualization Manager:
+  Class: ""
+  Name: root
+  Global Options:
+    Background Color: 25; 28; 33
+    Fixed Frame: map
+    Frame Rate: 20
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 60
+      Color: 45; 50; 58
+      Alpha: 0.35
+    - Class: rviz_default_plugins/Map
+      Name: MAP (2D occupancy)
+      Enabled: true
+      Topic:
+        Value: /map
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Color Scheme: map
+      Alpha: 1
+    - Class: rviz_default_plugins/LaserScan
+      Name: Live scan
+      Enabled: true
+      Topic:
+        Value: /scan
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Size (m): 0.05
+      Style: Points
+      Color: 255; 80; 80
+      Color Transformer: FlatColor
+    - Class: rviz_default_plugins/TF
+      Name: Robot
+      Enabled: true
+      Show Names: true
+      Show Axes: true
+      Show Arrows: false
+      Marker Scale: 1.2
+      Frames:
+        All Enabled: false
+        base_link:
+          Value: true
+        map:
+          Value: true
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /goal_pose
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Value: /initialpose
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: TopDown
+      Target Frame: base_link
+      Scale: 30
+      Angle: 0
+      X: 0
+      Y: 0
+  Value: true
+Window Geometry:
+  Height: 900
+  Width: 1500
+  Displays:
+    collapsed: false
