@@ -1555,3 +1555,62 @@ python3 bringup/characterise_twist.py --go --wz 0.08    # expect nothing
 
 The lowest `wz` that still rotates the body IS `w_min`. Set it in `Limits` and the controller is
 matched to the chassis instead of guessing at it.
+
+## 2026-08-30b — the Ouster OS0-128, and 3D SLAM running on the real robot
+
+The 3D lidar was plugged in. Found by sweeping 192.168.1.0/24 (the USB-ethernet adapter that also
+carries the xArm at .221) and reading the sensor's own HTTP API:
+
+    OS-0-128, pn OS0-071-128U-AX, sn 122532001409, firmware v3.1.0, status RUNNING, mode 1024x10
+
+**The udp_dest trap, caught before it cost an afternoon.** The sensor was configured to stream to
+`udp_dest: 192.168.1.106` -- not this machine (this laptop is .100). A sensor in that state answers
+HTTP with `"status": "RUNNING"` and sends its point cloud to nobody. `ouster_ros` rewrites udp_dest
+on connect so the driver is immune, but a raw capture or any non-reconfiguring viewer would have
+seen zero packets from a healthy sensor. Pinned in `config/ouster.yaml`.
+
+### The sensor, measured against the A1M8
+
+| | RPLIDAR A1M8 | Ouster OS0-128 |
+|---|---|---|
+| valid returns per scan | **44** (23% of beams) | **121,367** of 131,072 (**92.6%**) |
+| azimuth coverage | ~125 deg permanently dead | **72 of 72 five-degree sectors, no gaps** |
+| range (min/median/max) | ~8 m ceiling | 0.04 / 3.24 / 30.33 m |
+| IMU | none | 100 Hz |
+
+2,758x the points. The 2026-08-25 conclusion -- that slam_toolbox failed because it was fed 44
+points where its correlative matcher needs several hundred -- is now directly testable, and the
+sensor side of it is settled. **The occlusion worry did not materialise:** mounted at z=1.146 m the
+sensor looks cleanly over the arm and mast, full 360 deg, no sparse sectors. 3,146 returns under
+0.60 m at all bearings are the robot seeing its own superstructure and need a range_min filter.
+
+### 3D SLAM, running
+
+`mola_lidar_odometry` (MOLA-LO, GICP with cov-to-cov pairings) in LIO mode: `/ouster/points` +
+`/ouster/imu`, `use_imu_for_lio:=True`. Requires `ros-jazzy-mola` -- the odometry core ships
+SEPARATELY from `mola_bridge_ros2`, and installing only the core fails at runtime with
+`Request for unregistered class: mola::BridgeROS2`.
+
+**Stationary accuracy, 25 s, robot parked and powered down:**
+
+| | measured |
+|---|---|
+| position drift | max **0.3 cm**, final 0.1 cm |
+| yaw drift | max **0.02 deg**, final -0.00 deg |
+| per-scan jitter | median **1.4 mm**, max 3.1 mm |
+
+### Open, and stated plainly
+
+1. **NOT VALIDATED IN MOTION.** Stationary accuracy says the sensor and ICP are sound; it says
+   nothing about drift over a route or loop closure. That needs a drive.
+2. **`/lidar_odometry/localmap_points` read 0.** Expected while stationary -- MOLA adds keyframes
+   on displacement -- but unconfirmed, and it is the first thing to check on the first drive.
+3. **Sensor yaw is ASSUMED ZERO.** Translation is from CAD (validated to 7 mm against the camera);
+   nothing has checked that the sensor x axis points along the robot's. A yaw error rotates the
+   entire map relative to the chassis and presents as every waypoint being consistently off to one
+   side -- uncomfortably close to a symptom already being chased. Park square to a flat wall and
+   check the wall normal lies along base_link x.
+4. **`odom -> base_link` does not resolve**, so MOLA skips its REP-105 `map -> odom` publish. That
+   is only because the chassis is off; it resolves when `ranger_base` runs. Which also means: when
+   the chassis IS on, there must be exactly one publisher of `odom -> base_link`, or this becomes
+   the two-publishers-on-/map bug of 2026-08-21b in a new place.

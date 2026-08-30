@@ -1,0 +1,77 @@
+# Ouster OS0-128 — connection, streaming config, and mount pose.
+#
+# DISCOVERED ON THE ROBOT 2026-08-30 by sweeping 192.168.1.0/24 and reading the sensor's own
+# HTTP API at http://192.168.1.119/api/v1/sensor/metadata/sensor_info :
+#
+#     prod_line   OS-0-128            128 beams, 90 deg vertical FOV
+#     prod_pn     OS0-071-128U-AX
+#     prod_sn     122532001409
+#     firmware    v3.1.0 (ousteros-image-prod-bootes-v3.1.0)
+#     status      RUNNING
+#
+# WHY THIS SENSOR EXISTS IN THIS PROJECT. slam_toolbox could not hold a pose in this building
+# because the A1M8 delivered 44 valid points per scan against the several hundred its correlative
+# matcher needs (EXPERIMENT_LOG 2026-08-25: ~46% of beams never return and ~125 deg of arc is
+# permanently dead, fixed in the SENSOR frame across two unrelated locations). At 1024x10 with 128
+# beams this sensor produces 131,072 points per scan. The mapping problem was never the algorithm.
+
+host: "192.168.1.119"
+
+# THE GOTCHA, found before it cost an afternoon. The sensor was configured to stream to
+# udp_dest 192.168.1.106 -- a machine that is not this one (this laptop is 192.168.1.100 on
+# enx00e04c674c60, the USB-ethernet adapter that also carries the xArm at .221). A sensor in that
+# state reports "status": "RUNNING" over HTTP and sends its point cloud nowhere we can see it.
+# ouster_ros rewrites udp_dest on connect, so the driver fixes this itself -- but a raw packet
+# capture, or any tool that does not reconfigure, would have shown zero packets from a healthy
+# sensor. Pin the value so the failure cannot come back silently.
+udp_dest: "192.168.1.100"
+
+lidar_mode: "1024x10"           # 1024 columns x 128 beams @ 10 Hz = 131,072 points/scan
+timestamp_mode: "TIME_FROM_INTERNAL_OSC"
+
+sensor_frame: "os_sensor"
+lidar_frame: "os_lidar"
+imu_frame: "os_imu"
+parent_frame: "base_link"
+
+# base_link -> os_sensor. x forward, y left, z up; radians.
+#
+# STATUS: TRANSLATION FROM CAD, ORIENTATION ASSUMED. Not yet verified on the robot.
+#
+# Source: Downloads/Ranger_mini_Xarm6_custom_box+Copy.stp, parsed 2026-08-26, using the CAD->ROS
+# mapping (CAD +X -> ROS -X, CAD +Y -> ROS +Z, CAD +Z -> ROS +Y) that was CHECKED by reproducing
+# the independently measured D435f pose in calib/handeye.json to 7 mm. The same parse put the
+# A1M8 at x=+0.318, y=-0.013, which config/lidar.yaml confirms exactly.
+#
+# The sensor sits high on the mast, BEHIND the arm (x is negative, z is 1.146 m). That placement
+# matters for two reasons:
+#   * The arm and mast are in front of it, so expect an occluded sector. VERIFY IT THE WAY THE
+#     A1M8's blindness was caught: measure the blind arcs at one location, drive to a completely
+#     different one, measure again. Holes that do not move are the robot, not the room.
+#   * yaw is ASSUMED ZERO. Nothing has checked whether the sensor's x axis points along the
+#     robot's. A yaw error here rotates the whole map relative to the chassis and shows up as
+#     every waypoint being consistently off to one side. Check it before trusting a map.
+mount:
+  x_m: -0.375
+  y_m: 0.000
+  z_m: 1.146
+  roll_rad: 0.0
+  pitch_rad: 0.0
+  yaw_rad: 0.0
+
+# 2D SLICE for slam_toolbox and the corridor veto, via pointcloud_to_laserscan.
+#
+# Taking a horizontal band and flattening it to a LaserScan means the existing, already-tuned 2D
+# stack (config/slam.yaml, safety/scan_filter.py, waypoint_drive.corridor_blocked) works unchanged
+# on good data. That is the fastest honest test of "was it the algorithm or the sensor" -- same
+# slam_toolbox, same parameters, 3000x the points.
+#
+# Heights are in BASE_LINK, whose origin sits on the chassis deck 0.345 m above the floor
+# (docs/CALIBRATION.md). So this band is 0.545-1.545 m above the ground: walls and door frames,
+# above the floor and below the ceiling.
+scan_slice:
+  min_height_m: 0.20
+  max_height_m: 1.20
+  angle_increment_deg: 0.35     # ~1024 rays over 360 deg, matching the sensor's native columns
+  range_min_m: 0.40             # inside this is the robot's own superstructure
+  range_max_m: 40.0

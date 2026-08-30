@@ -1,0 +1,21 @@
+# ouster_ros driver parameters for the OS0-128. Values sourced from config/ouster.yaml, which
+# documents where each one came from. Launched by bringup/lidar3d.sh.
+ouster/os_driver:
+  ros__parameters:
+    sensor_hostname: '192.168.1.119'
+    # MUST be this laptop on the sensor's subnet. The sensor was found configured to stream to
+    # 192.168.1.106 -- not this machine -- while reporting "status": "RUNNING" over HTTP.
+    udp_dest: '192.168.1.100'
+    lidar_mode: '1024x10'
+    timestamp_mode: 'TIME_FROM_ROS_TIME'
+    udp_profile_lidar: 'RNG19_RFL8_SIG16_NIR16'
+    # The driver publishes base_link->os_sensor itself if these are left default, which would
+    # place the sensor at the origin. bringup/lidar3d.sh publishes the real CAD mount pose
+    # instead, so the driver is told to hang its own frames off os_sensor only.
+    sensor_frame: 'os_sensor'
+    lidar_frame: 'os_lidar'
+    imu_frame: 'os_imu'
+    point_cloud_frame: 'os_lidar'
+    pub_static_tf: true
+    proc_mask: 'IMU|PCL|SCAN'
+    use_system_default_qos: false

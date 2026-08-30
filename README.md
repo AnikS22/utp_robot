@@ -57,11 +57,24 @@ hard part of moving a working simulated policy onto hardware was not the policy.
 
 Also measured, and worth knowing before trusting any number from this platform:
 
-* **Odometry is honest but drifts** ~1 m per loop of the test course. Waypoints are odom-frame, so
-  they must be recorded and used in one session. `safety/scan_anchor.py` (lidar re-anchoring) removes
-  this tax — it is written and unit-tested but has **not** been run on the robot.
-* **Command scaling is not unity**: linear 0.94, angular 0.59–0.80 and *not* repeatable. Angular
-  open-loop commands are therefore never trusted; all turns close the loop on odometry.
+* **Odometry is accurate — drift is not the problem.** Measured 2026-08-29: lateral drift on a
+  straight run **−0.000 m**, position drift on a spin **0.001 m**, and lidar scan-match against odom
+  on a 27° spin **1.02**. Three runs returning to one recorded waypoint landed within a **14 cm**
+  spread. (An earlier revision of this README claimed ~1 m of drift per loop. That figure was wrong
+  and no measurement supports it; it is corrected here because it was being used to justify adding
+  fiducial localization the data does not call for.)
+* **The angular control path is the problem, not localization.** Command scaling is linear 0.94 but
+  angular **0.59–0.80 and inconsistent** — the chassis under-rotates by up to 41% of what the stack
+  believes it asked for. Odometry reports that honestly, so closing the loop should absorb it, and
+  it did not: `Limits` carried a stall floor for linear velocity (`v_min`) and **none for angular**,
+  while the 4WS wheels must physically re-steer before the body turns. Every heading correction the
+  controller emitted was below the rate the chassis will execute, so a turn converged until it
+  stalled ~0.167 rad short of tolerance and then held there with `vx = 0` — the observed livelock.
+  Fixed 2026-08-30 (`w_min`); **not yet confirmed on hardware.**
+* **Waypoints are odom-frame, so a chassis power-cycle silently invalidates them.** This is a frame
+  *identity* problem, not a drift problem, and it is the honest case for absolute localization
+  (AprilTag or lidar anchoring): waypoints that survive between sessions, not waypoints that fight
+  drift. `safety/scan_anchor.py` is written and unit-tested and has **not** been run on the robot.
 * **4WS mode-thrash**: re-issuing an angular command at 20 Hz re-steers all four wheels every cycle,
   so the body never commits to the turn. Angular commands must be held, not re-sent.
 * **The lidar sits 0.318 m forward of `base_link`** at z = 0.379 m — confirmed independently by the
@@ -195,7 +208,8 @@ not cosmetic — it is what keeps a simulated route from ever reaching a real ch
 1. **The press.** Untested since the READY → LOOK → GROUND → REACH reorder. This is the one thing
    between here and a complete run.
 2. **Lidar re-anchoring** (`waypoints.py anchor` / `relocalize`). Written, unit-tested, never run on
-   the robot. It is what removes the re-record-before-every-run tax caused by odom drift.
+   the robot. It is what removes the re-record-before-every-run tax — which is caused by the odom
+   frame not surviving a power-cycle, not by drift within a run.
 3. **Isaac depth is dead on this laptop** — the depth topic publishes 100% `inf` on every frame; the
    Isaac log names it (`Illegal cycle connection … WriterSyncGate … ignored`, an SDG graph problem).
    Fixing it would mean editing the simulation repo, which project policy forbids. Consequence: the
