@@ -115,3 +115,62 @@ python3 bringup/grab_frame.py --name button_check
 * **Do not disconnect the RC.** In RC mode a missing transmitter trips a lost-link failsafe and
   the chassis refuses mode changes entirely (`vehicle_state=EXCEPTION`).
 * Touching the sticks reclaims RC at any moment, including mid-run.
+
+---
+
+# Map-frame waypoints (added 2026-08-30)
+
+Waypoints can now be recorded in a **SLAM map frame** instead of the odom frame. Odom coordinates
+die on every `ranger_base` restart and drift in between; map coordinates recorded against a
+**saved, loaded map** survive between sessions. That is what removes the re-record-before-every-run
+tax.
+
+## The one distinction that matters
+
+A MOLA started **fresh** also has a `map` frame -- with its origin wherever the robot happened to
+boot. **The TF tree looks identical either way.** So:
+
+| how MOLA was started | `map` frame origin | waypoints portable? |
+|---|---|---|
+| fresh, no map loaded | wherever the robot booted | **no** -- valid only while that MOLA runs |
+| `map_load.sh <name>` | the saved map's own origin | **yes** -- any session localized in that map |
+
+`safety/map_frame.py` enforces this. It refuses a waypoint recorded against map `atrium` when
+MOLA is running fresh, and refuses one recorded in `atrium` when you are localized in `garage`.
+
+## To get persistent waypoints
+
+```bash
+# 1. bring up the sensor and SLAM
+bash bringup/lidar3d.sh                       # OS0 driver + mount TF
+#    (MOLA launch -- see EXPERIMENT_LOG 2026-08-30b)
+
+# 2. drive the route in RC mode (SWB down). MOLA needs only the lidar and its IMU:
+#    not the chassis software, not the mux, not the waypoint controller.
+
+# 3. save, and verify it reads back
+bash bringup/map_save.sh atrium_os0
+
+# 4. from now on, at the start of every session
+bash bringup/map_load.sh atrium_os0           # or: ... atrium_os0 <x> <y> <yaw_deg>
+
+# 5. record and run in the map frame
+python3 bringup/waypoints.py record start --frame map
+python3 bringup/route_run.py press_and_out --go --confirm
+```
+
+## Frame selection
+
+`--frame auto` (the default) prefers the map when MOLA is publishing a usable one, falls back to
+odom otherwise, and **always prints which it chose**. It never decides silently. `--frame map`
+refuses rather than falling back; `--frame odom` is the old behaviour.
+
+**The chassis must be running for the map frame to work at all.** MOLA publishes `map -> odom`
+per REP-105, so without `odom -> base_link` from `ranger_base` there is no `map -> base_link` to
+read. With the chassis off you will correctly get the odom fallback, or a refusal under
+`--frame map`.
+
+## What this does NOT fix
+
+The angular stall floor (`w_min`, 2026-08-30). Perfect localization does not make the chassis
+execute a 0.06 rad/s turn. Run the `characterise_twist.py --wz` sweep before trusting any run.

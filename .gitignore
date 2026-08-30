@@ -38,3 +38,4 @@ maps/*/frames/
 #   mm-info -l /opt/ros/jazzy/lib/x86_64-linux-gnu/libmola_metric_maps.so* <map>.mm
 maps/*.mm
 maps/*.simplemap
+maps/.loaded_map

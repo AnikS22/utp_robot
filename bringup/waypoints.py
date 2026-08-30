@@ -51,6 +51,9 @@ from sensor_msgs.msg import LaserScan
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 from odom_session import odom_session_id  # noqa: E402
+from pose_source import PoseSource, current_map_name, mola_session_id  # noqa: E402
+from safety.map_frame import (FRAME_KEY, MAP_NAME_KEY, MOLA_SESSION_KEY,  # noqa: E402
+                              FRAME_MAP, FRAME_ODOM)
 from safety.waypoint_frame import SESSION_KEY, check_session  # noqa: E402
 from safety.waypoint_drive import Limits, corridor_blocked, plan_step, to_goal, wrap  # noqa: E402
 
@@ -76,7 +79,10 @@ def load() -> dict:
 def save(d: dict) -> None:
     STORE.parent.mkdir(parents=True, exist_ok=True)
     STORE.write_text(
-        "# Waypoints in the ODOM frame. Only meaningful within one continuous run of the ranger\n"
+        "# Waypoints. The 'frame' field says which frame each one is in; ABSENT MEANS ODOM,\n"
+        "# because every waypoint recorded before map support existed is an odom waypoint.\n"
+        "#\n"
+        "# frame: odom -- only meaningful within one continuous run of the ranger\n"
         "# driver: restarting it re-zeros odom and silently invalidates every entry here.\n"
         "# The 'odom_session' field is how you tell: the DDS GID of the /odom publisher, a new\n"
         "# value for every driver instance. goto and route_run REFUSE a waypoint whose session\n"
@@ -86,42 +92,65 @@ def save(d: dict) -> None:
 
 
 class Pose(Node):
-    """Just enough node to read one odom sample."""
+    """Just enough node to read one pose sample -- from odom, or from a SLAM map frame."""
 
-    def __init__(self, name: str = "utp_waypoints"):
+    def __init__(self, name: str = "utp_waypoints", frame: str = "auto"):
         super().__init__(name)
         self.pose = None
         self.stamp = 0.0
         self.scan = None
-        self.create_subscription(Odometry, "/odom", self._odom, 10)
+        # PoseSource fills self.pose/self.stamp exactly as the old /odom callback did. It
+        # resolves lazily, on first wait_for_pose(), so `list` pays nothing for TF settling.
+        self.src = PoseSource(self, frame)
         self.create_subscription(LaserScan, "/scan_filtered", self._scan, qos_profile_sensor_data)
-
-    def _odom(self, m: Odometry) -> None:
-        p = m.pose.pose
-        self.pose = (p.position.x, p.position.y, yaw_of(p.orientation))
-        self.stamp = time.monotonic()
 
     def _scan(self, m: LaserScan) -> None:
         self.scan = m
 
     def wait_for_pose(self, timeout: float = 5.0) -> bool:
-        end = time.monotonic() + timeout
-        while rclpy.ok() and time.monotonic() < end:
-            rclpy.spin_once(self, timeout_sec=0.1)
-            if self.pose is not None:
-                return True
-        return False
+        return self.src.wait_for_pose(timeout)
 
     def fresh(self) -> bool:
-        return self.pose is not None and (time.monotonic() - self.stamp) <= ODOM_STALE_S
+        return self.src.fresh()
 
 
 def cmd_record(n: Pose, a) -> int:
     if not n.wait_for_pose():
-        print("no /odom -- is ranger_bringup running?", file=sys.stderr)
+        print(f"no pose: {n.src.description or 'nothing publishing'}", file=sys.stderr)
         return 1
+    print(f"  {n.src.description}")
     x, y, th = n.pose
     d = load()
+
+    if n.src.frame == FRAME_MAP:
+        # MAP FRAME. What makes these portable between sessions is the NAME of the saved map,
+        # not the existence of a map frame -- a fresh MOLA has one too, with an arbitrary origin.
+        # Both are recorded so safety/map_frame.py can tell them apart later.
+        mola = mola_session_id(n)
+        if mola is None:
+            print("cannot identify the MOLA pose publisher (absent, or more than one). Refusing "
+                  "to record a waypoint that cannot be validated later.", file=sys.stderr)
+            return 1
+        entry = {"x": round(x, 4), "y": round(y, 4), "yaw": round(th, 4),
+                 "odom_epoch": round(time.time()), FRAME_KEY: FRAME_MAP,
+                 MOLA_SESSION_KEY: mola}
+        mp = current_map_name(n)
+        if mp:
+            entry[MAP_NAME_KEY] = mp
+        d[a.name] = entry
+        save(d)
+        print(f"recorded '{a.name}': x={x:+.3f} y={y:+.3f} yaw={math.degrees(th):+.1f} deg "
+              f"[frame=map]")
+        if mp:
+            print(f"  anchored to saved map '{mp}' -- valid in any future session localized "
+                  f"in that map.")
+        else:
+            print("  NO SAVED MAP LOADED, so this is valid only while THIS MOLA instance keeps "
+                  "running. To make it survive a restart: save a map "
+                  "(bash bringup/map_save.sh <name>), load it, and re-record.")
+        print(f"  -> {STORE}")
+        return 0
+
     sess = odom_session_id(n)
     if sess is None:
         print("cannot identify the /odom publisher (absent, or more than one -- run "
@@ -129,9 +158,10 @@ def cmd_record(n: Pose, a) -> int:
               file=sys.stderr)
         return 1
     d[a.name] = {"x": round(x, 4), "y": round(y, 4), "yaw": round(th, 4),
-                 "odom_epoch": round(time.time()), SESSION_KEY: sess}
+                 "odom_epoch": round(time.time()), FRAME_KEY: FRAME_ODOM, SESSION_KEY: sess}
     save(d)
-    print(f"recorded '{a.name}': x={x:+.3f} y={y:+.3f} yaw={math.degrees(th):+.1f} deg")
+    print(f"recorded '{a.name}': x={x:+.3f} y={y:+.3f} yaw={math.degrees(th):+.1f} deg "
+          f"[frame=odom]")
     print(f"  -> {STORE}")
     return 0
 
@@ -148,7 +178,8 @@ def cmd_list(n: Pose, a) -> int:
 
 def cmd_where(n: Pose, a) -> int:
     if not n.wait_for_pose():
-        print("no /odom", file=sys.stderr)
+        print(f"no pose: {n.src.description or 'nothing publishing'}",
+              file=sys.stderr)
         return 1
     x, y, th = n.pose
     print(f"now: x={x:+.3f} y={y:+.3f} yaw={math.degrees(th):+.1f} deg")
@@ -213,7 +244,8 @@ def cmd_goto(n: Pose, a) -> int:
         return 2
     goal = d[a.name]
     if not n.wait_for_pose():
-        print("no /odom -- is ranger_bringup running?", file=sys.stderr)
+        print(f"no pose: {n.src.description or 'nothing publishing'}",
+              file=sys.stderr)
         return 1
 
     ok, why = check_session(d, odom_session_id(n), names={a.name})
@@ -306,7 +338,8 @@ def cmd_anchor(n: Pose, a) -> int:
     because this A1M8 returns on ~13% of beams and a single sweep is too sparse to match to.
     """
     if not n.wait_for_pose():
-        print("no /odom", file=sys.stderr)
+        print(f"no pose: {n.src.description or 'nothing publishing'}",
+              file=sys.stderr)
         return 1
     scans = _collect_scans(n, count=20)
     if len(scans) < 10:
@@ -338,7 +371,8 @@ def cmd_relocalize(n: Pose, a) -> int:
         return 2
     anc = json.loads(f.read_text())
     if not n.wait_for_pose():
-        print("no /odom", file=sys.stderr)
+        print(f"no pose: {n.src.description or 'nothing publishing'}",
+              file=sys.stderr)
         return 1
     live_scans = _collect_scans(n, count=3)
     if not live_scans:
@@ -434,33 +468,40 @@ def cmd_project(n: Pose, a) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    # --frame goes on every subcommand rather than on the top parser, so it can be typed where
+    # it reads naturally: `waypoints.py record button --frame map`.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--frame", choices=["auto", "map", "odom"], default="auto",
+                        help="which frame to record/read in. auto (default) prefers the SLAM map "
+                             "when MOLA is publishing a usable one, and always says which it "
+                             "chose rather than deciding silently.")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("record"); r.add_argument("name"); r.set_defaults(fn=cmd_record)
-    sub.add_parser("list").set_defaults(fn=cmd_list)
-    sub.add_parser("where").set_defaults(fn=cmd_where)
-    rb = sub.add_parser("rebase", help="re-express waypoints after a ranger_base restart")
+    r = sub.add_parser("record", parents=[common]); r.add_argument("name"); r.set_defaults(fn=cmd_record)
+    sub.add_parser("list", parents=[common]).set_defaults(fn=cmd_list)
+    sub.add_parser("where", parents=[common]).set_defaults(fn=cmd_where)
+    rb = sub.add_parser("rebase", parents=[common], help="re-express waypoints after a ranger_base restart")
     rb.add_argument("--from-x", type=float, required=True,
                     help="robot x in the OLD odom frame, read before the restart")
     rb.add_argument("--from-y", type=float, required=True)
     rb.add_argument("--from-yaw-deg", type=float, required=True)
     rb.add_argument("--go", action="store_true")
     rb.set_defaults(fn=cmd_rebase)
-    dv = sub.add_parser("derive", help="new waypoint at one waypoint's spot, facing another")
+    dv = sub.add_parser("derive", parents=[common], help="new waypoint at one waypoint's spot, facing another")
     dv.add_argument("name", help="name for the derived waypoint, e.g. doors")
     dv.add_argument("--at", required=True, help="take x,y from this waypoint")
     dv.add_argument("--facing", required=True, help="point the heading at this waypoint")
     dv.set_defaults(fn=cmd_derive)
-    pj = sub.add_parser("project", help="new waypoint N metres straight ahead of another")
+    pj = sub.add_parser("project", parents=[common], help="new waypoint N metres straight ahead of another")
     pj.add_argument("name"); pj.add_argument("--from", dest="src", required=True)
     pj.add_argument("--forward", type=float, required=True, help="metres ahead, 0.3..6.0")
     pj.set_defaults(fn=cmd_project)
-    an = sub.add_parser("anchor", help="save a lidar landmark at the current pose")
+    an = sub.add_parser("anchor", parents=[common], help="save a lidar landmark at the current pose")
     an.add_argument("name"); an.set_defaults(fn=cmd_anchor)
-    rl = sub.add_parser("relocalize", help="match the live scan to an anchor and re-express "
+    rl = sub.add_parser("relocalize", parents=[common], help="match the live scan to an anchor and re-express "
                                             "every waypoint in the current odom frame")
     rl.add_argument("name"); rl.add_argument("--go", action="store_true")
     rl.set_defaults(fn=cmd_relocalize)
-    g = sub.add_parser("goto"); g.add_argument("name")
+    g = sub.add_parser("goto", parents=[common]); g.add_argument("name")
     g.add_argument("--force", action="store_true",
                    help="drive even if the waypoint is from a dead odom session (it will be wrong)")
     g.add_argument("--go", action="store_true", help="actually move the robot")
@@ -469,7 +510,7 @@ def main() -> int:
     a = ap.parse_args()
 
     rclpy.init()
-    n = Pose()
+    n = Pose(frame=a.frame)
     try:
         return a.fn(n, a)
     finally:

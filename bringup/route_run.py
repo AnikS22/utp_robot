@@ -59,6 +59,8 @@ from sensor_msgs.msg import LaserScan  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
 
 from odom_session import odom_session_id  # noqa: E402
+from pose_source import PoseSource, current_map_name, mola_session_id  # noqa: E402
+from safety.map_frame import check_map_session, split_by_frame  # noqa: E402
 from safety.local_avoid import choose_heading  # noqa: E402
 from safety.mux_watch import MuxWatch  # noqa: E402
 from safety.waypoint_frame import check_session, drift_warning  # noqa: E402
@@ -146,7 +148,9 @@ class Runner(Node):
         self.pose = None
         self.stamp = 0.0
         self.scan = None
-        self.create_subscription(Odometry, "/odom", self._odom, 10)
+        # Pose comes from odom OR from a SLAM map frame; PoseSource fills self.pose/self.stamp
+        # either way. See bringup/pose_source.py for why the choice is announced, never silent.
+        self.src = PoseSource(self, os.environ.get("UTP_POSE_FRAME", "auto"))
         self.create_subscription(LaserScan, "/scan_filtered", self._scan, qos_profile_sensor_data)
         self.create_subscription(String, SAFETY_STATUS_TOPIC, self._safety, 10)
         self.pub = self.create_publisher(Twist, CMD_TOPIC, 10)
@@ -156,11 +160,6 @@ class Runner(Node):
         self.avoid = False          # set by --avoid; off by default
         self._prev_avoid = None     # last steered bearing, for gap-choice hysteresis
         self._steer_cmd = None      # LATCHED angular command; see the note in drive_leg
-
-    def _odom(self, m) -> None:
-        p = m.pose.pose
-        self.pose = (p.position.x, p.position.y, yaw_of(p.orientation))
-        self.stamp = time.monotonic()
 
     def _scan(self, m) -> None:
         self.scan = m
@@ -173,15 +172,11 @@ class Runner(Node):
         self.mux.note_status(st.get("blocked_by"), time.monotonic())
 
     def fresh(self) -> bool:
-        return self.pose is not None and (time.monotonic() - self.stamp) <= ODOM_STALE_S
+        return self.src.fresh()
 
     def wait_for_odom(self, timeout: float = 5.0) -> bool:
-        end = time.monotonic() + timeout
-        while rclpy.ok() and time.monotonic() < end:
-            rclpy.spin_once(self, timeout_sec=0.1)
-            if self.pose is not None:
-                return True
-        return False
+        """Named for history: it now waits for a pose from whichever frame was resolved."""
+        return self.src.wait_for_pose(timeout)
 
     def wait_for_permission(self, timeout: float = 8.0) -> tuple[bool, str]:
         """Wait for the safety mux to report, and to report that it is NOT blocking.
@@ -662,8 +657,9 @@ def main() -> int:
     lim = Limits()
     try:
         if not n.wait_for_odom():
-            print("no /odom -- is ranger_bringup running?", file=sys.stderr)
+            print(f"no pose: {n.src.description or 'nothing publishing'}", file=sys.stderr)
             return 1
+        print(f"  {n.src.description}")
         # Prove the mux is alive and permitting BEFORE the first leg. Every gate is fail-closed,
         # so the default state of this robot is "will not move"; starting a route without
         # checking means discovering that fact one 180 s leg timeout at a time.
@@ -685,7 +681,14 @@ def main() -> int:
             for st_ in subroutes[a.on_blocked]:
                 if st_.kind == GOTO:
                     visited.add(st_.name)
-        ok, why = check_session(wps, odom_session_id(n), names=visited)
+        # A route may legitimately mix frames, and each frame has its own staleness rule:
+        # odom dies when ranger_base restarts, a map frame dies when MOLA restarts WITHOUT a
+        # saved map loaded. Checking one guard against both kinds would pass the wrong ones.
+        odom_wps, map_wps = split_by_frame(wps, visited)
+        ok, why = check_session(wps, odom_session_id(n), names=set(odom_wps))
+        if ok and map_wps:
+            ok, why = check_map_session(wps, current_map_name(n), mola_session_id(n),
+                                        names=set(map_wps))
         if not ok:
             print(f"\nSTALE WAYPOINTS -- not driving.\n  {why}", file=sys.stderr)
             return 1
