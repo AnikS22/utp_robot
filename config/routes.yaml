@@ -161,6 +161,27 @@ routes:
     - goto: doors
     - goto: final
 
+  # THREE WAYPOINTS, from wherever the robot is standing: go to the plate, press it, go out.
+  #   button  the press pose -- square to the ADA plate's wall, plate CENTRED in the camera
+  #   doors   in front of the doors, facing through them
+  #   final   outside, past the doorway
+  # No 'start': the run begins where the robot already is, which is the point of three.
+  #
+  # reach_control between the waypoint and the press is not optional. 'button' gets the base to
+  # the plate's WALL; it does not get it square to the plate, and odometry drift over a short
+  # loop was measured at 1.6-1.7 m / +30 deg from the same recorded pose three times running.
+  # reach_control grounds the plate, runs the fire-alarm veto, then faces it and steps in to the
+  # press standoff. press_run then raises the arm, re-grounds from there, and reaches.
+  press_and_out:
+    - goto: button
+    - action: reach_control
+      query: "the accessible door push button"
+    - action: press_button
+      query: "the accessible door push button"
+      standoff: 60
+    - goto: doors
+    - goto: final
+
   # The back half of recorded_press, for running from the button wall without the loop.
   press_and_exit:
     - action: reach_control
