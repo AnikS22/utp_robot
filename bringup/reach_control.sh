@@ -64,9 +64,46 @@ echo "[reach] checking what we are about to approach..."
     exit 1
 }
 
-echo "[reach] positioning the base..."
+echo "[reach] positioning the base (coarse, from the far grounding)..."
 # Base standoff is passed in metres; press_run.sh's --standoff is the ARM's, in mm. Different
 # quantities, deliberately not shared.
 python3 "$REPO/bringup/face_target.py" "$CAP" --standoff "$STANDOFF" $DRY
+
+# ---------------------------------------------------------------------------------------------
+# SECOND PASS. The first one servos to a target grounded from ~1.7 m, and can be no better than
+# that grounding: measured 2026-08-29, reach_control reported "positioned 0.68 m, +0.0 deg off
+# the press axis" while the plate was actually 10.4 cm to the side and 4.7 cm high of where the
+# arm was then sent. The base had positioned perfectly -- relative to a point that was 10 cm
+# wrong. The press missed by exactly that.
+#
+# From 0.68 m the plate is ~100x90 px instead of ~50 and the same angular error is worth ~4 cm,
+# so a second grounding is far better. Two constraints set the order:
+#   * the STOWED arm blocks the camera's view of a plate 0.7 m dead ahead, so the arm must be UP
+#     to take the accurate frame;
+#   * config/safety.yaml gates ALL base motion on measured joint angles, so the arm must be
+#     STOWED again before the base may correct.
+# Hence: raise -> ground -> stow -> correct. press_run then raises, re-grounds and reaches.
+if [ -z "$DRY" ]; then
+    ARM_PY="$REPO/.venv-arm/bin/python"
+    echo "[reach] raising the arm to clear the camera view..."
+    "$ARM_PY" "$REPO/bringup/stow_arm.py" --ready --go || {
+        echo "[reach] could not reach the press-ready pose; keeping the coarse position" >&2; exit 0; }
+
+    NAME2="${NAME}_near"
+    CAP2="$REPO/captures/$NAME2"
+    echo "[reach] re-grounding from the press pose..."
+    python3 "$REPO/bringup/grab_frame.py" --name "$NAME2" --timeout 45
+    if "$VENV" "$REPO/bringup/detect_frame.py" "$CAP2" --query "$QUERY"         && [ -f "$CAP2/detection.json" ]         && "$VENV" "$REPO/bringup/check_press_safe.py" "$CAP2"; then
+        echo "[reach] stowing so the base may move..."
+        "$ARM_PY" "$REPO/bringup/stow_arm.py" --go || {
+            echo "[reach] STOW FAILED -- base is gated off" >&2; exit 1; }
+        echo "[reach] correcting on the near grounding..."
+        python3 "$REPO/bringup/face_target.py" "$CAP2" --standoff "$STANDOFF"
+        echo "[reach] corrected. Capture kept at $CAP2"
+    else
+        echo "[reach] near re-grounding failed or was vetoed; stowing and keeping the coarse"              "position -- press_run will ground again from here" >&2
+        "$ARM_PY" "$REPO/bringup/stow_arm.py" --go || true
+    fi
+fi
 
 echo "[reach] done. Capture kept at $CAP"

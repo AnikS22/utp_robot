@@ -300,6 +300,13 @@ def main() -> int:
 
         ok, why = n.servo_to_press_pose(tx, ty, lim)
         print(f"  approach: {'ok' if ok else 'FAILED'} {why}")
+        # THE REPORT MUST NOT OUTRUN THE MEASUREMENT. "positioned 0.68 m, +0.0 deg off the press
+        # axis" was true of the TARGET and false of the plate: the target came from a grounding
+        # 1.66 m away that was 10.4 cm off, and the press missed by that. Say what the number is
+        # actually relative to, and how good the grounding behind it was.
+        print(f"  (relative to the grounded point from {dist:.2f} m, score "
+              f"{float(det.get('score', 0.0)):.3f} -- a lateral error in THAT grounding is a "
+              f"lateral error here. reach_control re-grounds from the press pose and corrects.)")
         if not ok:
             return 1
 
