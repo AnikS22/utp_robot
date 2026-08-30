@@ -54,6 +54,15 @@ class Limits:
     k_ang: float = 1.2
     slow_radius_m: float = 0.60  # start easing off inside this
     v_min: float = 0.06          # below this the chassis stalls rather than creeps
+    # THE SAME STALL FLOOR APPLIES TO ROTATION, and until 2026-08-30 it was missing. The 4WS
+    # wheels must physically re-steer before the body turns -- characterise_twist.py waits
+    # SETTLE_S = 1.5 s for exactly this -- so a small commanded w is spent entirely on
+    # re-steering and the body never rotates. Proportional control walks straight into it:
+    # k_ang * turn_exit_tol is 0.06 rad/s, and even at the ENTRY tolerance only 0.18, both under
+    # the 0.20 rad/s that was actually measured to turn the robot (angular scale 0.59-0.80 at
+    # wz=0.20, 2026-08-29). Every heading correction was therefore silently discarded, which is
+    # the "wheels are just rotating, robot isn't actually moving" report from 2026-08-26.
+    w_min: float = 0.20          # rad/s -- smallest rotation the chassis is known to execute
 
 
 @dataclass(frozen=True)
@@ -71,6 +80,31 @@ def wrap(a: float) -> float:
 
 def _finite(*vals: float) -> bool:
     return all(v == v and abs(v) != float("inf") for v in vals)
+
+
+def _turn_rate(err_rad: float, limits: Limits) -> float:
+    """Rotation rate for an IN-PLACE turn, floored to what the chassis will actually execute.
+
+    Proportional-down-to-zero does not work here: under Limits.w_min the command is absorbed by
+    re-steering the wheels and the body does not move. Clamp the magnitude UP -- this is only
+    called when a turn is wanted, and the turn_exit_tol_rad hysteresis decides when to stop, so
+    flooring the rate cannot prevent the turn from ever ending.
+    """
+    mag = min(limits.w_max, max(limits.w_min, abs(limits.k_ang * err_rad)))
+    return math.copysign(mag, err_rad)
+
+
+def _arc_rate(err_rad: float, limits: Limits) -> float:
+    """Yaw to mix with forward motion in an Ackermann arc. NOT floored, deliberately.
+
+    Flooring would be wrong twice over. w_min against v_max is a ~1.2 m turn radius, and
+    HARDWARE_SPECS says a small radius makes the firmware select SPINNING and DROP linear.x --
+    so the robot would stop advancing. And below the floor the arc correction does nothing
+    anyway. Emit an honest 0.0 and let the drive/turn hysteresis hand the correction to a real
+    in-place turn once the error grows past turn_tol_rad.
+    """
+    w = max(-limits.w_max, min(limits.w_max, limits.k_ang * err_rad))
+    return w if abs(w) >= limits.w_min else 0.0
 
 
 def plan_step(dist_m: float,
@@ -109,8 +143,7 @@ def plan_step(dist_m: float,
             # footprint does not advance, and the goal may be BEHIND us (measured in sim
             # 2026-08-27: robot parked 0.17 m past the waypoint, facing a closed door, could
             # never turn around because the veto keyed on the front rays it was leaving).
-            w = max(-limits.w_max, min(limits.w_max, limits.k_ang * bearing_err_rad))
-            return Step(Twist3(0.0, w), "turn_to_bearing")
+            return Step(Twist3(0.0, _turn_rate(bearing_err_rad, limits)), "turn_to_bearing")
         if blocked:
             # About to move FORWARD into the obstruction -- that, the veto stops.
             return Step(ZERO, "blocked")
@@ -118,8 +151,7 @@ def plan_step(dist_m: float,
         v = limits.v_max
         if dist_m < limits.slow_radius_m:
             v = max(limits.v_min, limits.v_max * dist_m / limits.slow_radius_m)
-        w = max(-limits.w_max, min(limits.w_max, limits.k_ang * bearing_err_rad))
-        return Step(Twist3(v, w), "drive")
+        return Step(Twist3(v, _arc_rate(bearing_err_rad, limits)), "drive")
 
     # Arrived. Optionally settle onto the recorded heading.
     if final_heading_err_rad is not None:
@@ -128,8 +160,8 @@ def plan_step(dist_m: float,
         ftol = (limits.turn_exit_tol_rad if prev_state == "final_heading"
                 else limits.turn_tol_rad)
         if not (abs(final_heading_err_rad) <= ftol):
-            w = max(-limits.w_max, min(limits.w_max, limits.k_ang * final_heading_err_rad))
-            return Step(Twist3(0.0, w), "final_heading")
+            return Step(Twist3(0.0, _turn_rate(final_heading_err_rad, limits)),
+                        "final_heading")
     return Step(ZERO, "arrived")
 
 

@@ -179,3 +179,67 @@ def test_arrival_has_hysteresis():
     assert plan_step(d, -0.4, None, False, prev_state="").state == "turn_to_bearing"
     assert plan_step(L.pos_tol_m * 1.7, -0.4, None, False,
                      prev_state="final_heading").state == "turn_to_bearing"
+
+
+# ---------------------------------------------------------------------------------------------
+# The angular stall floor. Until 2026-08-30 Limits had v_min but no w_min, so every heading
+# correction the controller asked for was under the rate the 4WS chassis will actually execute:
+# the wheels re-steered and the body did not turn. These pin the fix.
+
+def test_a_turn_near_tolerance_is_still_commanded_fast_enough_to_move():
+    """Just inside the exit band, k_ang * err is ~0.07 rad/s. The chassis does not rotate at
+    0.07 -- the command is absorbed re-steering the wheels. Floor it to w_min, or the turn
+    stalls short of tolerance and the leg starts with a residual heading error."""
+    s = plan_step(3.0, 0.055, None, False, prev_state="turn_to_bearing")
+    assert s.state == "turn_to_bearing"
+    assert abs(s.twist.wz) >= L.w_min
+
+
+def test_a_turn_at_the_entry_tolerance_also_clears_the_floor():
+    """0.15 rad -> 0.18 rad/s unfloored, still under w_min. This is the case that made the robot
+    dead-reckon: it re-entered turn_to_bearing and then did not turn."""
+    s = plan_step(3.0, 0.16, None, False)
+    assert s.state == "turn_to_bearing"
+    assert abs(s.twist.wz) >= L.w_min
+
+
+def test_the_floor_keeps_the_sign_of_the_error():
+    left = plan_step(3.0, 0.06, None, False, prev_state="turn_to_bearing")
+    right = plan_step(3.0, -0.06, None, False, prev_state="turn_to_bearing")
+    assert left.twist.wz >= L.w_min and right.twist.wz <= -L.w_min
+
+
+def test_a_large_turn_is_still_capped_at_w_max():
+    """Flooring must not become a licence to exceed the ceiling."""
+    s = plan_step(3.0, math.radians(170), None, False)
+    assert abs(s.twist.wz) <= L.w_max
+
+
+def test_final_heading_settle_clears_the_floor_too():
+    """Same stall, at the end of a leg: a residual heading error that cannot be commanded away
+    leaves the robot pointing wrong at the waypoint, and the next leg inherits it."""
+    s = plan_step(0.05, 0.0, 0.06, False, prev_state="final_heading")
+    assert s.state == "final_heading"
+    assert abs(s.twist.wz) >= L.w_min
+
+
+def test_the_driving_arc_is_NOT_floored():
+    """Flooring the arc would be a ~1.2 m turn radius against v_max, and HARDWARE_SPECS says a
+    small radius makes the firmware select SPINNING and DROP linear.x -- the robot would stop
+    advancing. Below the floor the correction does nothing anyway, so emit an honest zero."""
+    s = plan_step(3.0, math.radians(2), None, False)
+    assert s.state == "drive"
+    assert s.twist.vx == pytest.approx(L.v_max)
+    assert s.twist.wz == 0.0
+
+
+def test_an_arc_correction_above_the_floor_is_still_emitted():
+    """Only sub-floor yaw is zeroed. A correction the chassis can execute still rides the arc."""
+    big = Limits(k_ang=4.0)          # 4.0 * 0.10 = 0.40 rad/s, comfortably over w_min
+    s = plan_step(3.0, 0.10, None, False, limits=big)
+    assert s.state == "drive" and abs(s.twist.wz) >= big.w_min
+
+
+def test_arrived_still_commands_exactly_zero():
+    """The floor must never manufacture motion at rest."""
+    assert plan_step(0.05, 0.0, None, False).twist == ZERO

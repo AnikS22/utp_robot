@@ -1501,3 +1501,57 @@ Operator decision, late afternoon: record the button pose too. `recorded_press` 
 ### Not done
 
 Full run end to end. Lidar anchor on the robot. Elevator: never run on any system.
+
+## 2026-08-30 — the driving bug: a stall floor on linear velocity, none on angular
+
+`Limits` has carried `v_min = 0.06` since it was written, commented *"below this the chassis
+stalls rather than creeps"*. **There was no `w_min`.** The same 4WS physics applies to rotation --
+`characterise_twist.py` waits `SETTLE_S = 1.5 s` for the wheels to re-steer before the body turns --
+and the controller drove proportional rotation straight down into it:
+
+| bearing error | commanded `w = k_ang * err` | above the 0.20 rad/s known to move the robot? |
+|---|---|---|
+| 0.05 rad (`turn_exit_tol_rad`) | 0.06 | no |
+| 0.15 rad (`turn_tol_rad`) | 0.18 | no |
+| 0.167 rad | 0.20 | marginal |
+
+In `drive` the bearing error is capped at `turn_tol_rad` by construction, so the arc term was
+**always** under the floor: the Ackermann correction has never done anything, and every leg was
+dead reckoned.
+
+Worse, it livelocks. A turn converges until `w` drops under the floor at ~0.167 rad, which is
+still far outside the 0.05 exit tolerance, so `turn_to_bearing` never hands over to `drive` and
+`vx` stays 0. Simulated against a hard stall model (`Limits(w_min=0.0)` reproduces the old
+controller exactly), all three test legs time out having never moved, 99% of commands discarded:
+
+```
+straight-ish 5.0 m, 1.0 m left    before: 5.10 m, NEVER ARRIVED    after: 0.15 m, arrived 25.3 s
+dogleg       4.0 m, 2.5 m left    before: 4.72 m, NEVER ARRIVED    after: 0.15 m, arrived 25.1 s
+short hop    1.5 m, 0.4 m left    before: 1.55 m, NEVER ARRIVED    after: 0.15 m, arrived  9.8 s
+```
+
+This is the 2026-08-26 report *"wheels are just rotating, robot isn't actually moving"*, the
+2026-08-29 door livelock (90 s pinned, heading +-4 deg), and *"it didn't move, it stared"*.
+
+**Fix.** `w_min = 0.20` in `Limits`; `_turn_rate()` floors the magnitude of an in-place turn up to
+it, `_arc_rate()` deliberately does NOT floor -- `w_min` against `v_max` is a ~1.2 m radius and
+HARDWARE_SPECS says a small radius selects SPINNING and DROPS `linear.x`, so a floored arc would
+stop the robot advancing. Sub-floor arc yaw is emitted as an honest 0.0 and the drive/turn
+hysteresis hands the correction to a real in-place turn. Eight tests added, suite 243 -> 251.
+
+**Caveat, stated plainly.** The simulation uses a HARD cutoff at 0.20 rad/s. The real chassis has a
+fixed re-steer *cost*, not a cliff, so marginal commands sometimes execute and sometimes do not --
+which is the better explanation for why runs occasionally succeeded and mostly did not. The
+direction is certain; the magnitude is not, and **none of this is confirmed on hardware yet.**
+
+**To confirm, and to tune `w_min` properly** (robot rotates in place, no translation):
+
+```bash
+python3 bringup/characterise_twist.py --go --wz 0.30    # expect it to rotate
+python3 bringup/characterise_twist.py --go --wz 0.20    # measured before: scale 0.59-0.80
+python3 bringup/characterise_twist.py --go --wz 0.12    # expect little or nothing
+python3 bringup/characterise_twist.py --go --wz 0.08    # expect nothing
+```
+
+The lowest `wz` that still rotates the body IS `w_min`. Set it in `Limits` and the controller is
+matched to the chassis instead of guessing at it.
