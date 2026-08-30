@@ -1,8 +1,2 @@
-# Waypoints. The 'frame' field says which frame each one is in; ABSENT MEANS ODOM,
-# because every waypoint recorded before map support existed is an odom waypoint.
-#
-# Cleared of odom-frame entries 2026-08-30 when the robot moved to map-frame localization
-# (Ouster OS0 + MOLA). The old ones are in maps/waypoints.odom-frame.bak.yaml -- they are
-# not convertible: odom and map have different origins and the transform between them at
-# the moment each was recorded was never stored.
+# Waypoints. frame: absent means odom. See safety/map_frame.py.
 {}
