@@ -1,0 +1,109 @@
+# RViz view for a MAPPING drive: watch the map accumulate as you drive.
+#
+# Fixed frame is `map`, so the accumulating cloud stays put while the robot moves through it --
+# which is exactly the thing you are checking. If the world SMEARS or jumps as you drive, the
+# odometry is failing and the map is being corrupted; stop and re-start the drive rather than
+# finishing one you will have to throw away.
+#
+# Nav2 is deliberately NOT running during mapping, so there is no costmap and no footprint
+# polygon here. The robot's position is the base_link TF axes.
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+    Tree Height: 700
+Visualization Manager:
+  Class: ""
+  Name: root
+  Global Options:
+    Background Color: 20; 22; 26
+    Fixed Frame: map
+    Frame Rate: 20
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 60
+      Color: 45; 50; 58
+      Alpha: 0.4
+    - Class: rviz_default_plugins/PointCloud2
+      Name: MAP being built
+      Enabled: true
+      Topic:
+        Value: /lidar_odometry/localmap_points
+        Depth: 2
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+      Size (m): 0.03
+      Style: Points
+      Color Transformer: AxisColor
+      Axis: Z
+      Decay Time: 0
+      Alpha: 1
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Live OS0 sweep
+      Enabled: true
+      Topic:
+        Value: /ouster/points
+        Depth: 1
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+      Size (m): 0.02
+      Style: Points
+      Color Transformer: FlatColor
+      Color: 255; 120; 60
+      Decay Time: 0
+      Alpha: 0.5
+    - Class: rviz_default_plugins/TF
+      Name: TF (robot position)
+      Enabled: true
+      Show Names: true
+      Show Axes: true
+      Show Arrows: false
+      Marker Scale: 1.2
+      Frames:
+        All Enabled: false
+        base_link:
+          Value: true
+        map:
+          Value: true
+        os_sensor:
+          Value: true
+    - Class: rviz_default_plugins/Odometry
+      Name: Trajectory
+      Enabled: true
+      Topic:
+        Value: /lidar_odometry/pose
+        Depth: 500
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Keep: 500
+      Position Tolerance: 0.15
+      Angle Tolerance: 0.15
+      Shape:
+        Shaft Length: 0.15
+        Shaft Radius: 0.03
+        Head Length: 0.08
+        Head Radius: 0.06
+        Color: 90; 220; 130
+        Alpha: 0.8
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: TopDown
+      Target Frame: base_link
+      Scale: 25
+      Angle: 0
+      X: 0
+      Y: 0
+  Value: true
+Window Geometry:
+  Height: 900
+  Width: 1500
+  Displays:
+    collapsed: false
