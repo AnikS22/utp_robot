@@ -28,9 +28,26 @@ Visualization Manager:
       Plane Cell Count: 60
       Color: 45; 50; 58
       Alpha: 0.4
+    # The accumulating map: bringup/map_accum.py voxelises every sweep into the map frame and
+    # republishes the union, so this GROWS as you drive. MOLA's own localmap_points does not --
+    # it is a bounded sliding window that travels with the robot and never gets bigger.
     - Class: rviz_default_plugins/PointCloud2
       Name: MAP being built
       Enabled: true
+      Topic:
+        Value: /map_accum
+        Depth: 1
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Size (m): 0.04
+      Style: Points
+      Color Transformer: AxisColor
+      Axis: Z
+      Decay Time: 0
+      Alpha: 1
+    - Class: rviz_default_plugins/PointCloud2
+      Name: MOLA local map (sliding)
+      Enabled: false
       Topic:
         Value: /lidar_odometry/localmap_points
         Depth: 2
