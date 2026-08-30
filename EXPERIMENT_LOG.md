@@ -1614,3 +1614,101 @@ SEPARATELY from `mola_bridge_ros2`, and installing only the core fails at runtim
    is only because the chassis is off; it resolves when `ranger_base` runs. Which also means: when
    the chassis IS on, there must be exactly one publisher of `odom -> base_link`, or this becomes
    the two-publishers-on-/map bug of 2026-08-21b in a new place.
+
+## 2026-08-30c — the 3D lidar, and the map that Nav2 can actually use
+
+The day's headline: **there is now a real 2D occupancy map of the atrium, and Nav2 is planning on
+it.** Getting there went through a wrong turn worth recording, and three silent failures.
+
+### The wrong turn: MOLA is excellent and was the wrong tool
+
+The Ouster OS0-128 (192.168.1.119, fw 3.1.0) is a transformative upgrade over the A1M8:
+
+| | A1M8 | OS0-128 @ 1024x10 |
+|---|---|---|
+| valid returns per scan | 44 (23% of beams) | **121,367 of 131,072 (92.6%)** |
+| azimuth coverage | ~125 deg permanently dead | full 360, no sparse sectors |
+| IMU | none | 100 Hz |
+
+`mola_lidar_odometry` on it held a parked robot to **0.3 cm and 0.02 deg over 25 s**, which is
+superb. Two things then made it the wrong choice:
+
+1. **It could not keep up.** Measured 1.4-1.5 Hz pose output against a 10 Hz input, i.e. one scan
+   in seven, at 157% CPU with load average 1.99 on 24 cores. Halving the sensor to 512x10 changed
+   nothing (1.47 Hz), so the bottleneck was not point count. At 0.7 s between registered scans ICP
+   cannot track a moving robot -- which is exactly what happened: a real drive left MOLA at the
+   origin with pathStep frozen while wheel odometry showed 1.5 m. `use_mola_gui:=False` was the
+   next thing to try and was never tested.
+2. **MOLA builds a 3D point cloud. Nav2 cannot consume one.** Even with perfect tracking there was
+   a projection step still to write. Hours went into frame rate for a map that was the wrong
+   format.
+
+**The right answer was one step away the whole time.** `/scan_filtered` -- the OS0 cloud projected
+by `pointcloud_to_laserscan` -- carries ~977 valid beams over a full 360 deg. slam_toolbox on that
+produces a `nav_msgs/OccupancyGrid` natively. The only reason 2D SLAM failed here on 2026-08-25 was
+the A1M8's 44 points; that constraint was gone the moment the OS0 was plugged in, and the older,
+simpler tool became the correct one again.
+
+### Three silent failures, all the same shape
+
+Every one presented as a healthy-looking system delivering nothing.
+
+**QoS mismatch.** `pointcloud_to_laserscan` publishes BEST_EFFORT; slam_toolbox subscribes
+RELIABLE. Incompatible in DDS: zero messages delivered, no error anywhere, slam_toolbox silent
+after logging its stack size. `bringup/scan_relay.py` republishes as RELIABLE on `/scan`.
+
+**Lifecycle.** In Jazzy slam_toolbox is a LIFECYCLE node and starts `unconfigured`. It had no
+subscribers beyond `/parameter_events`, `scan_topic` did not read back, and no `/map` or
+`map->odom` appeared. Indistinguishable from a hung node. It needs explicit configure + activate.
+
+**The deadman that never existed.** `config/safety.yaml` marks the autonomous sources (`nav`,
+`servo`) `requires_enable: true`, gated on `/safety/enable`. **Nothing in this repo had ever
+published that topic.** Every autonomous command has been correctly discarded since the mux was
+written; `route_run` only ever drove because it publishes on the teleop channel, which does not
+require the gate. `bringup/deadman.py` is a real hold-to-enable, shaped by the 2026-08-20 runaway:
+positive repeating evidence, so a dropped release expires the lease rather than stranding it open.
+
+Also fixed, same class: Nav2's `sensor_frame: lidar_link` -- a frame this robot does not have --
+would have made the ObservationBuffer drop every scan while every path looked clear.
+
+### The map
+
+    666 x 779 @ 0.05 m  =  33.3 x 39.0 m,  94,311 free cells, 7,316 wall cells
+    maps/atrium2d.pgm + atrium2d.yaml
+
+Nav2 on it: all lifecycle nodes active, global costmap 666x779 with 55,499 lethal cells,
+`localization:=slam` so neither map_server nor AMCL starts (slam_toolbox owns `/map` and
+`map->odom`, and exactly one source may own each). `nav2_params_os0_map.yaml` also changes
+`motion_model: Omni -> DiffDrive`: MPPI-Omni emits strafe and yaw in one twist and the Ranger
+firmware DROPS `angular.z` whenever `linear.y` is non-zero, so Omni commands are truncated on the
+way to the wheels. Isaac can do Omni because it drives the wheel joints directly; this chassis
+cannot.
+
+### GLASS — a hazard, not a blemish
+
+The atrium doors return nothing to the lidar, so they are ABSENT from the map, so Nav2 believes
+that space is free and **will plan a path straight through them**. No costmap tuning changes this:
+the sensor cannot see the obstacle. This is a collision risk and it is why the task is to PRESS the
+plate rather than drive at the door.
+
+### How the session ended
+
+    Aug 30 17:39:02  kernel: r8152 enx00e04c674c60: carrier off
+
+The USB-ethernet cable dropped its link. That one cable carries the lidar (.119), the xArm (.221)
+and the router (.1), so all three vanished at once and every scan topic went silent together. The
+map had been saved at 17:37. The adapter stayed enumerated on USB -- only the ethernet carrier
+went -- so `lsusb` looks fine and is not the check that matters. **Strain-relieve this cable
+before the next long drive**; it has now taken the robot down mid-session twice.
+
+### Still open, in the order that blocks a demo
+
+1. **The angular stall floor is UNVERIFIED.** `Limits` had `v_min` and no `w_min`, so every
+   heading correction was commanded below the rate the 4WS chassis executes -- turns stalled ~0.167
+   rad short of tolerance with `vx = 0`, which is the observed livelock. Fixed with `w_min = 0.20`
+   (251 tests), but the real floor has never been measured. `characterise_twist.py --go --wz` sweep
+   at 0.30 / 0.20 / 0.12 / 0.08: the lowest value that still rotates the body IS `w_min`. Ten
+   minutes, and until it is done a Nav2 goal that plans correctly and does not move is ambiguous.
+2. **Nav2 has never actually driven the robot.** Everything is active and planning; no goal has
+   been executed.
+3. **The press.** Unchanged from 2026-08-29 and still the ICRA deliverable.
