@@ -61,6 +61,9 @@ RATE_HZ = 20.0
 # unattended robot does not keep driving.
 UI_WATCHDOG_S = 2.0
 LEG_TIMEOUT_S = 180.0
+# A clicked goal further than this is a misclick on a zoomed-out map, not an intention. The
+# controller would happily set off across the building at it.
+MAX_CLICK_GOAL_M = 15.0
 STORE = Path(os.environ.get("UTP_WAYPOINTS", "")) if os.environ.get("UTP_WAYPOINTS") \
     else REPO / "maps" / "waypoints.yaml"
 
@@ -76,7 +79,8 @@ class State:
 
     def __init__(self) -> None:
         self._k = threading.Lock()
-        self.goal = None            # name of the waypoint we are driving to, or None
+        self.goal = None            # label of what we are driving to, or None
+        self.goal_xy = None         # (x, y) when the goal was CLICKED rather than named
         self.go = False             # armed by GO, cleared by STOP/arrival/timeout
         self.last_poll = 0.0
         self.started = 0.0
@@ -87,10 +91,21 @@ class State:
     def arm(self, name: str) -> None:
         with self._k:
             self.goal = name
+            self.goal_xy = None
             self.go = True
             self.started = time.monotonic()
             self.status = "driving"
             self.detail = f"driving to {name}"
+
+    def arm_xy(self, x: float, y: float) -> None:
+        """Drive to a point clicked on the map, with no stored waypoint behind it."""
+        with self._k:
+            self.goal = f"({x:.2f}, {y:.2f})"
+            self.goal_xy = (float(x), float(y))
+            self.go = True
+            self.started = time.monotonic()
+            self.status = "driving"
+            self.detail = f"driving to {self.goal}"
 
     def halt(self, why: str) -> None:
         with self._k:
@@ -108,7 +123,8 @@ class State:
 
     def read(self):
         with self._k:
-            return self.goal, self.go, self.last_poll, self.started, self.status, self.detail
+            return (self.goal, self.go, self.last_poll, self.started, self.status, self.detail,
+                    self.goal_xy)
 
     def publish_snapshot(self, d: dict) -> None:
         with self._k:
@@ -172,7 +188,7 @@ class DriveNode(Node):
         return corridor_blocked(self.scan.ranges, self.scan.angle_min, self.scan.angle_increment)
 
     def _tick(self) -> None:
-        goal, go, last_poll, started, _, _ = self.state.read()
+        goal, go, last_poll, started, _, _, goal_xy = self.state.read()
         now = time.monotonic()
         wps = load_waypoints()
 
@@ -189,6 +205,7 @@ class DriveNode(Node):
                               "frame": frame_of(v)} for k, v in wps.items()},
             "scan": self._scan_xy(),
             "goal": goal,
+            "goal_xy": list(goal_xy) if goal_xy else None,
             "driving": bool(go),
         }
         self.state.publish_snapshot(snap)
@@ -201,13 +218,13 @@ class DriveNode(Node):
             self.state.halt("watchdog"); self._stop(); return
         if now - started > LEG_TIMEOUT_S:
             self.state.halt("timeout"); self._stop(); return
-        if goal not in wps:
+        if goal_xy is None and goal not in wps:
             self.state.halt(f"waypoint '{goal}' is gone"); self._stop(); return
         if self.pose is None or not self.src.fresh():
             self.state.halt("pose went stale -- stopped"); self._stop(); return
 
-        w = wps[goal]
-        dist, bearing = to_goal(self.pose[0], self.pose[1], self.pose[2], w["x"], w["y"])
+        gx, gy = goal_xy if goal_xy is not None else (wps[goal]["x"], wps[goal]["y"])
+        dist, bearing = to_goal(self.pose[0], self.pose[1], self.pose[2], gx, gy)
         step = plan_step(dist, bearing, None, self._blocked(), self.lim, self.prev_state)
         self.prev_state = step.state
         if step.state == "arrived":
@@ -268,7 +285,7 @@ PAGE = """<!doctype html><meta charset=utf-8><title>utp drive</title>
  input[type=range]{width:100%}
 </style>
 <header>
-  <h1>utp drive &mdash; click a waypoint, then GO</h1>
+  <h1>utp drive &mdash; click a waypoint or anywhere on the map, then GO</h1>
   <div class=sub>publishes <b>/cmd_vel_teleop</b> &middot; the safety mux owns /cmd_vel, so
     e-stop, arm_stowed and enable still gate everything here</div>
 </header>
@@ -299,7 +316,7 @@ PAGE = """<!doctype html><meta charset=utf-8><title>utp drive</title>
   </div>
 </div>
 <script>
-let S={}, sel=null, cap=1.0, VMAX=null;
+let S={}, sel=null, clickGoal=null, cap=1.0, VMAX=null;
 const $=i=>document.getElementById(i);
 const c=$('c'), g=c.getContext('2d');
 
@@ -316,6 +333,7 @@ function fit(){
 // world -> screen. ROS x is forward/right-handed with y LEFT, so y flips for a screen that
 // grows downward; without this the map is mirrored and every turn looks backwards.
 function T(x,y,f){ return [c.width/2+(x-f.cx)*f.s, c.height/2-(y-f.cy)*f.s]; }
+function Tinv(sx,sy,f){ return [f.cx+(sx-c.width/2)/f.s, f.cy-(sy-c.height/2)/f.s]; }
 
 function draw(){
   g.clearRect(0,0,c.width,c.height);
@@ -340,6 +358,17 @@ function draw(){
     const bad=(w.frame!==S.frame);
     g.fillStyle=isGoal?'#3fb950':(isSel?'#58a6ff':(bad?'#2a2f38':'#39414d')); g.fill();
     g.fillStyle='#8b94a3'; g.font='11px monospace'; g.fillText(k,sx+11,sy+4);
+  }
+  const cg = clickGoal || (S.goal_xy ? {x:S.goal_xy[0], y:S.goal_xy[1]} : null);
+  if(cg){
+    const [sx,sy]=T(cg.x,cg.y,f);
+    g.strokeStyle=S.driving?'#3fb950':'#58a6ff'; g.lineWidth=2;
+    g.beginPath(); g.arc(sx,sy,10,0,7); g.stroke();
+    g.beginPath(); g.moveTo(sx-15,sy); g.lineTo(sx+15,sy);
+    g.moveTo(sx,sy-15); g.lineTo(sx,sy+15); g.stroke();
+    if(S.pose){ const [rx,ry]=T(S.pose[0],S.pose[1],f);
+      g.setLineDash([4,4]); g.strokeStyle='#30465e';
+      g.beginPath(); g.moveTo(rx,ry); g.lineTo(sx,sy); g.stroke(); g.setLineDash([]); }
   }
   if(S.pose){
     const [px,py,pth]=S.pose, [sx,sy]=T(px,py,f);
@@ -386,10 +415,15 @@ async function tick(){
   }
   draw();
 }
-$('go').onclick=async()=>{ if(!sel) return;
-  const r=await fetch('/goto',{method:'POST',body:JSON.stringify({name:sel,cap:cap})});
+$('go').onclick=async()=>{
+  let r;
+  if(clickGoal){ r=await fetch('/goto_xy',{method:'POST',
+        body:JSON.stringify({x:clickGoal.x,y:clickGoal.y,cap:cap})}); }
+  else if(sel){ r=await fetch('/goto',{method:'POST',
+        body:JSON.stringify({name:sel,cap:cap})}); }
+  else return;
   if(!r.ok){ const j=await r.json().catch(()=>({})); setTxt('status', j.why||'refused','bad'); } };
-$('stop').onclick=async()=>{ await fetch('/stop',{method:'POST'}); };
+$('stop').onclick=async()=>{ clickGoal=null; await fetch('/stop',{method:'POST'}); };
 $('spd').oninput=e=>{ cap=e.target.value/100;
   $('spdval').textContent=(VMAX?(VMAX*cap).toFixed(2)+' m/s':(cap*100).toFixed(0)+'%');
   $('spdnote').textContent='applies to the next GO';
@@ -400,8 +434,22 @@ c.onclick=ev=>{
   let best=null,bd=1e9;
   for(const k in (S.waypoints||{})){ const w=S.waypoints[k], [sx,sy]=T(w.x,w.y,f);
     const d=Math.hypot(sx-mx,sy-my); if(d<bd){bd=d;best=k;} }
-  if(best && bd<22){ sel=best; $('go').disabled=false; $('sel').textContent='selected: '+best;
-    [...$('wps').children].forEach(e=>e.classList.toggle('sel', e.dataset.k===best)); draw(); }
+  if(best && bd<22){
+    const w=S.waypoints[best], bad=(w.frame!==S.frame);
+    sel=best; clickGoal=null; $('go').disabled=bad;
+    $('sel').textContent=bad?`${best} is ${w.frame}-frame; robot is in ${S.frame}.`
+                            :'selected: '+best;
+    [...$('wps').children].forEach(e=>e.classList.toggle('sel', e.dataset.k===best));
+  } else {
+    // Empty space: drive to the point itself. No stored waypoint, no frame question -- it was
+    // clicked on a map drawn in the frame the robot is already localized in.
+    const [wx,wy]=Tinv(mx,my,f);
+    clickGoal={x:wx,y:wy}; sel=null; $('go').disabled=false;
+    const d=S.pose?Math.hypot(wx-S.pose[0],wy-S.pose[1]):0;
+    $('sel').textContent=`point ${wx.toFixed(2)}, ${wy.toFixed(2)}  (${d.toFixed(1)} m away)`;
+    [...$('wps').children].forEach(e=>e.classList.remove('sel'));
+  }
+  draw();
 };
 document.addEventListener('keydown',e=>{ if(e.code==='Space'){ e.preventDefault(); $('stop').click(); }});
 setInterval(tick, 200); tick();
@@ -426,7 +474,7 @@ def make_handler(state: State, node: DriveNode, vmax: float):
             if self.path.startswith("/state"):
                 state.poll()
                 snap = state.get_snapshot()
-                goal, go, _, _, status, detail = state.read()
+                goal, go, _, _, status, detail, goal_xy = state.read()
                 snap.update({"status": status, "detail": detail, "goal": goal,
                              "driving": bool(go), "v_max_cli": vmax})
                 self._send(json.dumps(snap).encode(), "application/json")
@@ -470,6 +518,32 @@ def make_handler(state: State, node: DriveNode, vmax: float):
                     return
                 node.set_cap(cap)
                 state.arm(name)
+                self._send(b'{"ok":true}', "application/json")
+                return
+            if self.path == "/goto_xy":
+                # A clicked goal is driven the same way a stored one is: plan_step aims at it and
+                # the corridor veto stops on anything in the way. There is NO PATH PLANNING here
+                # -- this drives at the point, it does not route around obstacles. A click with a
+                # wall in between will turn, advance, and stop blocked. That is the honest
+                # behaviour of a go-to-point controller and it is why Nav2 exists.
+                try:
+                    gx, gy = float(body["x"]), float(body["y"])
+                except (KeyError, TypeError, ValueError):
+                    self._send(b'{"ok":false,"why":"bad point"}', "application/json", 400)
+                    return
+                pose = node.pose
+                if pose is None:
+                    self._send(b'{"ok":false,"why":"no pose"}', "application/json", 409)
+                    return
+                d = math.hypot(gx - pose[0], gy - pose[1])
+                if d > MAX_CLICK_GOAL_M:
+                    self._send(json.dumps({"ok": False, "why":
+                               f"that point is {d:.1f} m away (limit {MAX_CLICK_GOAL_M:.0f} m). "
+                               f"Almost always a misclick on a zoomed-out map."}).encode(),
+                               "application/json", 409)
+                    return
+                node.set_cap(float(body.get("cap") or 1.0))
+                state.arm_xy(gx, gy)
                 self._send(b'{"ok":true}', "application/json")
                 return
             if self.path == "/cap":
