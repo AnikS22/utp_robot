@@ -35,6 +35,18 @@ slam_toolbox:
     use_map_saver: true
     mode: mapping #localization
 
+    # MAP STARTING POSE -- REQUIRED in localization mode, and its absence FAILS SILENTLY-ISH.
+    # Without it slam_toolbox logs one ERROR line ("Map starting pose not specified") and then
+    # comes up ACTIVE anyway, publishing a BRAND NEW empty graph rooted at the robot's feet.
+    # Measured 2026-09-01: saved atrium is 772x855; without this it published 486x585 with the
+    # robot at (0,0). The saved map was never loaded and nothing downstream could tell.
+    #
+    # These are the coordinates of the 'start' waypoint recorded in maps/waypoints.yaml at the
+    # moment atrium was saved, i.e. the robot's parking spot. If the robot is somewhere else when
+    # you start localization, use RViz's "2D Pose Estimate" instead -- a seed that is metres wrong
+    # is worse than none, because the scan matcher will happily converge to the wrong corridor.
+    map_start_pose: [0.2888, -0.4561, -0.5207]
+
     # if you'd like to immediately start continuing a map at a given pose
     # or at the dock, but they are mutually exclusive, if pose is given
     # will use pose

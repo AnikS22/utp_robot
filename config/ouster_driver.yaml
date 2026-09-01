@@ -12,8 +12,13 @@ ouster/os_driver:
     # beams over 360 deg, the 666x779 atrium map -- was taken at 1024. pointcloud_to_laserscan is
     # also configured for ~1024 rays (angle_increment 0.0061 rad in session.sh), so at 512 half
     # the scan's bins are empty for no reason. MUST MATCH config/ouster.yaml; a test asserts it.
-    lidar_mode: '1024x10'
+    lidar_mode: '512x10'
     timestamp_mode: 'TIME_FROM_ROS_TIME'
+    # RNG19_RFL8_SIG16_NIR16. TRIED AND REVERTED 2026-09-01: switching to the low-data-rate
+    # profile RNG15_RFL8_NIR8 made things WORSE, not better -- the driver pads its PointCloud2 to
+    # a fixed layout regardless of the wire profile, and point_step went 16 -> 48 bytes, message
+    # 1.05 -> 3.15 MB, /scan 6.4 -> 4.0 Hz. The UDP profile governs sensor->driver, not
+    # driver->ROS. Do not retry this to save bandwidth; the throughput fix is composition.
     udp_profile_lidar: 'RNG19_RFL8_SIG16_NIR16'
     # The driver publishes base_link->os_sensor itself if these are left default, which would
     # place the sensor at the origin. bringup/lidar3d.sh publishes the real CAD mount pose

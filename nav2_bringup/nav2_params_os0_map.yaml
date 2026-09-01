@@ -96,7 +96,13 @@ planner_server:
 controller_server:
   ros__parameters:
     use_sim_time: false               # [HARDWARE] wall clock; CLAUDE.md forbids sim time on real hardware
-    controller_frequency: 20.0
+    # 10 Hz, NOT 20. MEASURED 2026-09-01 on hardware: at 20 Hz the loop actually ran at 7.2 Hz
+    # and warned every cycle. A controller that misses its deadline two cycles in three delivers
+    # commands at irregular intervals, and on a 4WS chassis that must physically re-steer before
+    # it turns, irregular commands read as JITTER. 10 Hz is a rate this machine hits every time.
+    # It is also honest about the input: /scan arrives at ~6.4 Hz, so a 20 Hz controller was
+    # recomputing twice per cycle on a costmap that had not changed.
+    controller_frequency: 10.0
     enable_stamped_cmd_vel: false     # [NONDEFAULT] contract: /cmd_vel is geometry_msgs/Twist (unstamped); Jazzy defaults to TwistStamped
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.001
@@ -125,9 +131,15 @@ controller_server:
       # rectangular footprint so it threads gaps a circular check would reject. Real-world-valid (a
       # production Nav2 controller used exactly for indoor doorway transit).
       plugin: "nav2_mppi_controller::MPPIController"
-      time_steps: 56
-      model_dt: 0.05                  # == 1/controller_frequency (20 Hz)
-      batch_size: 2000
+      # HORIZON 4.0 s (40 x 0.1). Longer in TIME than the old 2.8 s while costing a third of the
+      # compute, which matters on a base with a ~1.5 s steering lag: MPPI has to see far enough
+      # ahead that it is not still reacting to a corner it is already in.
+      time_steps: 40
+      model_dt: 0.1                   # == 1/controller_frequency (10 Hz)
+      # 1000, halved. With consider_footprint the cost critic runs a full rectangular footprint
+      # check per sample per step; 2000 x 56 was 112,000 of them per cycle and it did not fit in
+      # 50 ms. 1000 x 40 is 40,000 in a 100 ms budget.
+      batch_size: 1000
       vx_std: 0.2
       vy_std: 0.2
       wz_std: 0.4
@@ -141,7 +153,7 @@ controller_server:
       az_max: 3.0
       iteration_count: 1
       prune_distance: 1.7
-      transform_tolerance: 0.2        # DDS bridge jitter
+      transform_tolerance: 1.0        # DDS bridge jitter
       temperature: 0.3
       gamma: 0.015
       motion_model: "DiffDrive"      # [OS0] vx+wz only -- the firmware DROPS angular.z whenever
@@ -226,7 +238,7 @@ behavior_server:
     local_frame: odom
     global_frame: map
     robot_base_frame: base_link
-    transform_tolerance: 0.2
+    transform_tolerance: 1.0
     simulate_ahead_time: 2.0
     max_rotational_vel: 1.0
     min_rotational_vel: 0.4
@@ -270,7 +282,7 @@ global_costmap:
       publish_frequency: 1.0
       global_frame: map
       robot_base_frame: base_link
-      transform_tolerance: 0.2        # [NONDEFAULT] DDS bridge jitter
+      transform_tolerance: 1.0        # [NONDEFAULT] DDS bridge jitter
       track_unknown_space: true
       # Rectangular footprint, base_link at center: length 0.72 (x), width 0.50 (y)
       footprint: "[[0.36, 0.25], [0.36, -0.25], [-0.36, -0.25], [-0.36, 0.25]]"  # [NONDEFAULT]
@@ -331,7 +343,7 @@ local_costmap:
       publish_frequency: 2.0
       global_frame: odom
       robot_base_frame: base_link
-      transform_tolerance: 0.2        # [NONDEFAULT]
+      transform_tolerance: 1.0        # [NONDEFAULT]
       rolling_window: true
       width: 4                        # [NONDEFAULT] 4 m window — enough for 1 m corridors, cheap
       height: 4

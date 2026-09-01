@@ -26,7 +26,18 @@ host: "192.168.1.119"
 # sensor. Pin the value so the failure cannot come back silently.
 udp_dest: "192.168.1.100"
 
-lidar_mode: "1024x10"           # 1024 columns x 128 beams @ 10 Hz = 131,072 points/scan
+# 512x10 = 512 columns x 128 beams @ 10 Hz = 65,536 points/scan.
+#
+# MEASURED 2026-09-01, and this is a TRANSPORT limit, not a sensor or CPU one. At 1024x10 the
+# PointCloud2 is ~2 MB per message and pointcloud_to_laserscan received only 1.5 of the 10 Hz the
+# driver published -- while burning 1.6% of ONE core, i.e. it was not dropping messages it had, it
+# was never getting them. Large messages over the default DDS transport between two processes.
+# At 512x10 the message halves and the chain delivers.
+#
+# THE REAL FIX IS COMPOSITION, not resolution: run os_driver and pointcloud_to_laserscan in one
+# component container and the cloud is passed by pointer, never serialized. Until that is done,
+# 512x10 is what works, and 977 valid beams in the 2D slice is already 20x what the A1M8 gave.
+lidar_mode: "512x10"
 timestamp_mode: "TIME_FROM_INTERNAL_OSC"
 
 sensor_frame: "os_sensor"

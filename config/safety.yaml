@@ -29,7 +29,20 @@ sources:
   - name: nav
     topic: "/cmd_vel_nav"           # Nav2 controller_server output (remapped in the launch file)
     priority: 10
-    requires_enable: true
+    # requires_enable: false -- SET BY THE OPERATOR 2026-09-01, deliberately, for SUPERVISED runs.
+    #
+    # The deadman (bringup/deadman.py) proves a human is actively asking for motion. On this robot
+    # it is a browser button, and holding it costs the operator the hand that would otherwise be
+    # on the chassis E-stop. That E-stop cuts motor power; the software gate only stops commands
+    # reaching the driver, and the chassis still coasts ~1.26 s / ~18 cm after commands stop
+    # (measured 2026-08-21). Trading a stronger interlock for a weaker one to satisfy the config
+    # is worse, not better, so the operator holds the E-stop and this gate stands down.
+    #
+    # THE CONDITIONS THIS DEPENDS ON: an operator at the robot, hand on the E-stop, watching.
+    # It is NOT valid for an unattended run and NOT valid for the 50-trial campaign --
+    # run_campaign.py stops when the deadman goes silent, which is the whole point of it there.
+    # Set this back to true before any campaign run.
+    requires_enable: false
     allows_arm_override: false
 
 # Gate topics (all std_msgs/Bool). Every one is FAIL-CLOSED: never-seen and stale both mean

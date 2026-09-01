@@ -1,0 +1,259 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 0
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /SLAM MAP (this is the map)1
+      Splitter Ratio: 0.5
+    Tree Height: 700
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Polygon
+      Name: ROBOT (footprint)
+      Enabled: true
+      Topic:
+        Value: /local_costmap/published_footprint
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Color: 255; 0; 255
+      Alpha: 1
+      Value: true
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Color: 160; 160; 164
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Plane: XY
+      Plane Cell Count: 60
+      Reference Frame: <Fixed Frame>
+      Alpha: 0.3
+      Value: true
+    # THE MAP. slam_toolbox publishes this OccupancyGrid on /map and grows it as you drive.
+    # White = free, black = wall, grey = never seen. This is the thing being built.
+    # QoS MUST be transient_local + reliable: /map is published latched, once per update, and a
+    # volatile subscriber sees nothing until the next update and looks broken.
+    - Class: rviz_default_plugins/Map
+      Name: SLAM MAP (this is the map)
+      Enabled: true
+      Topic:
+        Value: /map
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Alpha: 1
+      Color Scheme: map
+      Draw Behind: true
+      Update Topic:
+        Value: /map_updates
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Value: true
+    # What slam_toolbox is matching RIGHT NOW. If this is empty the map cannot grow, and that is
+    # the first thing to check when the map stops changing.
+    - Class: rviz_default_plugins/LaserScan
+      Name: Live scan (what SLAM matches)
+      Enabled: true
+      Topic:
+        Value: /scan
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Size (m): 0.04
+      Style: Points
+      Color: 255; 85; 0
+      Color Transformer: FlatColor
+      Alpha: 1
+      Decay Time: 0.25
+      Position Transformer: XYZ
+      Value: true
+    # Where slam_toolbox believes the robot is. If this jumps, the scan matcher lost its pose --
+    # back up and re-drive that stretch slowly.
+    - Class: rviz_default_plugins/TF
+      Name: TF (robot pose)
+      Enabled: true
+      Frame Timeout: 15
+      Marker Scale: 2.0
+      Show Arrows: false
+      Show Axes: true
+      Show Names: true
+      Frames:
+        All Enabled: false
+        base_link:
+          Value: true
+        map:
+          Value: true
+        odom:
+          Value: true
+        os_lidar:
+          Value: true
+      Tree:
+        map:
+          odom:
+            base_link:
+              os_sensor:
+                os_lidar:
+                  {}
+      Update Interval: 0
+      Value: true
+    # The driven path, in the MAP frame. A loop that does not close visibly here did not close
+    # for the scan matcher either.
+    - Class: rviz_default_plugins/Odometry
+      Name: Driven path
+      Enabled: true
+      Topic:
+        Value: /odom
+        Depth: 200
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Keep: 300
+      Position Tolerance: 0.15
+      Angle Tolerance: 0.2
+      Shape:
+        Alpha: 0.7
+        Color: 0; 200; 255
+        Head Length: 0.08
+        Head Radius: 0.05
+        Shaft Length: 0.2
+        Shaft Radius: 0.02
+        Value: Arrow
+      Covariance:
+        Value: false
+      Value: true
+    # Off by default: 65k points at 10 Hz is the single most expensive thing RViz can draw here,
+    # and it tells you nothing the 2D scan does not while mapping. Tick it on to check mounting.
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Live OS0 3D sweep (off - costly)
+      Enabled: false
+      Topic:
+        Value: /ouster/points
+        Depth: 2
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Size (m): 0.02
+      Style: Points
+      Color Transformer: Intensity
+      Decay Time: 0.25
+      Position Transformer: XYZ
+      Value: false
+    # WHAT NAV2 DECIDED. /plan is the global route over the saved map; /local_plan is what MPPI
+    # is actually tracking right now. If /plan appears and the robot does not move, the plan is
+    # fine and the problem is downstream -- the mux, the enable gate, or the chassis.
+    - Class: rviz_default_plugins/Path
+      Name: Nav2 global plan
+      Enabled: true
+      Topic:
+        Value: /plan
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Color: 0; 255; 0
+      Line Style: Lines
+      Alpha: 1
+      Value: true
+    - Class: rviz_default_plugins/Path
+      Name: Nav2 local plan
+      Enabled: true
+      Topic:
+        Value: /local_plan
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Color: 255; 255; 0
+      Line Style: Lines
+      Alpha: 1
+      Value: true
+    # THE COSTMAP IS WHAT NAV2 ACTUALLY BELIEVES, and it is not the same as the map. A goal that
+    # lands in an inflated cell is unplannable and Nav2 rejects it -- this display is how you see
+    # that before you wonder why nothing happened. Off by default; tick on when a goal is refused.
+    - Class: rviz_default_plugins/Map
+      Name: Global costmap (off - check refused goals)
+      Enabled: false
+      Topic:
+        Value: /global_costmap/costmap
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Alpha: 0.5
+      Color Scheme: costmap
+      Draw Behind: false
+      Value: false
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 20
+  Name: root
+  Tools:
+    # DROP A GOAL AND THE ROBOT DRIVES THERE. Click "2D Goal Pose" in the toolbar, then click on
+    # the map and DRAG to set which way the robot should face when it arrives. It publishes
+    # /goal_pose, bt_navigator picks it up, and that is the whole path -- no script in between.
+    # "2D Pose Estimate" -- tell slam_toolbox where the robot actually is. Needed whenever the
+    # robot is not parked where config/slam_os0.yaml's map_start_pose says, because a localization
+    # session that starts from the wrong seed converges confidently to the wrong place.
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Value: /initialpose
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /goal_pose
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+    # "Publish Point" just reports a coordinate on /clicked_point without commanding anything.
+    # Use it to show a location to someone before committing the robot to drive to it.
+    - Class: rviz_default_plugins/PublishPoint
+      Single click: true
+      Topic:
+        Value: /clicked_point
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: TopDown
+      Target Frame: base_link
+      Scale: 26
+      Angle: 0
+      X: 0
+      Y: 0
+      Invert Z Axis: false
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 1000
+  Width: 1600
+  Hide Left Dock: false
+  Hide Right Dock: true

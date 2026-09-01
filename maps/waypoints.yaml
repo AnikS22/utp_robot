@@ -1,2 +1,17 @@
-# Waypoints. frame: absent means odom. See safety/map_frame.py.
-{}
+# Waypoints. The 'frame' field says which frame each one is in; ABSENT MEANS ODOM,
+# because every waypoint recorded before map support existed is an odom waypoint.
+#
+# frame: odom -- only meaningful within one continuous run of the ranger
+# driver: restarting it re-zeros odom and silently invalidates every entry here.
+# The 'odom_session' field is how you tell: the DDS GID of the /odom publisher, a new
+# value for every driver instance. goto and route_run REFUSE a waypoint whose session
+# does not match the running one. 'odom_epoch' is wall-clock provenance only -- nothing
+# reads it. See safety/waypoint_frame.py.
+start:
+  frame: map
+  map_name: atrium
+  mola_session: 010fa575ab3b4f7a
+  odom_epoch: 1788279689
+  x: 0.2888
+  y: -0.4561
+  yaw: -0.5207
