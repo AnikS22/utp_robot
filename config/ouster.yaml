@@ -69,9 +69,17 @@ mount:
 # Heights are in BASE_LINK, whose origin sits on the chassis deck 0.345 m above the floor
 # (docs/CALIBRATION.md). So this band is 0.545-1.545 m above the ground: walls and door frames,
 # above the floor and below the ceiling.
+# THESE VALUES ARE MIRRORED AS FLAGS IN bringup/session.sh, WHICH IS WHAT ACTUALLY RUNS. Nothing
+# reads this block at runtime -- session.sh passes them to pointcloud_to_laserscan directly. They
+# drifted apart once already (range_min_m said 0.40 here while session.sh used 0.50), so
+# tests/test_map_persistence.py now asserts the two agree. Change both, or the test fails.
+#
+# range_min is the ONLY thing keeping the chassis out of the map. slam_toolbox's min_laser_range
+# is INERT on Jazzy -- the node never declares it, verified by reading the parameter back off a
+# running node on 2026-09-01 ("Parameter not set"). See config/slam_os0.yaml.
 scan_slice:
   min_height_m: 0.20
   max_height_m: 1.20
   angle_increment_deg: 0.35     # ~1024 rays over 360 deg, matching the sensor's native columns
-  range_min_m: 0.40             # inside this is the robot's own superstructure
+  range_min_m: 0.50             # inside this is the robot's own superstructure
   range_max_m: 40.0

@@ -246,6 +246,40 @@ def test_the_chassis_is_excluded_by_the_projection_not_by_min_laser_range():
         "slam_os0.yaml must say min_laser_range does nothing, or someone will rely on it"
 
 
+def test_the_scan_slice_config_matches_what_session_sh_actually_passes():
+    """config/ouster.yaml documents the 2D slice; session.sh passes it as flags. Nothing reads the
+    config at runtime, so the two can drift apart while the config keeps reading as authoritative.
+
+    They HAD drifted: range_min_m said 0.40 while session.sh used 0.50 (2026-09-01). Nobody was
+    hurt because session.sh is the one that runs, but the next person to tune the slice would have
+    edited the file that does nothing and measured no change."""
+    import yaml
+    slice_cfg = yaml.safe_load((REPO / "config" / "ouster.yaml").read_text())["scan_slice"]
+    src = (REPO / "bringup" / "session.sh").read_text()
+
+    def flag(name):
+        line = next(l for l in src.splitlines() if f"{name}:=" in l)
+        return float(line.split(f"{name}:=")[1].split()[0])
+
+    assert flag("range_min") == slice_cfg["range_min_m"]
+    assert flag("range_max") == slice_cfg["range_max_m"]
+    assert flag("min_height") == slice_cfg["min_height_m"]
+    assert flag("max_height") == slice_cfg["max_height_m"]
+
+
+def test_the_two_ouster_configs_agree_on_lidar_mode():
+    """ouster_driver.yaml is what the driver loads; ouster.yaml is what everyone READS. A stale
+    512x10 in the driver file halves the sensor's horizontal resolution while the documented
+    config still says 1024x10 -- and the projection in session.sh is configured for ~1024 rays,
+    so half the scan's bins would be empty with nothing reporting it."""
+    import yaml
+    documented = yaml.safe_load((REPO / "config" / "ouster.yaml").read_text())["lidar_mode"]
+    driver = yaml.safe_load((REPO / "config" / "ouster_driver.yaml").read_text())
+    effective = driver["ouster/os_driver"]["ros__parameters"]["lidar_mode"]
+    assert effective == documented, (
+        f"ouster_driver.yaml runs {effective} but ouster.yaml documents {documented}")
+
+
 def test_the_live_scan_chain_is_one_chain():
     """/scan_mapping belonged to the retired A1M8 gate. A params file still asking for it would
     leave slam_toolbox subscribed to a topic nobody publishes — /map never appears and the node

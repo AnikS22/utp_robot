@@ -13,6 +13,7 @@ non-portable coordinate is exactly the failure that a 50-trial session cannot su
 from __future__ import annotations
 
 import ast
+import os
 import re
 import subprocess
 import sys
@@ -68,6 +69,12 @@ def _no_rclpy() -> bool:
 
 
 def _run_nav2_goto(args, env=None):
+    # ROS_DOMAIN_ID must be set, or bringup/_ros_env.require_domain() exits 1 before the script
+    # reaches any of its own logic -- correctly, since domain 0 is an empty graph. Without this
+    # the test passes when ROS is unsourced (it skips) and fails when it is sourced, measuring
+    # the shell rather than nav2_goto.
+    if env is None:
+        env = {**os.environ, "ROS_DOMAIN_ID": os.environ.get("ROS_DOMAIN_ID", "9")}
     return subprocess.run([sys.executable, str(REPO / "bringup" / "nav2_goto.py")] + args,
                           capture_output=True, text=True, timeout=60, cwd=str(REPO), env=env)
 

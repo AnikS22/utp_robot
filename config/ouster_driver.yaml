@@ -6,7 +6,13 @@ ouster/os_driver:
     # MUST be this laptop on the sensor's subnet. The sensor was found configured to stream to
     # 192.168.1.106 -- not this machine -- while reporting "status": "RUNNING" over HTTP.
     udp_dest: '192.168.1.100'
-    lidar_mode: '512x10'
+    # 1024x10. It was dropped to 512x10 on 2026-08-30 while chasing MOLA-LO's frame rate; that
+    # halved the sensor's horizontal resolution and did NOT help (1.4 Hz before and after), and
+    # MOLA is no longer in the stack. Every measurement this sensor is justified by -- 977 valid
+    # beams over 360 deg, the 666x779 atrium map -- was taken at 1024. pointcloud_to_laserscan is
+    # also configured for ~1024 rays (angle_increment 0.0061 rad in session.sh), so at 512 half
+    # the scan's bins are empty for no reason. MUST MATCH config/ouster.yaml; a test asserts it.
+    lidar_mode: '1024x10'
     timestamp_mode: 'TIME_FROM_ROS_TIME'
     udp_profile_lidar: 'RNG19_RFL8_SIG16_NIR16'
     # The driver publishes base_link->os_sensor itself if these are left default, which would
