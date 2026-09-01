@@ -68,6 +68,15 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="run every stage; move nothing on the robot")
     ap.add_argument("--out", type=Path, default=REPO / "captures" / "trials.jsonl")
+    # THE ROVER-LAPTOP CONFIG MUST BE PASSED EXPLICITLY (2026-08-31). Config.load() with no
+    # argument resolves config_dir as `Path(utp/common/config.py).parents[2]/"config"` -- i.e. the
+    # SIM repo's config -- so config/pipeline/ was dead: its detectors.yaml cuda:0 override (this
+    # laptop has ONE GPU; a literal cuda:1 raises at .to()) and its `keyfree` matrix were both
+    # silently ignored. config/pipeline/README.md already says the dir is "passed via
+    # --config <this dir>"; nothing passed it.
+    ap.add_argument("--config", type=Path, default=Path(os.environ.get("UTP_CONFIG_DIR",
+                    REPO / "config" / "pipeline")),
+                    help="pipeline config dir (default: this repo's rover-laptop override copy)")
     a = ap.parse_args()
 
     load_env()
@@ -76,7 +85,11 @@ def main() -> int:
     from utp.pipeline.fsm import run_trial
     from utp.pipeline.registry import build_modules
 
-    cfg = Config.load()
+    if not (a.config / "methods.yaml").is_file():
+        print(f"config dir has no methods.yaml: {a.config}", file=sys.stderr)
+        return 2
+    cfg = Config.load(a.config)
+    print(f"[run_trial] config dir: {a.config}")
     try:
         method = cfg.method(a.method)
     except KeyError as e:
