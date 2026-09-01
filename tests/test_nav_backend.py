@@ -124,3 +124,29 @@ def test_timeout_and_crash_have_distinct_exit_codes():
     src = _source("nav2_goto.py")
     assert "rc = 6" in src and "TIMEOUT" in src
     assert not re.search(r"rc = 1\b", src), "1 must not be a real navigation outcome"
+
+
+def test_behaviour_tree_paths_are_rewritten_at_launch():
+    """nav2_params_os0_map.yaml hard-codes bt XML paths inside the SIM checkout. On the rover
+    laptop that directory does not exist, bt_navigator fails to load its tree, and Nav2 comes up
+    looking healthy while navigate_to_pose never works — the silent half-failure docs/NAV2.md
+    warns about. session.sh must rewrite both paths to this repo's own copies before launching."""
+    src = (REPO / "bringup" / "session.sh").read_text()
+    assert "default_nav_to_pose_bt_xml" in src and "default_nav_through_poses_bt_xml" in src, \
+        "both tree paths must be rewritten, not just the first"
+    assert "behaviour-tree path rewrite failed" in src, \
+        "the rewrite must be verified, not assumed — a failed sed would launch the original paths"
+    for f in ("navigate_to_pose_no_spin.xml", "navigate_through_poses_no_spin.xml"):
+        assert (REPO / "nav2_bringup" / "behavior_trees" / f).is_file(), \
+            f"this repo must ship its own {f}"
+
+
+def test_params_still_disable_spin_recovery():
+    """The high-CoM base with the arm flips if it spins in place, so `spin` is deliberately absent
+    from behavior_plugins and the trees are the _no_spin variants. Guard both."""
+    params = (REPO / "nav2_bringup" / "nav2_params_os0_map.yaml").read_text()
+    # Check the behavior_plugins LIST, not the whole file — a comment reading `NO "spin"` is
+    # documentation, not configuration.
+    plugins = next(l for l in params.splitlines() if "behavior_plugins:" in l)
+    assert "spin" not in plugins, f"spin must not be a recovery plugin — the base flips: {plugins}"
+    assert "no_spin" in params, "the no-spin behaviour trees must be selected"

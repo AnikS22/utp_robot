@@ -167,9 +167,26 @@ start_nav() {
     || die "TF map->odom missing — slam_toolbox has not localized into the map yet. Drive a few
         metres so it can match, then re-run."
   echo "  TF map->odom ok (localized)"
+  # THE BEHAVIOUR-TREE PATHS IN THE PARAMS ARE ABSOLUTE AND POINT AT THE SIM CHECKOUT.
+  # nav2_params_os0_map.yaml carries
+  #   default_nav_to_pose_bt_xml: "/home/<someone>/Desktop/Unlocking_the_path/nav2_bringup/..."
+  # which is a path on the WORKSTATION. On the rover laptop it does not exist, bt_navigator fails
+  # to load its tree, and Nav2 comes up looking healthy while navigate_to_pose never works --
+  # exactly the silent half-failure docs/NAV2.md warns about. This repo ships its own copies of
+  # both trees, so rewrite the two lines to point at them, wherever this repo happens to live.
+  RUNTIME_PARAMS=/tmp/utp_nav2_params_runtime.yaml
+  sed -E "s#(default_nav_to_pose_bt_xml:).*#\1 \"$ROOT/nav2_bringup/behavior_trees/navigate_to_pose_no_spin.xml\"#; \
+          s#(default_nav_through_poses_bt_xml:).*#\1 \"$ROOT/nav2_bringup/behavior_trees/navigate_through_poses_no_spin.xml\"#" \
+      "$ROOT/nav2_bringup/nav2_params_os0_map.yaml" > "$RUNTIME_PARAMS"
+  for f in navigate_to_pose_no_spin navigate_through_poses_no_spin; do
+    [ -f "$ROOT/nav2_bringup/behavior_trees/$f.xml" ] || die "missing behaviour tree $f.xml"
+  done
+  grep -q "$ROOT/nav2_bringup/behavior_trees" "$RUNTIME_PARAMS" \
+    || die "behaviour-tree path rewrite failed — bt_navigator would load nothing"
+  echo "  behaviour trees -> $ROOT/nav2_bringup/behavior_trees (rewritten from the sim path)"
   if ! ros2 node list 2>/dev/null | grep -q bt_navigator; then
     bg ros2 launch "$ROOT/nav2_bringup/ranger_nav.launch.py" \
-       params_file:="$ROOT/nav2_bringup/nav2_params_os0_map.yaml" localization:=slam
+       params_file:="$RUNTIME_PARAMS" localization:=slam
     sleep 8
   fi
   for i in $(seq 1 30); do
