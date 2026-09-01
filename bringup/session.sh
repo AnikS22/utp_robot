@@ -137,9 +137,19 @@ if [ "$cmd" = "map" ]; then
   STATE=$(ros2 lifecycle get /slam_toolbox 2>/dev/null | head -1)
   echo "  slam_toolbox: ${STATE:-unknown}  (must be active)"
   waitfor 30 /map || die "no /map — slam_toolbox not activated, or /scan not reaching it"
-  echo "  /map ok. Drive the loop slowly with the teleop, then:"
-  echo "      bash bringup/map_persist.sh <name>"
-  echo "  Watch it fill: python3 bringup/map_watch.py"
+  echo "  /map ok."
+  echo
+  echo "  DRIVE THE FULL LOOP SLOWLY with the teleop -- and CLOSE IT, returning past where you"
+  echo "  started. slam_toolbox only corrects accumulated drift when it recognises a place it has"
+  echo "  already seen; an out-and-back gives you a map that is subtly bent, and every waypoint"
+  echo "  inherits the bend. Watch it fill:  python3 bringup/map_watch.py"
+  echo
+  echo "  Then, WITHOUT stopping slam_toolbox:"
+  echo "      bash bringup/map_persist.sh <name>      # grid + pose graph + .loaded_map"
+  echo "      python3 bringup/waypoints.py record start  --frame map"
+  echo "      python3 bringup/waypoints.py record door   --frame map"
+  echo "      python3 bringup/waypoints.py record button --frame map"
+  echo "  Waypoints MUST be recorded while a named map is loaded, or nav2_goto refuses them."
   exit 0
 fi
 
@@ -148,6 +158,18 @@ MAP_NAME=${MAP_NAME:-atrium2d}
 start_nav() {
   say "5/6  localization + Nav2 on the SAVED map '$MAP_NAME'"
   [ -f "maps/$MAP_NAME.yaml" ] || die "maps/$MAP_NAME.yaml not found. Make one: bash bringup/session.sh map"
+  # A .pgm/.yaml pair is NOT a map you can relocalize into. slam_toolbox's `mode: localization`
+  # deserializes map_file_name as <name>.posegraph + <name>.data; given only the grid it comes up
+  # ACTIVE, publishes a /map, and silently starts a brand-new graph whose origin is wherever the
+  # robot is standing -- i.e. exactly the fresh-SLAM frame safety/map_frame.py exists to refuse,
+  # except now wearing the saved map's name. Every waypoint would be off by the startup offset.
+  for ext in posegraph data; do
+    [ -f "maps/$MAP_NAME.$ext" ] || die "maps/$MAP_NAME.$ext is missing, so '$MAP_NAME' cannot be
+        relocalized into -- only drawn. Re-map and save with bringup/map_persist.sh, which writes
+        the pose graph as well as the grid:
+            bash bringup/session.sh map
+            bash bringup/map_persist.sh $MAP_NAME"
+  done
   if ! alive /map; then
     # LOCALIZATION mode, not mapping: 50 passes through the same corridor must not keep rewriting
     # the map underneath the waypoints. slam_toolbox owns BOTH /map and map->odom here, which is
@@ -167,6 +189,29 @@ start_nav() {
     || die "TF map->odom missing — slam_toolbox has not localized into the map yet. Drive a few
         metres so it can match, then re-run."
   echo "  TF map->odom ok (localized)"
+  # Record WHICH named map is live and in WHICH slam session. Without this every
+  # `waypoints.py record --frame map` is stored nameless, and nav2_goto.py then refuses to drive
+  # to it -- correctly, because a nameless recording is not portable. The session id is what stops
+  # the file going stale after a slam_toolbox restart.
+  SESS="$(python3 - "$ROOT" <<'PYEOF' | tail -1
+import sys, time
+sys.path.insert(0, sys.argv[1] + "/bringup")
+import rclpy
+from rclpy.node import Node
+from pose_source import slam_session_id
+rclpy.init(); n = Node("utp_session_slam_probe")
+try:
+    end = time.monotonic() + 3.0; sid = None
+    while time.monotonic() < end and sid is None:
+        rclpy.spin_once(n, timeout_sec=0.1); sid = slam_session_id(n)
+    print(sid or "")
+finally:
+    n.destroy_node(); rclpy.shutdown()
+PYEOF
+)"
+  [ -n "$SESS" ] || die "cannot identify the slam session (is exactly one node publishing /map?)"
+  printf '%s %s\n' "$MAP_NAME" "$SESS" > "$ROOT/maps/.loaded_map"
+  echo "  maps/.loaded_map -> $MAP_NAME [slam ${SESS:0:8}]"
   # THE BEHAVIOUR-TREE PATHS IN THE PARAMS ARE ABSOLUTE AND POINT AT THE SIM CHECKOUT.
   # nav2_params_os0_map.yaml carries
   #   default_nav_to_pose_bt_xml: "/home/<someone>/Desktop/Unlocking_the_path/nav2_bringup/..."

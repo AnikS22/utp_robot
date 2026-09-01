@@ -36,6 +36,11 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 MOLA_POSE_TOPIC = "/lidar_odometry/pose"
+SLAM_MAP_TOPIC = "/map"
+# The stack that actually runs 50 trials is slam_toolbox, not MOLA (MOLA produced 1.4 Hz against a
+# 10 Hz input and was rejected). Both are supported here because both publish a `map` frame, and
+# the session id has to identify WHICHEVER one is running -- see slam_session_id.
+SLAM_POSE_TOPICS = (SLAM_MAP_TOPIC, MOLA_POSE_TOPIC)
 MAP_FRAME = "map"
 BASE_FRAME = "base_link"
 ODOM_TOPIC = "/odom"
@@ -46,13 +51,8 @@ def yaw_of(q) -> float:
     return math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
 
 
-def mola_session_id(node, topic: str = MOLA_POSE_TOPIC) -> str | None:
-    """Short stable id for the running MOLA instance, or None if it is not publishing.
-
-    Same trick and same caveats as odom_session.odom_session_id: the DDS GID of the publisher is
-    new for every instance, so it changes exactly when MOLA restarts -- which is exactly when a
-    fresh (unloaded) map frame gets a new origin. None on zero OR multiple publishers.
-    """
+def _publisher_gid(node, topic: str) -> str | None:
+    """DDS GID of the single publisher on ``topic``, or None on zero OR multiple publishers."""
     try:
         infos = node.get_publishers_info_by_topic(topic)
     except Exception:
@@ -60,6 +60,32 @@ def mola_session_id(node, topic: str = MOLA_POSE_TOPIC) -> str | None:
     if len(infos) != 1:
         return None
     return bytes(infos[0].endpoint_gid).hex()[:16]
+
+
+def slam_session_id(node) -> str | None:
+    """Short stable id for the RUNNING SLAM instance, whichever one it is, or None if none is.
+
+    Same trick and same caveats as odom_session.odom_session_id: the DDS GID of the publisher is
+    new for every instance, so it changes exactly when SLAM restarts -- which is exactly when a
+    fresh (unloaded) map frame gets a new origin.
+
+    WHY THIS IS NOT MOLA-ONLY. It was, and that made the whole map-frame path unreachable on the
+    stack we actually run: session.sh brings up slam_toolbox, nothing publishes
+    /lidar_odometry/pose, so `waypoints.py record --frame map` refused every recording and
+    nav2_goto.py then refused every waypoint for having no map name. The map frame existed and was
+    healthy the entire time. slam_toolbox is checked FIRST because it is the primary stack.
+    """
+    for topic in SLAM_POSE_TOPICS:
+        gid = _publisher_gid(node, topic)
+        if gid is not None:
+            return gid
+    return None
+
+
+# Back-compat alias: the stored waypoint key is still `mola_session`, and renaming it would
+# invalidate every waypoint already on disk for no gain.
+def mola_session_id(node, topic: str = MOLA_POSE_TOPIC) -> str | None:
+    return slam_session_id(node)
 
 
 LOADED_MAP_FILE = pathlib.Path(__file__).resolve().parent.parent / "maps" / ".loaded_map"
@@ -92,8 +118,8 @@ def current_map_name(node=None) -> str | None:
     name = parts[0]
     loaded_session = parts[1] if len(parts) > 1 else None
     if node is not None and loaded_session is not None:
-        if mola_session_id(node) != loaded_session:
-            return None            # stale: MOLA restarted since the map was loaded
+        if slam_session_id(node) != loaded_session:
+            return None            # stale: SLAM restarted since the map was loaded
     return name
 
 
@@ -140,19 +166,21 @@ class PoseSource:
             if self._map_available():
                 self.frame = MAP_FRAME
                 self._wire_map()
-                sess = mola_session_id(self.node)
+                sess = slam_session_id(self.node)
                 mp = current_map_name(self.node)
                 where = f"saved map '{mp}'" if mp else "a FRESH map frame (no saved map loaded)"
                 self.description = (f"pose from TF {MAP_FRAME} -> {BASE_FRAME}, in {where}"
-                                    f" [mola {(sess or '?')[:8]}]")
+                                    f" [slam {(sess or '?')[:8]}]")
                 return True, self.description
             if want == "map":
                 return False, (
                     f"--frame map was requested but there is no {MAP_FRAME} -> {BASE_FRAME} "
                     f"transform.\n"
-                    f"  MOLA publishes it only once it can resolve odom -> base_link, so the "
-                    f"CHASSIS must be running too, not just the lidar.\n"
-                    f"  Check: ros2 topic echo {MOLA_POSE_TOPIC} --once")
+                    f"  SLAM publishes map -> odom only once it can also resolve odom -> "
+                    f"base_link, so the CHASSIS must be running too, not just the lidar.\n"
+                    f"  Check: ros2 run tf2_ros tf2_echo {MAP_FRAME} {BASE_FRAME}\n"
+                    f"  If slam_toolbox is up but silent it is probably still `unconfigured`: "
+                    f"ros2 lifecycle get /slam_toolbox")
             # auto: fall through to odom, loudly
             self.frame = ODOM_TOPIC and "odom"
             self._wire_odom()
