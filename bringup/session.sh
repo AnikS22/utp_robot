@@ -9,17 +9,21 @@
 #
 # WHAT NEEDS WHAT — read this once, it saves an afternoon.
 #
-#   The PIPELINE does NOT use SLAM or Nav2. RosWorld.navigate_to_goal drives with
-#   `waypoints.py goto --go`, i.e. ODOMETRY WAYPOINTS, and the visual servo closes the last metre
-#   (measured to 3 mm across four runs). This is deliberate: route_run.py records that
-#   slam_toolbox could not hold a pose in this building, so accuracy was moved to the one place it
-#   had been measured. A map is therefore OPTIONAL for running trials.
+#   THE LEG runs on the MAP via Nav2. The LAST METRE runs on odom. That split is deliberate and
+#   is docs/NAV2.md's: "an AMCL correction mid-press would move the target under the arm." So
+#   Nav2 plans across the saved map to the door; approach_blockage, the look ladder and the press
+#   chain stay in odom where motion is smooth and continuous, and the visual servo closes the gap
+#   (measured to 3 mm across four runs).
 #
-#   Keep the map for what it is genuinely good for: seeing where the robot is while you watch,
-#   and the OS0 finally makes it viable (977 valid beams vs the A1M8's 44). But do NOT block a
-#   trial session on getting SLAM perfect. If you want the pipeline to plan with Nav2 instead of
-#   waypoints, that is a change to navigate_to_goal and a revalidation — not a bring-up flag, and
-#   not something to attempt the morning of.
+#   You do not choose between odometry and SLAM -- ROS composes them. map->odom (slam_toolbox)
+#   over odom->base_link (wheel odometry) IS the fusion: odometry supplies smooth high-rate
+#   motion, SLAM supplies the drift correction. Both edges already exist here.
+#
+#   FOR A 50-TRIAL SESSION, USE A SAVED MAP IN LOCALIZATION MODE (`session.sh nav`). Odom-frame
+#   waypoints drift continuously AND die outright when ranger_base restarts; a fresh-SLAM map has
+#   its origin wherever the robot booted, so its coordinates are not portable between sessions.
+#   Only a saved, NAMED map makes a waypoint mean the same thing at trial 50 as at trial 1 --
+#   safety/map_frame.py enforces exactly that distinction.
 #
 # EVERY STEP BELOW EXISTS BECAUSE SOMETHING SILENTLY FAILED. See EXPERIMENT_LOG.md.
 set -uo pipefail
@@ -139,18 +143,59 @@ if [ "$cmd" = "map" ]; then
   exit 0
 fi
 
+# ------------------------------------------------------------------------------ 5b. nav (map)
+MAP_NAME=${MAP_NAME:-atrium2d}
+start_nav() {
+  say "5/6  localization + Nav2 on the SAVED map '$MAP_NAME'"
+  [ -f "maps/$MAP_NAME.yaml" ] || die "maps/$MAP_NAME.yaml not found. Make one: bash bringup/session.sh map"
+  if ! alive /map; then
+    # LOCALIZATION mode, not mapping: 50 passes through the same corridor must not keep rewriting
+    # the map underneath the waypoints. slam_toolbox owns BOTH /map and map->odom here, which is
+    # why Nav2 is launched with localization:=slam and starts neither map_server nor AMCL --
+    # exactly one source may own each.
+    bg ros2 run slam_toolbox localization_slam_toolbox_node --ros-args \
+       -p use_sim_time:=false -p base_frame:=base_link -p odom_frame:=odom -p map_frame:=map \
+       -p scan_topic:=/scan -p resolution:=0.05 \
+       -p map_file_name:="$ROOT/maps/$MAP_NAME" -p mode:=localization
+    sleep 5
+    ros2 lifecycle set /slam_toolbox configure >/dev/null 2>&1
+    ros2 lifecycle set /slam_toolbox activate  >/dev/null 2>&1
+    waitfor 40 /map || die "no /map — slam_toolbox localization did not activate"
+  fi
+  echo "  /map ok"
+  timeout 10 ros2 run tf2_ros tf2_echo map odom >/dev/null 2>&1 \
+    || die "TF map->odom missing — slam_toolbox has not localized into the map yet. Drive a few
+        metres so it can match, then re-run."
+  echo "  TF map->odom ok (localized)"
+  if ! ros2 node list 2>/dev/null | grep -q bt_navigator; then
+    bg ros2 launch "$ROOT/nav2_bringup/ranger_nav.launch.py" \
+       params_file:="$ROOT/nav2_bringup/nav2_params_os0_map.yaml" localization:=slam
+    sleep 8
+  fi
+  for i in $(seq 1 30); do
+    ros2 action list 2>/dev/null | grep -q navigate_to_pose && break; sleep 1
+  done
+  ros2 action list 2>/dev/null | grep -q navigate_to_pose \
+    || die "no navigate_to_pose action — Nav2 came up unconfigured (ros2 lifecycle get /bt_navigator)"
+  echo "  Nav2 ok (navigate_to_pose available)"
+}
+
+if [ "$cmd" = "nav" ]; then start_nav; say "nav up. next: session.sh campaign 50"; exit 0; fi
+
 # ------------------------------------------------------------------------------ 6. campaign
 say "5/6  waypoints"
 python3 bringup/waypoints.py list || true
 echo
 echo "  Record them NOW if they are not listed, in THIS driver session:"
-echo "      python3 bringup/waypoints.py record start"
+echo "      python3 bringup/waypoints.py record start     # records in the MAP frame once localized"
 echo "      python3 bringup/waypoints.py record door"
+echo "  Recorded while localized in a NAMED map, these survive a ranger_base restart and 50 trials."
 echo "  A pre-recorded BUTTON waypoint is a human pointing at the control. Use it to debug, but"
 echo "  a scored trial that relies on it is not measuring grounding — see approach_blockage()."
 
 if [ "$cmd" = "campaign" ]; then
   N=${arg:-50}
+  start_nav                      # the legs plan over the saved map; the press chain stays on odom
   say "6/6  campaign: $N trials"
   echo "  dry run first (nothing moves) ..."
   python3 bringup/run_campaign.py --trials 2 --method ours --start start --dry-run \
@@ -164,6 +209,7 @@ fi
 
 say "up. next:"
 echo "  bash bringup/lab_gates.sh 3      # chassis characterisation — MANUAL, the robot moves"
-echo "  bash bringup/session.sh map      # mapping drive (optional; the pipeline does not need it)"
+echo "  bash bringup/session.sh map      # mapping drive — do this ONCE, then save"
+echo "  bash bringup/session.sh nav      # localization + Nav2 on the saved map"
 echo "  bash bringup/session.sh campaign 50"
 echo "  bash bringup/session.sh down     # stop everything this script started"

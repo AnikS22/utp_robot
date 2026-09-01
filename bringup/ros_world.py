@@ -165,8 +165,34 @@ class RosWorld:
             return NavOutcome(status="blocked", blockage=b)
         if self.dry_run:
             return NavOutcome(status="reached")
-        r = _ros([ROS_PY, str(REPO / "bringup" / "waypoints.py"), "goto", self.goal, "--go"],
-                 timeout=LEG_TIMEOUT_S + 30)
+        # NAV BACKEND. `nav2` plans over the SAVED MAP; `waypoints` dead-reckons on odom.
+        # Default is nav2 when a map-frame goal is usable, because odom waypoints drift
+        # continuously and die outright when ranger_base restarts -- both fatal across 50 trials.
+        # UTP_NAV_BACKEND=waypoints forces the old path (the A1M8-era behaviour) if Nav2 is down.
+        # Only the LEG moves to the map: approach_blockage, the look ladder and the press chain
+        # stay on odom, because a map->odom correction mid-press moves the target under the arm
+        # (docs/NAV2.md). Nav2 gets us to the door; vision closes the last metre.
+        backend = os.environ.get("UTP_NAV_BACKEND", "nav2").strip().lower()
+        if backend not in ("nav2", "waypoints"):
+            raise ValueError("UTP_NAV_BACKEND must be 'nav2' or 'waypoints'")
+        if backend == "nav2":
+            r = _ros([ROS_PY, str(REPO / "bringup" / "nav2_goto.py"), self.goal, "--go"],
+                     timeout=LEG_TIMEOUT_S + 30)
+            # Fall back rather than fail the trial. nav2_goto's exit codes are a contract:
+            #   0    real outcome (arrived / blocked) -> parse stdout below
+            #   6    real timeout                     -> parse stdout below
+            #   2-5  cannot serve this request (odom-frame waypoint, no map name, Nav2 down,
+            #        goal rejected)                   -> fall back to the odom driver
+            #   1    crashed                          -> fall back; a dead backend must never be
+            #        recorded as a navigation timeout, which is a claim about the WORLD.
+            if r.returncode in (1, 2, 3, 4, 5):
+                print(f"[ros_world] nav2 backend unavailable (rc={r.returncode}); "
+                      f"falling back to odom waypoints. {(r.stderr or '').strip()[:120]}")
+                r = _ros([ROS_PY, str(REPO / "bringup" / "waypoints.py"), "goto", self.goal, "--go"],
+                         timeout=LEG_TIMEOUT_S + 30)
+        else:
+            r = _ros([ROS_PY, str(REPO / "bringup" / "waypoints.py"), "goto", self.goal, "--go"],
+                     timeout=LEG_TIMEOUT_S + 30)
         out = r.stdout
         if "arrived" in out:
             self._last_nav = "reached"
