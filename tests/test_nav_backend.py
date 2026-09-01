@@ -150,3 +150,193 @@ def test_params_still_disable_spin_recovery():
     plugins = next(l for l in params.splitlines() if "behavior_plugins:" in l)
     assert "spin" not in plugins, f"spin must not be a recovery plugin — the base flips: {plugins}"
     assert "no_spin" in params, "the no-spin behaviour trees must be selected"
+
+
+# ============================================================================================
+# BEHAVIOURAL tests: these RUN nav2_goto.main() against a fake rclpy/action layer, so the logic
+# is executed rather than pattern-matched. Everything above this line is a static regression
+# guard; everything below actually exercises the code path that will run tomorrow.
+# ============================================================================================
+import json as _json
+import types as _types
+
+
+class _FakeGoalHandle:
+    def __init__(self, accepted=True, status=4):
+        self.accepted = accepted
+        self._status = status
+        self.cancelled = False
+
+    def get_result_async(self):
+        f = _FakeFuture(); f._done = True
+        f._value = _types.SimpleNamespace(status=self._status)
+        return f
+
+    def cancel_goal_async(self):
+        self.cancelled = True
+        return _FakeFuture(done=True)
+
+
+class _FakeFuture:
+    def __init__(self, done=False, value=None):
+        self._done, self._value = done, value
+
+    def done(self): return self._done
+    def result(self): return self._value
+
+
+def _install_fake_ros(monkeypatch, *, server=True, accepted=True, status=4, never_finishes=False):
+    """Minimal rclpy/nav2_msgs/geometry_msgs stand-ins. Records the goal that was sent."""
+    sent = {}
+
+    class _FakeClient:
+        def __init__(self, *a, **k): pass
+        def wait_for_server(self, timeout_sec=0): return server
+        def send_goal_async(self, goal):
+            sent["goal"] = goal
+            h = _FakeGoalHandle(accepted=accepted, status=status)
+            sent["handle"] = h
+            return _FakeFuture(done=True, value=h)
+
+    class _FakeNode:
+        def __init__(self, *a, **k): pass
+        def get_clock(self):
+            return _types.SimpleNamespace(now=lambda: _types.SimpleNamespace(to_msg=lambda: 0))
+        def destroy_node(self): sent["destroyed"] = True
+
+    rclpy = _types.ModuleType("rclpy")
+    rclpy.init = lambda *a, **k: None
+    rclpy.shutdown = lambda *a, **k: sent.__setitem__("shutdown", True)
+    rclpy.ok = lambda: True
+    rclpy.spin_once = lambda *a, **k: None
+    rclpy.spin_until_future_complete = lambda *a, **k: None
+    action_mod = _types.ModuleType("rclpy.action"); action_mod.ActionClient = _FakeClient
+    node_mod = _types.ModuleType("rclpy.node"); node_mod.Node = _FakeNode
+    rclpy.action, rclpy.node = action_mod, node_mod
+
+    nav_act = _types.ModuleType("nav2_msgs.action")
+    class _NTP:
+        class Goal:
+            def __init__(self): self.pose = None
+    nav_act.NavigateToPose = _NTP
+    nav_msgs = _types.ModuleType("nav2_msgs"); nav_msgs.action = nav_act
+
+    geo = _types.ModuleType("geometry_msgs.msg")
+    class _PoseStamped:
+        def __init__(self):
+            self.header = _types.SimpleNamespace(frame_id="", stamp=None)
+            self.pose = _types.SimpleNamespace(
+                position=_types.SimpleNamespace(x=0.0, y=0.0, z=0.0),
+                orientation=_types.SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0))
+    geo.PoseStamped = _PoseStamped
+    geo_pkg = _types.ModuleType("geometry_msgs"); geo_pkg.msg = geo
+
+    if never_finishes:
+        h = _FakeGoalHandle()
+        h.get_result_async = lambda: _FakeFuture(done=False)
+        _FakeClient.send_goal_async = lambda self, goal: (
+            sent.__setitem__("goal", goal), sent.__setitem__("handle", h),
+            _FakeFuture(done=True, value=h))[-1]
+
+    for name, mod in (("rclpy", rclpy), ("rclpy.action", action_mod), ("rclpy.node", node_mod),
+                      ("nav2_msgs", nav_msgs), ("nav2_msgs.action", nav_act),
+                      ("geometry_msgs", geo_pkg), ("geometry_msgs.msg", geo)):
+        monkeypatch.setitem(sys.modules, name, mod)
+    return sent
+
+
+def _install_fake_waypoints(monkeypatch, wp):
+    mod = _types.ModuleType("waypoints"); mod.load = lambda: wp
+    monkeypatch.setitem(sys.modules, "waypoints", mod)
+    mf = _types.ModuleType("safety.map_frame")
+    mf.FRAME_KEY, mf.FRAME_MAP, mf.MAP_NAME_KEY = "frame", "map", "map_name"
+    monkeypatch.setitem(sys.modules, "safety.map_frame", mf)
+
+
+def _nav2_main(monkeypatch, argv):
+    import importlib
+    monkeypatch.setattr(sys, "argv", ["nav2_goto.py"] + argv)
+    mod = importlib.import_module("nav2_goto")
+    importlib.reload(mod)
+    return mod.main()
+
+
+GOOD_WP = {"door": {"x": 12.5, "y": 3.25, "yaw": 1.5708, "frame": "map", "map_name": "atrium2d"}}
+
+
+def test_behav_sends_a_map_frame_goal_with_correct_pose(monkeypatch, capsys):
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    sent = _install_fake_ros(monkeypatch)
+    assert _nav2_main(monkeypatch, ["door", "--go"]) == 0
+    goal = sent["goal"].pose
+    assert goal.header.frame_id == "map", "Nav2 goals must be in the map frame"
+    assert goal.pose.position.x == pytest.approx(12.5)
+    assert goal.pose.position.y == pytest.approx(3.25)
+    # yaw 1.5708 rad -> quaternion z=sin(yaw/2)=0.7071, w=cos(yaw/2)=0.7071
+    assert goal.pose.orientation.z == pytest.approx(0.7071, abs=1e-3)
+    assert goal.pose.orientation.w == pytest.approx(0.7071, abs=1e-3)
+    assert "arrived" in capsys.readouterr().out
+
+
+def test_behav_dry_run_sends_nothing(monkeypatch, capsys):
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    sent = _install_fake_ros(monkeypatch)
+    assert _nav2_main(monkeypatch, ["door"]) == 0
+    assert "goal" not in sent, "a dry run must not send a goal"
+    assert "DRY RUN" in capsys.readouterr().out
+
+
+def test_behav_no_action_server_returns_fallback_code(monkeypatch):
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    _install_fake_ros(monkeypatch, server=False)
+    assert _nav2_main(monkeypatch, ["door", "--go"]) == 4, \
+        "a down Nav2 must return a code RosWorld falls back on, not a nav outcome"
+
+
+def test_behav_rejected_goal_returns_fallback_code(monkeypatch):
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    _install_fake_ros(monkeypatch, accepted=False)
+    assert _nav2_main(monkeypatch, ["door", "--go"]) == 5
+
+
+def test_behav_recoveries_exhausted_reports_blocked_not_arrived(monkeypatch, capsys):
+    """Nav2 giving up in front of an obstruction is the same event the odom backend calls
+    `blocked`, and the FSM must reason from there rather than record a nav failure."""
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    _install_fake_ros(monkeypatch, status=6)          # 6 == ABORTED
+    assert _nav2_main(monkeypatch, ["door", "--go"]) == 0
+    out = capsys.readouterr().out
+    assert "blocked" in out and "arrived" not in out
+
+
+def test_behav_timeout_returns_6_and_cancels_the_goal(monkeypatch, capsys):
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    sent = _install_fake_ros(monkeypatch, never_finishes=True)
+    assert _nav2_main(monkeypatch, ["door", "--go", "--timeout", "0.2"]) == 6
+    assert sent["handle"].cancelled, "a timed-out goal must be cancelled, not left running"
+
+
+def test_behav_odom_frame_waypoint_refused_before_touching_ros(monkeypatch):
+    _install_fake_waypoints(monkeypatch,
+                            {"door": {"x": 1, "y": 2, "yaw": 0, "frame": "odom"}})
+    sent = _install_fake_ros(monkeypatch)
+    assert _nav2_main(monkeypatch, ["door", "--go"]) == 3
+    assert "goal" not in sent, "must refuse before sending anything"
+
+
+def test_behav_nameless_map_waypoint_refused(monkeypatch):
+    """The trap safety/map_frame.py exists for: a fresh-SLAM map frame looks identical in TF but
+    its origin is wherever the robot booted."""
+    _install_fake_waypoints(monkeypatch,
+                            {"door": {"x": 1, "y": 2, "yaw": 0, "frame": "map"}})
+    sent = _install_fake_ros(monkeypatch)
+    assert _nav2_main(monkeypatch, ["door", "--go"]) == 3
+    assert "goal" not in sent
+
+
+def test_behav_force_overrides_the_refusal(monkeypatch):
+    _install_fake_waypoints(monkeypatch,
+                            {"door": {"x": 1, "y": 2, "yaw": 0, "frame": "odom"}})
+    sent = _install_fake_ros(monkeypatch)
+    assert _nav2_main(monkeypatch, ["door", "--go", "--force"]) == 0
+    assert "goal" in sent, "--force must actually drive"
