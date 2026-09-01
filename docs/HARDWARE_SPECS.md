@@ -67,8 +67,8 @@ which issues the legacy SCAN command. 13 lines. Applied automatically by `setup_
 
 **Known quirk, root cause not established.** Hand-probing across process restarts succeeds only
 ~70–90% of the time; a bad process reads zero bytes for its entire life while in-session it is
-20/20. It lives in the CP2102 reopen path, not the sensor. `bringup/probe_rplidar.py` and
-`bringup/lidar.sh` both retry by reopening. Do not re-diagnose this as a hardware fault.
+20/20. It lives in the CP2102 reopen path, not the sensor. `archive/probe_rplidar.py` and
+`archive/lidar.sh` both retry by reopening. Do not re-diagnose this as a hardware fault.
 
 **Never use `/dev/ttyUSBn` directly.** Observed reordering live.
 

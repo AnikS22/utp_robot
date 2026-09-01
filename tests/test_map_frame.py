@@ -33,10 +33,11 @@ def test_a_waypoint_with_no_frame_field_is_an_odom_waypoint():
     assert list(odom) == ["a"] and list(mapf) == ["b"]
 
 
-def test_map_waypoints_are_refused_when_mola_is_not_running():
-    """No pose publisher means no map frame; the coordinates cannot be interpreted at all."""
+def test_map_waypoints_are_refused_when_no_slam_is_running():
+    """No SLAM publisher means no map frame; the coordinates cannot be interpreted at all."""
     ok, why = check_map_session({"b": mapwp()}, current_map=None, current_mola=None)
-    assert not ok and "not publishing a pose" in why
+    assert not ok
+    assert "map frame" in why and "b" in why, why
 
 
 def test_named_map_waypoint_validates_against_the_same_map():

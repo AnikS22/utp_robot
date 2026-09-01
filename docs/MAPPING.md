@@ -20,116 +20,104 @@ walk-through settles it.
 ## Build the map
 
 ```bash
-bash ~/utp_robot/bringup/mapping.sh --with-base        # lidar + odom + SLAM + RViz + teleop
+cd ~/utp_robot && bash bringup/session.sh map
 ```
 
-That is the whole stack in one command, with RViz already showing `/map`, `/scan`, the TF tree and
-the pose graph (`maps/mapping.rviz`). Without `--with-base` it starts only the read-only half — it
-cannot move the robot even if every part of it fails — which is the right way to check the lidar
-and the TF chain before handing CAN authority over. The pieces it starts, if you would rather run
-them yourself:
+That brings up every layer in the order that works — link, chassis, OS0, the 2D scan chain, the
+safety mux — checks each one before the next, and only then starts slam_toolbox. Doing it by hand
+means doing five things in the right order with no check between them; `session.sh` exists because
+each of those steps has silently failed at least once.
+
+Two parameters it passes that are not optional:
+
+- `publish_odom_tf:=true` to the ranger launch. **Not** the default. Without it there is no `odom`
+  frame at all, slam_toolbox has nothing to anchor to, and nothing says so.
+- `slam_params_file:=config/slam_os0.yaml`. Stock slam_toolbox uses `base_frame: base_footprint`,
+  which this stack does not have — with the stock value it publishes `/map` and looks healthy while
+  **never emitting `map → odom`**. That file also sets `min_laser_range: 0.55` (the OS0 sees the
+  chassis at ~0.2 m; at the default the robot is painted into the map at every pose it occupied),
+  `do_loop_closing: true`, and a `stack_size_to_use` large enough to serialize a building.
+
+### Driving technique, in rough order of how much it matters
+
+- **Close the loop.** Return to somewhere you have already been, by a different route, and drive
+  *past* your start. Loop closure is the only thing that removes accumulated drift; a map from a
+  single out-and-back is a spiral, and every waypoint recorded on it inherits the bend.
+- **Slowly**, and pause after each turn.
+- **Broad turns.** Do not pivot or crab. Spin-mode odometry caused metre-scale scan-matching jumps
+  on 2026-08-24. (The old `/scan_mapping` gate that enforced this belonged to the A1M8 chain and is
+  in `archive/`; the OS0 chain removes the chassis geometrically instead, but the *driving* advice
+  still holds because the jump was in the odometry, not the scan.)
+- Cover every space a mission enters, **including the far side of each door**.
+
+Watch it fill in another terminal:
 
 ```bash
-source ~/utp_robot/bringup/env.sh
-sg dialout -c 'bash ~/utp_robot/bringup/lidar.sh'          # /scan + base_link->lidar_link
-ros2 launch ranger_bringup ranger_mini_v3.launch.py use_sim_time:=false publish_odom_tf:=true
-ros2 launch slam_toolbox online_async_launch.py \
-     use_sim_time:=false slam_params_file:=$HOME/utp_robot/config/slam.yaml
-bash ~/utp_robot/bringup/teleop.sh                          # drive: http://127.0.0.1:8420
+python3 bringup/map_watch.py
 ```
 
-`publish_odom_tf:=true` is **not** the launch default. Without it there is no `odom` frame at all,
-slam_toolbox has nothing to anchor to, and nothing says so. Likewise `config/slam.yaml` exists only
-because stock slam_toolbox uses `base_frame: base_footprint`, which this stack does not have — with
-the stock value it publishes `/map` and looks healthy while never emitting `map → odom`.
-
-**Driving technique**, in rough order of how much it matters:
-- **Use DualAckermann only.** `mapping_scan_gate.py` blocks `/scan_mapping` in spinning,
-  parallel/crab, and side-slip modes. A physical run on 2026-08-24 showed that spin-mode odometry
-  caused metre-scale scan-matching jumps. If RViz stops adding map data, check the RC mode.
-- **Slowly.** The A1M8 spins at ~7 Hz, not the 10 Hz the driver claims. Fast rotation smears scans.
-- **Close loops.** Return to somewhere you have already been, by a different route. Loop closure is
-  what removes accumulated drift; a map from a single out-and-back is a spiral.
-- **Use broad Ackermann turns and pause afterward.** Do not pivot or crab while mapping.
-- Cover every space a mission enters, including the far side of each door.
-
-Watch `/map` in RViz while driving. If corridors bend or a room appears twice, stop and re-drive
-the loop rather than saving it.
+It prints two independent answers to "is this being recorded" — wheel odometry, and occupied cells
+in `/map`. Occupied cells are the signal; map *dimensions* jump on a single stray beam, so ignore
+them. `wheels moving, MAP NOT GROWING` means stop.
 
 ## Save it
 
-```bash
-bash ~/utp_robot/bringup/save_map.sh          # -> maps/site.{pgm,yaml,posegraph,data}
-```
-
-Save after **every closed loop**, not once at the end: saving does not stop mapping, and a crash
-between the last loop and the end of the drive costs the whole walk. The script checks the files
-actually landed on disk, because both services return success even when nothing is written. Under
-the hood:
+**While slam_toolbox is still running:**
 
 ```bash
-ros2 service call /slam_toolbox/save_map slam_toolbox/srv/SaveMap \
-  "{name: {data: '$HOME/utp_robot/maps/site'}}"                       # .pgm + .yaml, for Nav2
-ros2 service call /slam_toolbox/serialize_map slam_toolbox/srv/SerializePoseGraph \
-  "{filename: '$HOME/utp_robot/maps/site'}"                            # .posegraph, to resume mapping
+bash bringup/map_persist.sh save atrium
 ```
 
-Save **both**. The `.pgm`/`.yaml` pair is what Nav2's map_server loads; the `.posegraph` is the only
-thing that lets you continue mapping later instead of starting over.
+One command for the whole thing, because doing it in four steps meant four places to get it wrong:
 
-## Hand the map to Nav2
+| it writes | why it is not optional |
+|---|---|
+| `maps/atrium.pgm` + `.yaml` | the grid Nav2's costmap plans on. A picture — nothing can relocalize into it |
+| `maps/atrium.posegraph` + `.data` | slam_toolbox's own graph. **The only thing** `mode: localization` can deserialize |
+| `maps/.loaded_map` | which named map is live, in which SLAM session |
 
-`ranger_nav.launch.py` takes a `localization` argument, because **exactly one thing may publish
-`/map`, and exactly one may publish `map -> odom`**. Running Nav2's `map_server` alongside
-slam_toolbox puts two publishers on `/map`, and the costmap uses whichever it latched.
+Without the pose graph, `session.sh nav` cannot relocalize — and slam_toolbox does not error, it
+starts a **new** graph at wherever the robot is standing, so you get a fresh map frame wearing the
+saved map's name and every waypoint is off by the startup offset. Without `.loaded_map`, every
+`waypoints.py record --frame map` stores as nameless and `nav2_goto.py` refuses to drive to it.
 
-**A. Saved map + AMCL** — the normal way to run a mission on a map you already built:
+The services return success when nothing lands on disk, so `map_persist.sh` checks the **files**,
+and reports the extent and occupied-cell count. Under 2000 occupied cells it warns: that is the
+signature of a robot that barely moved — a valid map of one spot.
+
+Then, **in the same session**, record the waypoints:
 
 ```bash
-ros2 launch $HOME/utp_robot/nav2_bringup/ranger_nav.launch.py \
-     map:=$HOME/utp_robot/maps/site.yaml localization:=amcl      # amcl is the default
+python3 bringup/waypoints.py record start  --frame map
+python3 bringup/waypoints.py record door   --frame map
+python3 bringup/waypoints.py record button --frame map
+bash bringup/map_persist.sh list          # confirms which maps are campaign-usable
 ```
 
-`map_server` serves `site.yaml`; **AMCL** provides `map -> odom`. Do not run slam_toolbox at all.
-AMCL starts with no idea where it is: give it a pose with **2D Pose Estimate** in RViz (or publish
-`/initialpose`) roughly where the robot actually stands, then drive a few metres so the filter
-converges. Until it does, `map -> odom` does not exist and the global costmap logs
-`Timed out waiting for transform` — which is the expected message, not a fault.
+Saving does not stop mapping. Save after every closed loop, not once at the end.
 
-**B. slam_toolbox owns everything** — while mapping, or localizing off a `.posegraph`:
+## Use it
 
 ```bash
-ros2 launch $HOME/utp_robot/nav2_bringup/ranger_nav.launch.py localization:=slam
+MAP_NAME=atrium bash bringup/session.sh nav
+python3 bringup/nav2_goto.py door --go     # ONE leg, before committing 50 trials
 ```
 
-No `map_server`, no AMCL: slam_toolbox supplies both `/map` and `map -> odom`. This is how you
-navigate *while still mapping*, and no `map:=` argument is used.
+`session.sh nav` starts slam_toolbox in **localization** mode against the saved graph and launches
+Nav2 with `localization:=slam`, so neither `map_server` nor AMCL starts — exactly one source may
+own `/map` and `map → odom`. It refuses outright if the pose graph is missing.
 
-AMCL was **added for hardware** (the `amcl:` block in `nav2_params.yaml`). The sim never needed it —
-`docs/integration_contract.md` says "no AMCL here" because Isaac published `map -> odom` as ground
-truth. Two settings there are worth knowing: `base_frame_id` is `base_link` (the stock
-`base_footprint` default is the same trap that silenced slam_toolbox), and the odometry noise
-`alpha1..alpha5` are conservative placeholders until CALIBRATION.md item 5 measures the real values.
-
-## Switch slam_toolbox to localization mode
-
-Mapping and localizing are different modes and must not both run.
+## Resume a partial map
 
 ```bash
-# config/slam.yaml: mode: mapping -> localization, then
-ros2 launch slam_toolbox localization_launch.py \
-     use_sim_time:=false slam_params_file:=$HOME/utp_robot/config/slam.yaml \
-     map_file_name:=$HOME/utp_robot/maps/site
+bash bringup/map_persist.sh resume partial_01 [--at-pose X Y THETA]
 ```
 
-AMCL is the alternative, and is what `localization:=amcl` above starts. Whichever you pick,
-exactly one node may publish `map → odom`; two publishers on that edge is its own bug — which is
-precisely why the launch file takes a `localization` argument instead of letting you start both.
-
-**Expect degeneracy in a long featureless corridor**: uncertainty grows along the travel axis while
-staying tight laterally. Because the press chain deliberately runs in the **odom** frame
-(`PIPELINE.md` §7), that degrades goal scoring but cannot cause a missed press. Verify that
-separation holds rather than assuming it.
+Requires slam_toolbox running in mapping mode. The default assumes the robot is back where the
+*original* session started; if it is not, pass `--at-pose`. Check RViz before driving on: the live
+scan must lie **on** the walls already in the map. Beside them means it loaded at the wrong pose,
+and the tear that follows looks exactly like ordinary drift. Save under a **new** name so a bad
+resume cannot overwrite the good partial.
 
 ## Check the map before trusting it
 

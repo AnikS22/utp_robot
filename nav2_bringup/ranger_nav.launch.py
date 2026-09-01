@@ -180,7 +180,7 @@ def generate_launch_description() -> LaunchDescription:
     # The Isaac-only `RPLidar_S2E -> lidar_link` alias TF is REMOVED on hardware.
     # It existed because Isaac named the lidar TF after its USD prim while stamping /scan with
     # frame_id "lidar_link". The real rplidar_node stamps lidar_link natively and
-    # bringup/lidar.sh publishes base_link -> lidar_link, so re-publishing that edge here would
+    # bringup/lidar3d.sh publishes base_link -> lidar_link, so re-publishing that edge here would
     # put two publishers on one transform -- a bug in its own right.
 
     # The manager must be told EXACTLY the nodes that exist: it waits on a bond from each, and a

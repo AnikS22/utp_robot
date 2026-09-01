@@ -147,7 +147,7 @@ def cmd_record(n: Pose, a) -> int:
         else:
             print("  NO SAVED MAP LOADED, so this is valid only while THIS MOLA instance keeps "
                   "running. To make it survive a restart: save a map "
-                  "(bash bringup/map_save.sh <name>), load it, and re-record.")
+                  "(bash bringup/map_persist.sh save <name>), load it, and re-record.")
         print(f"  -> {STORE}")
         return 0
 
@@ -343,7 +343,7 @@ def cmd_anchor(n: Pose, a) -> int:
         return 1
     scans = _collect_scans(n, count=20)
     if len(scans) < 10:
-        print(f"only {len(scans)} scans in 15 s -- is bringup/lidar.sh running?", file=sys.stderr)
+        print(f"only {len(scans)} scans in 15 s -- is bringup/lidar3d.sh + the scan chain running? (bash bringup/session.sh up)", file=sys.stderr)
         return 1
     x, y, th = n.pose
     sid = odom_session_id(n)
@@ -376,7 +376,7 @@ def cmd_relocalize(n: Pose, a) -> int:
         return 1
     live_scans = _collect_scans(n, count=3)
     if not live_scans:
-        print("no /scan_filtered -- is bringup/lidar.sh running?", file=sys.stderr)
+        print("no /scan_filtered -- is bringup/lidar3d.sh + the scan chain running? (bash bringup/session.sh up)", file=sys.stderr)
         return 1
     ref = accumulate([s_["ranges"] for s_ in anc["scans"]], anc["scans"][0]["angle_min"],
                      anc["scans"][0]["angle_increment"])

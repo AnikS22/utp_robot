@@ -183,7 +183,7 @@ Nav2 needs two changes for hardware, both easy to forget:
 ## Stage 6 — Lidar
 
 ```bash
-cd ~/utp_robot && bash bringup/lidar.sh
+cd ~/utp_robot && bash bringup/lidar3d.sh
 ```
 
 In another terminal:
@@ -271,8 +271,8 @@ tune AMCL, and only then attempt a mission.
 ```bash
 source ~/utp_robot/bringup/env.sh     # ROS + workspace + ROS_DOMAIN_ID=9 + conda scrubbed
 bash bringup/setup_workspace.sh       # rebuild drivers (idempotent)
-bash bringup/lidar.sh                 # /scan + base_link->lidar_link
-python3 bringup/probe_rplidar.py      # raw serial probe, no ROS needed
+bash bringup/lidar3d.sh               # OS0-128 -> /ouster/points
+python3 archive/probe_rplidar.py     # A1M8 only; the OS0 replaced it
 python3 bringup/preflight.py -v       # collision + stale-port check
 python3 bringup/check_scan_geometry.py --tf
 ros2 topic echo /safety/status

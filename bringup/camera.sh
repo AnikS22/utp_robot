@@ -46,7 +46,7 @@
 # The mount TF is the DESIGN pose and is UNMEASURED. It exists so the frame tree resolves during
 # bring-up; it is NOT a calibration. CALIBRATION.md item 8 replaces it -- bringup/handeye_collect.py.
 #
-# PROCESS HYGIENE: same rule as lidar.sh -- no `exec`, children are started with setsid so each is
+# PROCESS HYGIENE: same rule as lidar3d.sh -- no `exec`, children are started with setsid so each is
 # a process-group leader, and cleanup kills the whole group. A leaked realsense node holds the USB
 # device and the next start fails in a way that looks like hardware failure.
 set -euo pipefail

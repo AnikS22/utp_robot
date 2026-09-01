@@ -128,9 +128,17 @@ if [ "$cmd" = "map" ]; then
   say "5/6  mapping drive"
   # slam_toolbox in Jazzy is a LIFECYCLE node: it starts `unconfigured` and looks exactly like a
   # hung node until it is configured AND activated.
-  bg ros2 run slam_toolbox async_slam_toolbox_node --ros-args \
-     -p use_sim_time:=false -p base_frame:=base_link -p odom_frame:=odom -p map_frame:=map \
-     -p scan_topic:=/scan -p resolution:=0.05
+  # PARAMS FILE, NOT INLINE FLAGS. The inline version that used to be here set six parameters and
+  # took slam_toolbox's DEFAULTS for everything else in config/slam_os0.yaml -- including three
+  # that decide whether the map is usable at all:
+  #   min_laser_range 0.55  the OS0 sees the chassis at ~0.2 m. At the default 0.0 the robot is
+  #                         painted into the map at every pose it ever occupied.
+  #   do_loop_closing true  without it a closed loop does not close; the map comes out bent and
+  #                         every waypoint inherits the bend.
+  #   stack_size_to_use     serializing a building-sized graph overflows the default stack, so
+  #                         map_persist.sh's save would die on exactly the map worth keeping.
+  bg ros2 launch slam_toolbox online_async_launch.py \
+     use_sim_time:=false slam_params_file:="$ROOT/config/slam_os0.yaml"
   sleep 5
   ros2 lifecycle set /slam_toolbox configure >/dev/null 2>&1
   ros2 lifecycle set /slam_toolbox activate  >/dev/null 2>&1
@@ -175,10 +183,13 @@ start_nav() {
     # the map underneath the waypoints. slam_toolbox owns BOTH /map and map->odom here, which is
     # why Nav2 is launched with localization:=slam and starts neither map_server nor AMCL --
     # exactly one source may own each.
+    # Same params file as mapping -- a map built with one set of scan-matcher settings and
+    # localized with another matches worse for no reason -- overriding only the two that must
+    # differ. --ros-args after --params-file wins, so the override is the last word.
     bg ros2 run slam_toolbox localization_slam_toolbox_node --ros-args \
-       -p use_sim_time:=false -p base_frame:=base_link -p odom_frame:=odom -p map_frame:=map \
-       -p scan_topic:=/scan -p resolution:=0.05 \
-       -p map_file_name:="$ROOT/maps/$MAP_NAME" -p mode:=localization
+       --params-file "$ROOT/config/slam_os0.yaml" \
+       -p use_sim_time:=false -p mode:=localization \
+       -p map_file_name:="$ROOT/maps/$MAP_NAME"
     sleep 5
     ros2 lifecycle set /slam_toolbox configure >/dev/null 2>&1
     ros2 lifecycle set /slam_toolbox activate  >/dev/null 2>&1

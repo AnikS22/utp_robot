@@ -90,7 +90,7 @@ def main() -> int:
 
     # Our own shell tree (the script that invoked us, its `sleep`, etc.) inherits ROS_DOMAIN_ID
     # and would otherwise be reported as a foreign collision -- which made this guard refuse to
-    # let lidar.sh start at all. Same for the ros2 CLI daemon, which is a per-domain helper, not a
+    # let lidar3d.sh start at all. Same for the ros2 CLI daemon, which is a per-domain helper, not a
     # competing stack.
     my_session = session_of(str(os.getpid()))
 

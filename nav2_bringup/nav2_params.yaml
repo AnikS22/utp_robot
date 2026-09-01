@@ -359,7 +359,7 @@ amcl:
     use_sim_time: false               # [HARDWARE]
     base_frame_id: "base_link"        # NOT base_footprint. This stack has no such frame, and the
                                       # stock default silently prevents any transform being published
-                                      # -- the same trap that bit slam_toolbox (config/slam.yaml).
+                                      # -- the same trap that bit slam_toolbox (config/slam_os0.yaml).
     odom_frame_id: "odom"
     global_frame_id: "map"
     scan_topic: /scan_filtered

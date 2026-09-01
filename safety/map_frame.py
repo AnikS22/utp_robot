@@ -7,22 +7,25 @@ same map it was recorded in. That proviso is what this module checks.
 
 TWO KINDS OF `map` FRAME, AND THEY LOOK IDENTICAL FROM THE TF TREE. This is the trap.
 
-  * MOLA started FRESH, no map loaded. It invents a `map` frame whose origin is wherever the
+  * SLAM started FRESH, no map loaded. It invents a `map` frame whose origin is wherever the
     robot happened to be at startup. The TF tree looks exactly like the localized case. But the
     coordinates mean nothing to the next session -- this is session-scoped, exactly like odom,
     just far more accurate within the session.
-  * MOLA started with a SAVED MAP loaded and relocalized into it. Now `map` is the saved map's
+  * SLAM started with a SAVED MAP loaded and relocalized into it. Now `map` is the saved map's
     own frame, the origin is fixed for all time, and coordinates ARE portable between sessions.
     This is the case that removes the re-record-before-every-run tax.
 
 So "the map frame exists" is not evidence that a stored coordinate is meaningful. What
 distinguishes them is whether a NAMED map was loaded, which is why recording stores the map name
-and this module refuses to treat a nameless (fresh-MOLA) recording as portable.
+and this module refuses to treat a nameless (fresh-SLAM) recording as portable.
 """
 from __future__ import annotations
 
 FRAME_KEY = "frame"
 MAP_NAME_KEY = "map_name"
+# The stored key stays `mola_session` for the same reason pose_source keeps the
+# mola_session_id alias: renaming it would invalidate every waypoint already on disk.
+# It identifies whichever SLAM is running -- see pose_source.slam_session_id.
 MOLA_SESSION_KEY = "mola_session"
 
 FRAME_ODOM = "odom"
@@ -47,10 +50,10 @@ def check_map_session(waypoints: dict, current_map: str | None, current_mola: st
                       names=None) -> tuple[bool, str]:
     """Can we trust these map-frame coordinates right now?
 
-    current_map   name of the map currently loaded and relocalized into, or None if MOLA is
+    current_map   name of the map currently loaded and relocalized into, or None if SLAM is
                   running fresh (no saved map).
-    current_mola  id of the running MOLA instance (the DDS GID of its pose publisher), or None
-                  if MOLA is not running at all.
+    current_mola  id of the running SLAM instance (the DDS GID of its pose publisher), or None
+                  if SLAM is not running at all.
 
     Fail-closed throughout, matching safety/waypoint_frame.py: an unanswerable question is a
     refusal, not a shrug.
@@ -61,9 +64,9 @@ def check_map_session(waypoints: dict, current_map: str | None, current_mola: st
 
     if current_mola is None:
         return False, (
-            "waypoints %s are in the MAP frame, but MOLA is not publishing a pose -- so there is "
+            "waypoints %s are in the MAP frame, but no SLAM is publishing a map -- so there is "
             "no map frame to interpret them in.\n"
-            "  Fix: start it (bash bringup/lidar3d.sh, then the MOLA launch), or re-record these "
+            "  Fix: start it (bash bringup/session.sh nav), or re-record these "
             "waypoints in the odom frame."
             % ", ".join(sorted(sel)))
 
@@ -83,28 +86,29 @@ def check_map_session(waypoints: dict, current_map: str | None, current_mola: st
 
     if named and current_map is None:
         return False, (
-            "waypoints %s were recorded against saved map '%s', but MOLA is running FRESH with no "
+            "waypoints %s were recorded against saved map '%s', but SLAM is running FRESH with no "
             "map loaded -- its `map` frame origin is wherever the robot happened to start, not "
             "the saved map's origin. The TF tree looks the same either way, which is exactly why "
             "this is checked rather than assumed.\n"
-            "  Fix: load the map and relocalize (bash bringup/map_load.sh %s) before running."
+            "  Fix: load the map and relocalize (MAP_NAME=%s bash bringup/session.sh nav) before "
+            "running."
             % (", ".join(sorted(named)), sorted({v[MAP_NAME_KEY] for v in named.values()})[0],
                sorted({v[MAP_NAME_KEY] for v in named.values()})[0]))
 
     # Session-scoped case: no map was loaded when these were recorded, so they are only valid
-    # while that same MOLA instance keeps running.
+    # while that same SLAM instance keeps running.
     if nameless:
         stale = sorted(k for k in nameless
                        if (sel[k] or {}).get(MOLA_SESSION_KEY) != current_mola)
         if stale:
             return False, (
-                "waypoints %s were recorded in a MOLA session that is no longer running, with no "
-                "saved map to anchor them. A fresh MOLA puts its map origin wherever the robot "
+                "waypoints %s were recorded in a SLAM session that is no longer running, with no "
+                "saved map to anchor them. A fresh SLAM puts its map origin wherever the robot "
                 "started, so those coordinates now point somewhere else entirely.\n"
                 "  This is the same failure as a re-zeroed odom frame, and it is not a planner "
                 "fault.\n"
                 "  Fix: re-record them. To make waypoints survive between sessions, save a map "
-                "(bash bringup/map_save.sh <name>) and record against it."
+                "(bash bringup/map_persist.sh save <name>) and record against it."
                 % ", ".join(stale))
 
     return True, ""

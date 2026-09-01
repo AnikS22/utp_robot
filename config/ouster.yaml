@@ -62,7 +62,7 @@ mount:
 # 2D SLICE for slam_toolbox and the corridor veto, via pointcloud_to_laserscan.
 #
 # Taking a horizontal band and flattening it to a LaserScan means the existing, already-tuned 2D
-# stack (config/slam.yaml, safety/scan_filter.py, waypoint_drive.corridor_blocked) works unchanged
+# stack (config/slam_os0.yaml, safety/scan_filter.py, waypoint_drive.corridor_blocked) works unchanged
 # on good data. That is the fastest honest test of "was it the algorithm or the sensor" -- same
 # slam_toolbox, same parameters, 3000x the points.
 #

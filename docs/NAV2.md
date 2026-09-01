@@ -86,13 +86,16 @@ ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose "{
 ```
 
 It is a ROS **action**, not a topic: it streams feedback and returns success/failure.
-`utp/pipeline/navigation/nav2.py::Nav2Navigator` wraps this same call and reports **`blocked`** when
-no path is found within a window — and *that* is the signal that starts the
-reason → ground → act → verify loop.
+On this robot, `bringup/nav2_goto.py <waypoint> --go` wraps the same call and is what
+`RosWorld.navigate_to_goal` runs for every leg. It reports **`blocked`** when Nav2 exhausts its
+recoveries — and *that* is the signal that starts the reason → ground → act → verify loop, not a
+failure. Its exit codes are a contract: `0` a real outcome (parse stdout), `6` timeout, `2..5`
+this backend cannot serve the request so the caller falls back to odom waypoints, `1` it crashed.
+`utp/pipeline/navigation/nav2.py::Nav2Navigator` is the sim's twin of it.
 
 ---
 
-## Three things specific to this robot
+## Five things specific to this robot
 
 **1. Nav2 does not publish `/cmd_vel` here.** Both `controller_server` **and** `behavior_server` are
 remapped to **`/cmd_vel_nav`**, because `config/safety.yaml` makes the twist mux the only permitted
@@ -103,11 +106,36 @@ remapping only the controller leaves recovery behaviours driving the base around
 **2. Nav needs the deadman; teleop does not.** Nav is `requires_enable: true`, so it needs
 `/safety/enable` held **and** `arm_stowed` satisfied. Three fail-closed gates.
 
-**3. MPPI `Omni` commands motion this base cannot execute.** It is kept to match the validated sim
-config, but the sim makes it work via `utp/control/ranger_4ws.py`'s `omni` mode, which drives the
-four wheel joints **directly** — something Isaac can do and CAN cannot (the protocol offers a body
-twist and no per-wheel interface). On hardware the firmware silently drops a component of any
-strafe+yaw command (GAP 1). If doorway transit misbehaves, this is the first thing to re-open.
+**3. `motion_model` is `DiffDrive`, not `Omni`.** MPPI-Omni emits strafe and yaw in one twist, and
+the Ranger firmware **drops `angular.z` whenever `linear.y` is non-zero**. The sim can run Omni
+because `utp/control/ranger_4ws.py` drives the four wheel joints directly — Isaac can, CAN cannot
+(the protocol offers a body twist and no per-wheel interface). Set in the `nav2_params_os0*.yaml`
+files. If doorway transit misbehaves, this is the first thing to re-open.
+
+**4. `sensor_frame` is `base_link`, not `lidar_link`.** `/scan_filtered` is the Ouster cloud
+projected by `pointcloud_to_laserscan` with `target_frame:=base_link`, and **there is no
+`base_link -> lidar_link` TF on this robot at all**. With the old value Nav2's ObservationBuffer
+drops every scan and the obstacle layer never marks or clears — costmaps stay empty and every path
+looks clear, so the robot drives into a door at full confidence. This is the single most expensive
+bug this stack has had.
+
+**5. The OS0 sits at 1.146 m, so `/scan_filtered` starts at 0.50 m.** Close-in ground obstacles are
+in a blind cone that no software setting fixes.
+
+---
+
+## Two map modes, and which one a campaign needs
+
+| | rolling window (`nav2_params_os0.yaml`) | saved map (`nav2_params_os0_map.yaml`) |
+|---|---|---|
+| needs a map first | no | yes — grid **and** pose graph |
+| global costmap | 24 m window travelling with the robot | the whole saved floor |
+| a goal behind an unseen wall | planned straight through it, replanned when the wall appears | planned around it |
+| coordinates portable between sessions | **no** — origin is wherever the robot booted | yes |
+| use it for | a quick RViz click-and-drag check | **all 50 trials** |
+
+`session.sh nav` runs the second. The first is only worth using to confirm Nav2 is alive at all
+before a map exists.
 
 ---
 

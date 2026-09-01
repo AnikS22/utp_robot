@@ -95,11 +95,11 @@ def current_map_name(node=None) -> str | None:
     """Name of the saved map currently loaded, or None if MOLA is running fresh.
 
     MOLA does not advertise which map it was given, so this is recorded on the side by
-    bringup/map_load.sh at the same moment it calls /map_load.
+    bringup/map_persist.sh and bringup/session.sh at the moment the map becomes live.
 
     THE STALENESS TRAP. A name alone is not enough: load 'atrium', restart MOLA with no map, and
     a name-only record would still claim 'atrium' while the frame origin had moved to wherever
-    the robot booted. So map_load.sh stores the map name AND the MOLA session it was loaded into,
+    the robot booted. So they store the map name AND the SLAM session it was loaded into,
     and this returns None when that session is not the one running -- which correctly demotes
     every named waypoint to "recorded against a map that is not loaded".
 

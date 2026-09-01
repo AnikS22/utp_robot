@@ -89,7 +89,7 @@ def main() -> None:
     while not latest and time.time() - t0 < 10:
         rclpy.spin_once(node, timeout_sec=0.2)
     if not latest:
-        print(f"NO DATA on {args.topic} — is bringup/lidar.sh running, and ROS_DOMAIN_ID the same?")
+        print(f"NO DATA on {args.topic} — is bringup/lidar3d.sh running, and ROS_DOMAIN_ID the same?")
         sys.exit(1)
 
     if tf_buffer is not None:
@@ -103,7 +103,7 @@ def main() -> None:
             print(f"TF base_link -> {frame}: xyz=({tr.x:.3f}, {tr.y:.3f}, {tr.z:.3f})  OK")
         except Exception as e:
             print(f"TF base_link -> {frame} MISSING: {e}")
-            print("  Nav2's costmap needs this or it is blind. Run bringup/lidar.sh (publishes it),")
+            print("  Nav2's costmap needs this or it is blind. Run bringup/lidar3d.sh (publishes it),")
             print("  or a URDF / robot_state_publisher that owns the transform.")
 
     try:

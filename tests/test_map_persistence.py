@@ -158,7 +158,7 @@ def test_map_persist_refuses_when_no_slam_is_running():
 def test_map_persist_rejects_a_path_as_a_name():
     r = subprocess.run(["bash", str(REPO / "bringup" / "map_persist.sh"), "../etc/passwd"],
                        capture_output=True, text=True, timeout=60)
-    assert r.returncode != 0 and "must not contain" in (r.stdout + r.stderr)
+    assert r.returncode != 0 and "not a path" in (r.stdout + r.stderr)
 
 
 def test_map_persist_saves_grid_and_posegraph_and_loaded_map():
@@ -169,4 +169,72 @@ def test_map_persist_saves_grid_and_posegraph_and_loaded_map():
     assert "serialize_map" in src, "no pose graph -> `session.sh nav` cannot relocalize"
     assert "save_map" in src, "no grid -> Nav2 has no costmap to plan on"
     assert ".loaded_map" in src, "no provenance -> waypoints record as nameless"
-    assert '[ -f "$OUT.posegraph" ]' in src, "must verify the FILE, not just the service reply"
+    assert '"$STEM.posegraph"' in src, "must verify the FILE, not just the service reply"
+    assert "one-map-script" not in src
+
+
+# --------------------------------------------------------------------------- consistency
+# These are cheap, boring, and each one corresponds to a whole afternoon already lost: a stack
+# that came up healthy while pointing at a topic, a service or a script that does not exist.
+LIVE_DIRS = ("bringup", "safety", "config", "nav2_bringup", "docs")
+
+
+def _live_files():
+    for d in LIVE_DIRS:
+        for p in (REPO / d).rglob("*"):
+            if p.is_file() and p.suffix in (".py", ".sh", ".yaml", ".xml", ".md"):
+                if "__pycache__" not in str(p):
+                    yield p
+    for name in ("README.md", "CLAUDE.md"):
+        if (REPO / name).exists():
+            yield REPO / name
+
+
+def test_nothing_live_tells_you_to_run_an_archived_script():
+    """Archiving a script that a live file still names is worse than leaving it: the instruction
+    now points at nothing, and you find out standing in the lab."""
+    archived = {p.name for p in (REPO / "archive").glob("*")
+                if p.suffix in (".py", ".sh", ".yaml")}
+    assert archived, "archive/ is empty — did the layout change?"
+    bad = []
+    for p in _live_files():
+        txt = p.read_text(errors="ignore")
+        for name in archived:
+            # `archive/<name>` is a correct reference TO the archive; a bare `bringup/<name>` or
+            # `bash <name>` is a dangling instruction.
+            for form in (f"bringup/{name}", f"config/{name}", f"tests/{name}"):
+                if form in txt:
+                    bad.append(f"{p.relative_to(REPO)} -> {form}")
+    assert not bad, "live files reference archived scripts:\n  " + "\n  ".join(sorted(bad))
+
+
+def test_slam_is_launched_from_the_params_file_not_inline_flags():
+    """Inline -p flags take slam_toolbox's DEFAULTS for everything not listed, including three
+    that decide whether the map is usable: min_laser_range (else the chassis is mapped in),
+    do_loop_closing (else the map comes out bent) and stack_size_to_use (else serializing a
+    building-sized graph dies — i.e. the save fails on exactly the map worth keeping)."""
+    src = (REPO / "bringup" / "session.sh").read_text()
+    assert "slam_os0.yaml" in src, "session.sh must launch slam_toolbox with config/slam_os0.yaml"
+    assert "-p scan_topic:=/scan -p resolution:=0.05" not in src, \
+        "the inline-parameter launch is back"
+    params = (REPO / "config" / "slam_os0.yaml").read_text()
+    for key in ("min_laser_range", "do_loop_closing", "stack_size_to_use", "base_frame"):
+        assert key in params, f"config/slam_os0.yaml lost {key}"
+
+
+def test_the_live_scan_chain_is_one_chain():
+    """/scan_mapping belonged to the retired A1M8 gate. A params file still asking for it would
+    leave slam_toolbox subscribed to a topic nobody publishes — /map never appears and the node
+    looks perfectly healthy."""
+    params = (REPO / "config" / "slam_os0.yaml").read_text()
+    line = [l for l in params.splitlines() if l.strip().startswith("scan_topic:")]
+    assert line and line[0].split(":", 1)[1].strip() == "/scan", \
+        f"slam_os0.yaml must consume /scan (scan_relay's RELIABLE copy), got {line}"
+
+
+def test_map_persist_is_the_only_map_script():
+    """Four scripts disagreed about what a saved map consists of, so a save could report success
+    with the campaign-critical half missing."""
+    others = [p.name for p in (REPO / "bringup").glob("*map*")
+              if p.name not in ("map_persist.sh", "map_watch.py")]
+    assert not others, f"map scripts are splitting again: {others}"

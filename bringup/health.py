@@ -199,7 +199,7 @@ n.destroy_node(); rclpy.shutdown()
         return
 
     rep.add("/scan", scan > 3.0, f"{scan:.1f} Hz (expect ~6.5)"
-            + ("" if scan > 3.0 else "  <- lidar node alive but silent? restart bringup/lidar.sh"))
+            + ("" if scan > 3.0 else "  <- lidar node alive but silent? restart bringup/lidar3d.sh"))
     rep.add("camera", cam > 20.0, f"{cam:.1f} Hz on camera_info (expect ~30)"
             + ("" if cam > 20.0 else "  <- restart bringup/camera.sh"))
     rep.add("/odom", odom > 20.0, f"{odom:.1f} Hz"

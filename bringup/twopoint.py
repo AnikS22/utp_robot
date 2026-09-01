@@ -264,7 +264,7 @@ def main() -> int:
         if n.scan is None and not a.no_veto:
             print("\nNOT DRIVING: no /scan_filtered, so the corridor veto would be inactive and "
                   "the robot would drive with NO obstacle check.\n"
-                  "  Start it with bringup/lidar.sh, or pass --no-veto to drive blind "
+                  "  Start it with bringup/session.sh up, or pass --no-veto to drive blind "
                   "deliberately.", file=sys.stderr)
             return 1
         if n.scan is None:

@@ -6,7 +6,7 @@
 #
 # Step kinds:
 #   goto: <waypoint>     drive there on odometry; the lidar vetoes a blocked corridor
-#   action: <name>       run a visual action (see ACTIONS in bringup/route_run.py)
+#   action: <name>       run a visual action (see ACTIONS in utp/pipeline/, driven by run_trial.py)
 #     query: "..."       optional: what the grounder should look for
 #     standoff: 60       optional: mm, measured to the flange marker
 #   wait: <seconds>      hold position

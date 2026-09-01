@@ -38,9 +38,8 @@ You are working on the **physical robot** for "Unlocking the Path" (ICRA 2027): 
 ```bash
 source bringup/env.sh                 # ROS + workspace + ROS_DOMAIN_ID=9, conda scrubbed
 bash bringup/setup_workspace.sh       # build drivers from pinned commits (idempotent, no sudo)
-bash bringup/lidar.sh                 # /scan + base_link->lidar_link
+bash bringup/lidar3d.sh               # OS0-128 -> /ouster/points
 python3 bringup/preflight.py -v       # collision + stale-port check
-python3 bringup/probe_rplidar.py      # raw serial probe, no ROS
 python3 bringup/check_scan_geometry.py --tf
 PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/ -q
 ```
@@ -73,36 +72,39 @@ side-slip motion. During spin/crab motion, wheel odometry and lidar scan matchin
 in a repetitive corridor, `map -> odom` was observed moving about 0.45 m in seven seconds while
 the chassis twist was zero. Do not compensate by driving the corridor twice.
 
-The mapping data path is now deliberately fail-closed:
+The mapping data path (OS0-128, since 2026-08-30):
 
 ```text
-/scan -> filter_scan.py -> /scan_filtered -> mapping_scan_gate.py -> /scan_mapping -> SLAM
+/ouster/points -> pointcloud_to_laserscan -> /scan_filtered -> scan_relay.py -> /scan -> slam_toolbox
 ```
 
-- `filter_scan.py` removes the chassis-occluded rear sector and retains -105° through +105°.
-- `mapping_scan_gate.py` forwards scans only when a fresh (<=0.5 s) `/system_state` reports
-  DualAckermann (`motion_mode: 0`). Spin, parallel/crab, side-slip, unknown, and stale state block
-  SLAM without stopping raw sensor diagnostics.
-- `config/slam.yaml` consumes `/scan_mapping`, with 0.15 s, 0.10 m, and 0.10 rad update thresholds
-  and a 30-scan buffer. The previous 0.5 s/m/rad settings skipped too much overlap at driving speed.
-- `bringup/mapping.sh` now starts the rear filter and Ackermann gate automatically.
-- RViz displays `/scan_filtered`; seeing the robot on raw `/scan` is expected and harmless.
+- `pointcloud_to_laserscan` projects with `target_frame:=base_link` and a `min_height`/`max_height`
+  band, so the chassis is removed **geometrically**. `min_laser_range: 0.55` in
+  `config/slam_os0.yaml` removes what is left. The A1M8-era rear-sector filter and Ackermann gate
+  (`filter_scan.py` -> `mapping_scan_gate.py` -> `/scan_mapping`) are therefore retired; see
+  `archive/README.md`.
+- `scan_relay.py` is **not** optional: `pointcloud_to_laserscan` publishes BEST_EFFORT and
+  slam_toolbox subscribes RELIABLE, and incompatible DDS QoS delivers zero messages with no error
+  anywhere.
+- `config/slam_os0.yaml` is the live SLAM config and `bringup/session.sh` launches with it. Never
+  launch slam_toolbox with inline `-p` flags: that silently takes stock defaults for
+  `min_laser_range` (the robot gets painted into the map), `do_loop_closing` (the map comes out
+  bent) and `stack_size_to_use` (serializing a building-sized graph dies).
 
-Disconnected ROS integration validation forwarded 6/6 Ackermann scans, 0 spin scans, and 0 scans
-after chassis state became stale. Python compilation, shell syntax, diff checks, and all 104 unit
-tests passed. This verifies the software gate; the next session still requires a human-observed
-physical check before declaring mapping green.
-
-For the next map: stow the arm, hold the E-stop/RC, select **DualAckermann before moving**, use broad
-turns at no more than about 0.25 m/s, pause after turns, and close loops by returning via a different
-route. If map updates stop, check RC motion mode and `/system_state`; never switch to spin/crab to
-finish a turn. Start with:
+DRIVING THE MAP: stow the arm, hold the RC, select **DualAckermann before moving**, broad turns at
+no more than ~0.25 m/s, pause after turns, and **close the loop** by returning past your start via
+a different route. The old gate that enforced Ackermann is gone, but the reason survives it: spin
+mode caused metre-scale scan-matching jumps on 2026-08-24, and that was the *odometry*, not the
+scan. Glass doors will not appear; mark them as keepouts by hand.
 
 ```bash
-bash bringup/mapping.sh
+bash bringup/session.sh map              # every layer, in the order that works
+python3 bringup/map_watch.py             # another terminal, while driving
+bash bringup/map_persist.sh save <name>  # grid + pose graph + .loaded_map, all three or none
 ```
 
-This starts read-only sensing/SLAM and works with the separately started Ranger driver under RC
-control. Save both the occupancy map and pose graph after each good closed loop with
-`bash bringup/save_map.sh`. Glass doors will not be represented reliably; mark them manually as
-keepouts before Nav2. All ROS hardware processes were stopped before unplugging on 2026-08-24.
+`map_persist.sh` is the ONE map script (`save` / `resume` / `list`). A `.pgm` without a
+`.posegraph` cannot be relocalized into — and slam_toolbox does not error on one, it silently
+starts a new graph at the robot's current pose. Full procedure: `docs/MAPPING.md`.
+
+All ROS hardware processes were stopped before unplugging on 2026-08-24.

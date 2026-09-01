@@ -86,7 +86,7 @@ Also measured, and worth knowing before trusting any number from this platform:
 
 ```
               ┌─────────────────────────────────────────────┐
-   route  ──▶ │ route_run.py    waypoints + actions in order │
+   mission ─▶ │ run_trial.py    one trial: legs + FSM        │
    (yaml)     └──────┬──────────────────────────────┬────────┘
                      │ leg blocked?                 │ action step
                      ▼                              ▼
@@ -133,16 +133,18 @@ safety/        pure decision logic — no ROS imports, so it is testable headles
                lidar_lift · scan_filter · mux_watch · waypoint_frame · teleop_guard
 bringup/       the executable layer: ROS nodes, run scripts, one-shot diagnostics
                health.py       preflight — fails on any of the six silent-degradation paths
-               route_run.py    the route executor
+               run_trial.py    one trial · run_campaign.py  N trials, with drift budget
+               session.sh      the front door: up · map · nav · campaign · down
+               nav2_goto.py    drive one leg on the saved map · map_persist.sh  the map script
                waypoints.py    record / list / anchor odom-frame waypoints
                press_run.sh    READY → LOOK → GROUND → REACH
                reach_control.sh  ground, position, re-ground, press
-config/        routes.yaml (missions) · safety.yaml (gates, speed and slew ceilings) · slam.yaml
+config/        routes.yaml (missions) · safety.yaml (gates, speed and slew ceilings) · slam_os0.yaml
 nav2_bringup/  Nav2 config, ported for real hardware (use_sim_time:=false, spin removed)
-docs/          runbooks — start with MORNING.md, then NAVTEST.md and ROUTES.md
-tests/         243 tests, all headless: no ROS, no GPU, no hardware
+docs/          runbooks — start with MORNING.md, then MAPPING.md and NAV2.md
+tests/         306 tests, all headless: no ROS, no GPU, no hardware
 patches/       our diffs against upstream drivers, applied by setup_workspace.sh
-maps/          site maps from the SLAM attempt (see maps/README.md)
+maps/          site maps (see maps/README.md) · archive/ retired scripts, see archive/README.md
 ros2_ws/       GITIGNORED — rebuilt from pinned upstream commits by setup_workspace.sh
 ```
 
@@ -170,7 +172,7 @@ With hardware, four terminals, left running:
 
 ```bash
 ros2 launch ranger_bringup ranger_mini_v3.launch.py   # 1  chassis
-bash bringup/lidar.sh                                 # 2  lidar + /scan_filtered
+bash bringup/lidar3d.sh                               # 2  OS0 -> /ouster/points -> /scan_filtered
 bash bringup/camera.sh                                # 3  camera
 bash bringup/safety.sh                                # 4  safety mux + arm gate
 ```
@@ -187,15 +189,16 @@ It must report chassis mode `CAN` (not `RC`), `arm_stowed` at 100%, and exactly 
 Record a route and run it (waypoints are odom-frame — record and run in one session):
 
 ```bash
-python3 bringup/waypoints.py record start
+python3 bringup/waypoints.py record start  --frame map
 #  ... drive to the door ...
-python3 bringup/waypoints.py record doors
+python3 bringup/waypoints.py record door   --frame map
 #  ... drive to the press pose ...
-python3 bringup/waypoints.py record button
-python3 bringup/route_run.py press_and_out --go --confirm
+python3 bringup/waypoints.py record button --frame map
+python3 bringup/nav2_goto.py door --go     # one leg, on the saved map
+bash bringup/session.sh campaign 50        # the full run
 ```
 
-`--confirm` pauses before every step; `--go` is required for any motion at all. Full procedure,
+`--go` is required for any motion at all; without it every script prints what it would do. Full procedure,
 including what to watch and when to stop it, is in **[docs/MORNING.md](docs/MORNING.md)**.
 
 `ROS_DOMAIN_ID` is **9 for hardware, 42 for simulation**, set by `bringup/env.sh`. This separation is

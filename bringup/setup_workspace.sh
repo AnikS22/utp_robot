@@ -87,5 +87,5 @@ Workspace built. To use it:
     source /opt/ros/jazzy/setup.bash
     source $WS/install/setup.bash
 
-Then:  bash bringup/lidar.sh
+Then:  bash bringup/session.sh up
 EOF

@@ -27,10 +27,10 @@ slam_toolbox:
     odom_frame: odom
     map_frame: map
     base_frame: base_link
-    # The raw rear sector sees the chassis 0.16-0.18 m away and painted the robot into the first
-    # physical map on every pose. filter_scan.py preserves forward+sides and emits NaN behind.
-    # mapping_scan_gate.py only forwards this topic while the Ranger reports
-    # DualAckermann mode. Spin/crab motion was measured to make scan matching jump.
+    # /scan is scan_relay.py's RELIABLE copy of /scan_filtered, which is the OS0 cloud projected
+    # by pointcloud_to_laserscan with min_height/max_height. The chassis is removed geometrically
+    # by that height band plus min_laser_range below, so the old A1M8-era rear-sector filter and
+    # Ackermann gate (/scan_mapping) are gone -- see archive/README.md.
     scan_topic: /scan
     use_map_saver: true
     mode: mapping #localization
