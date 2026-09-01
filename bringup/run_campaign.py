@@ -192,8 +192,16 @@ def main() -> int:
             anchor = pose_now
             print(f"[campaign] anchor pose x={anchor[0]:.3f} y={anchor[1]:.3f} yaw={anchor[2]:.3f}")
 
+        # EVIDENCE MUST NOT OVERWRITE ITSELF. RosWorld names captures
+        # f"{capture_prefix}_{self._n:03d}" and reset() puts _n back to 0 every trial, so a fixed
+        # prefix means trial 2 writes over trial 1's frames and a 50-trial campaign keeps only the
+        # last one. The records would still look complete while pointing at the wrong images.
+        world.capture_prefix = f"camp_{a.method}_t{n:03d}"
+
         t0 = time.time()
         try:
+            # seed=i, so make_trial_id (which hashes scene/seed/method) differs per trial and the
+            # records are distinguishable.
             rec = run_trial(cfg, world, modules, a.scene, i, a.method)
         except Exception as e:                       # a crashed trial must not kill the campaign
             print(f"[campaign] trial raised {type(e).__name__}: {e}", file=sys.stderr)

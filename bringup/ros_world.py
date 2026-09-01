@@ -91,6 +91,18 @@ class RosWorld:
         self._last_nav = "reached"
         self._last_capture = None
         self._blockage = None
+        # THE LOOK LADDER IS PER-TRIAL STATE AND MUST RESET WITH IT (2026-08-31).
+        # run_trial.py builds a fresh RosWorld per invocation, so this never mattered there. A
+        # multi-trial campaign (bringup/run_campaign.py) reuses ONE world across N trials, and
+        # without this every trial after the first would start with _scan_i already past the end
+        # of SCAN_BEARINGS_DEG: the survey would be inert, the reasoner would abstain with nothing
+        # new to look at, and 49 of 50 trials would fail identically for a reason that has nothing
+        # to do with the robot. Same class as the sim's _scan_i/_strafe_i reset in
+        # IsaacWorldClient.reset(), which exists for exactly this reason.
+        self._scan_i = 0
+        self._scan_offset = 0.0
+        self._looks = []
+        self._widened = False
 
     # ------------------------------------------------------------- perception
     def get_observation(self) -> Observation:
