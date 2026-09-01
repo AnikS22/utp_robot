@@ -2093,3 +2093,57 @@ home and measured drift against wherever it landed.
   with the E-stop in hand. `run_campaign.py` refuses to start while it is false.
 * The escalation reverses into the arc the self-mask blinds. Attended only.
 * 11 tests in `test_ros_world_escalation.py` are red, from the staged-leg default changing.
+
+
+## 2026-09-01c — the elevator, and a calibration error two targets wide
+
+**CONTACT ON THE ELEVATOR BUTTON, AND A BETTER ADA PRESS FROM THE SAME FIX.**
+
+THE FIX. `calib/handeye.json` gained `target_offset_link_base_m: [0.003, -0.020, 0.040]`,
+applied by `bringup/approach_target.py` to every grounded target. It was converged empirically
+against the star-1 button (+20 mm up, +20 more, 5 right, 10 right + 1 deep, 5 right + 3 deep,
+1 back) until the arm made CONTACT. It was then applied UNCHANGED to the ADA door plate -- a
+different target, wall and pose -- and that press landed MORE CENTRED than it had without it.
+
+A correction that improves two unrelated targets is a property of the rig. The hand-eye solve is
+sound (2.96 mm RMS, worst 8.2 mm, 10 pairs, 63.8 deg spread); this is a systematic error
+downstream of it that the 120 mm ADA plate absorbed for weeks and the 25 mm elevator buttons
+exposed in one attempt. ITS SHAPE MATTERS: 20 mm lateral and 40 mm vertical against 3 mm along
+the approach axis. That is a camera-to-arm offset, not a depth-lift bias -- which was my first
+hypothesis, stated confidently, and wrong.
+
+THE LIDAR IN A STEEL CAR, which I expected to be the hard part and was not. Robot inside, facing
+the doors: 665 of 1031 bins valid (65%); side walls a tight band, min 1.00 median 1.06-1.15 max
+1.33 m; forward doors min 0.45 median 0.63 m. ZERO returns beyond 3.0 m -- no multipath at all,
+where metal facing metal usually produces phantom geometry at 2x and 3x the car depth. "Slightly
+metallic" doors behaved like a surface, not like glass.
+
+THE TAPE IS WHAT MAKES THE BUTTONS FINDABLE. Blue tape on the button faces is the only saturated
+colour in an all-grey frame. Query "the elevator button marked with blue tape" scored 0.267;
+"the blue elevator button" scored 0.443 on the same panel. Without it the four fire-service
+keyswitches above are larger, higher-contrast, and win.
+
+AND THE PART THAT DOES NOT WORK. Consecutive captures of the same panel with the same query chose
+DIFFERENT buttons -- star-1 at 0.443, then button 2 at 0.421. The margin between two legitimate
+floor buttons is ~0.02, so the choice is effectively random, and pressing the wrong floor is a
+SILENT failure: no veto fires, nothing refuses, you simply go somewhere else. The fire-alarm decoy
+had a right answer and a wrong one; this has two right answers and no way to say which is wanted.
+Both presses here were made by naming the button explicitly, not by trusting the ranking.
+
+THE REASONER DOES NOT KNOW WHERE IT IS. Asked to plan from inside the car, `ours` returned
+`call_elevator` -- summon a car -- with a target described as "the blue up-arrow button near the
+floor indicator", which is not in the frame. `capabilities.py` has both `call_elevator` and
+`select_floor`; inside the car only the second is correct. INSIDE-VERSUS-OUTSIDE IS A STATE THE
+PIPELINE CANNOT REPRESENT, so the VLM reaches for the first step of the elevator script wherever
+it is. That is the real multi-floor finding: not a bug, a missing abstraction.
+
+ALSO: `--step-mm` and `--speed` added to approach_target. The default 60 mm increments exist so a
+fault stops at a known pose, each segment stays near-straight in tool space instead of letting the
+IK route the elbow, and joint headroom is re-checked before every commit; `--step-mm 1000` makes
+it one move and is a close-and-aligned tool, not a default. RViz held 14.3 GB of GPU with the full
+131k-point cloud and starved the detector into CUDA OOM -- disable the 3D cloud unless inspecting
+mounting.
+
+NO force or pressure sensor is fitted (`get_ft_sensor_data` answers zeros) and
+`collision_sensitivity` is 0. There is also NO live getter for the TCP in SDK 1.18.4 -- the
+`tcp_offset` property is a local cache, so the zeros I read all evening proved nothing either way.

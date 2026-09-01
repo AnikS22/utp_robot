@@ -1,0 +1,115 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+      Splitter Ratio: 0.5
+    Tree Height: 500
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    # FIXED FRAME IS base_link ON PURPOSE. No map, no map->odom, nothing from SLAM -- so this view
+    # works in a place the robot cannot localize, which is exactly the elevator. Everything is
+    # drawn relative to the robot itself.
+    - Class: rviz_default_plugins/Grid
+      Name: Grid (1 m)
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 20
+      Color: 130; 130; 130
+      Alpha: 0.4
+      Reference Frame: <Fixed Frame>
+      Value: true
+    # THE LIVE CAMERA. This is the one that answers "can it see the buttons".
+    - Class: rviz_default_plugins/Image
+      Name: CAMERA (can it see the buttons?)
+      Enabled: true
+      Topic:
+        Value: /mast_cam/color/image_raw
+        Depth: 2
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Max Value: 1
+      Min Value: 0
+      Normalize Range: true
+      Value: true
+    # THE FULL 3D CLOUD, not the 2D slice. In a metal box the slice hides what matters: specular
+    # walls return hard at normal incidence and nothing at a glancing angle, and multipath puts
+    # phantom returns BEYOND the true wall. Both are visible in 3D and invisible in the flattened
+    # scan. Coloured by intensity because a specular return is bright and a real one is not.
+    - Class: rviz_default_plugins/PointCloud2
+      Name: OS0 3D cloud (intensity)
+      Enabled: true
+      Topic:
+        Value: /ouster/points
+        Depth: 2
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Size (m): 0.02
+      Style: Points
+      Color Transformer: Intensity
+      Channel Name: intensity
+      Decay Time: 0
+      Position Transformer: XYZ
+      Use rainbow: true
+      Value: true
+    # The 2D slice the navigation stack actually consumes, for comparison against the cloud above.
+    - Class: rviz_default_plugins/LaserScan
+      Name: 2D slice (what Nav2 sees)
+      Enabled: true
+      Topic:
+        Value: /scan
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Size (m): 0.05
+      Style: Points
+      Color: 255; 85; 0
+      Color Transformer: FlatColor
+      Decay Time: 0.25
+      Position Transformer: XYZ
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Frame Timeout: 15
+      Marker Scale: 0.5
+      Show Arrows: false
+      Show Axes: true
+      Show Names: true
+      Update Interval: 0
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 40; 40; 44
+    Fixed Frame: base_link
+    Frame Rate: 20
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Orbit
+      Distance: 6
+      Pitch: 0.55
+      Yaw: 3.14
+      Focal Point: {X: 0, Y: 0, Z: 0.5}
+    Saved: ~
+Window Geometry:
+  Displays: {collapsed: false}
+  Height: 1000
+  Width: 1700
+  Hide Left Dock: false

@@ -135,6 +135,14 @@ def main() -> int:
     ap.add_argument("--capture", required=True, help="capture dir holding the grounded detection")
     ap.add_argument("--target-cam", nargs=3, type=float, default=None,
                     metavar=("X", "Y", "Z"), help="target in camera optical frame, metres")
+    ap.add_argument("--step-mm", type=float, default=None,
+                    help="approach increment. Large values (e.g. 1000) make it ONE move. The "
+                         "default 60 mm exists so a fault stops at a known pose, each segment "
+                         "stays near-straight in tool space instead of letting the IK route the "
+                         "elbow, and joint headroom is re-checked before every commit.")
+    ap.add_argument("--speed", type=float, default=None,
+                    help="Cartesian speed mm/s (default 25). Raising it raises the current the "
+                         "joints draw against contact, which is what error 31 reads.")
     ap.add_argument("--min-standoff", type=float, default=150.0,
                     help="stop with the MARKER this far from the target, mm")
     ap.add_argument("--go", action="store_true")
@@ -208,6 +216,14 @@ def main() -> int:
         print(f"target from {det_path.name}: '{det.get('query')}' "
               f"score {det.get('score', float('nan')):.3f} via {det.get('backend')}")
     p_arm = T[:3, :3] @ p_cam + T[:3, 3]
+    # SYSTEMATIC TARGET CORRECTION, from calib/handeye.json. Applied to every grounded target
+    # rather than nudged per button, because the bias is a property of the lift and not of any one
+    # target -- and this rig presses buttons on many floors and many panels. See
+    # target_offset_note in that file for how it was measured and what would invalidate it.
+    _off = np.array(c.get("target_offset_link_base_m", [0.0, 0.0, 0.0]), dtype=float)
+    if np.any(_off):
+        p_arm = p_arm + _off
+        print(f"target offset    : {_off.round(4)} m from calib/handeye.json")
     approach = T[:3, :3] @ np.array([0.0, 0.0, 1.0])       # wall-ward, in arm coordinates
     approach /= np.linalg.norm(approach)
 
@@ -244,12 +260,14 @@ def main() -> int:
     print(f"\nstart flange {start_xyz.round(4)}  marker {marker_now.round(4)}")
     print(f"start headroom {room:.1f} deg on J{j}")
 
+    step_mm = a.step_mm if a.step_mm else STEP_MM
+    speed = a.speed if a.speed else SPEED_MM_S
     dist_now = float(np.dot(p_arm - marker_now, approach))
     print(f"marker is {dist_now*1000:.0f} mm from the target along the approach axis")
     stops = []
     d = dist_now
-    while d - STEP_MM / 1000.0 > a.min_standoff / 1000.0:
-        d -= STEP_MM / 1000.0
+    while d - step_mm / 1000.0 > a.min_standoff / 1000.0:
+        d -= step_mm / 1000.0
         stops.append(d)
     stops.append(a.min_standoff / 1000.0)
     print(f"\n{len(stops)} steps, stopping at {a.min_standoff:.0f} mm standoff:")
@@ -272,7 +290,7 @@ def main() -> int:
             print(f"\n[step {i}/{len(stops)}] marker standoff {s*1000:.0f} mm ...")
             code = arm.set_position(x=fl[0]*1000, y=fl[1]*1000, z=fl[2]*1000,
                                     roll=start_rpy[0], pitch=start_rpy[1], yaw=start_rpy[2],
-                                    speed=SPEED_MM_S, is_radian=False, wait=True)
+                                    speed=speed, is_radian=False, wait=True)
             if code != 0 or arm.error_code:
                 print(f"  STOPPED: code={code} err={arm.error_code}")
                 # A FAULTED ARM IS A FAILED PRESS. This used to break, retreat, and return 0, so
