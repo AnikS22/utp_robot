@@ -115,6 +115,57 @@ class Pose(Node):
 
 
 def cmd_record(n: Pose, a) -> int:
+    # --at lets a waypoint be marked by POINTING AT THE MAP instead of driving the robot there.
+    # `record` normally captures where the robot IS, which is the right default -- the pose is
+    # measured, not estimated, and for anything the arm must reach (the ADA plate at a 0.68 m
+    # standoff) it is the only acceptable way.
+    #
+    # But `door` and `outside` are NAVIGATION targets: Nav2 plans to them and the goal checker
+    # accepts arrival within its own tolerance, so a coordinate read off the map to +-15 cm is
+    # entirely good enough -- and it does not require driving the robot to a spot that may be
+    # behind the very closed door you are trying to test. Recorded exactly like a driven one,
+    # with the same map-name provenance, so nothing downstream can tell or needs to.
+    #
+    # The heading, when not given, faces from where the ROBOT IS NOW toward the point -- the
+    # direction it will be travelling when it arrives.
+    if getattr(a, "at", None):
+        if n.src.frame != FRAME_MAP:
+            print("--at records a MAP-frame coordinate; run with --frame map", file=sys.stderr)
+            return 1
+        gx, gy = float(a.at[0]), float(a.at[1])
+        if len(a.at) > 2:
+            th = math.radians(float(a.at[2]))
+        else:
+            if not n.wait_for_pose():
+                print("need the robot's pose to derive a heading; pass a third --at value "
+                      "(degrees) to set it explicitly", file=sys.stderr)
+                return 1
+            rx, ry, _ = n.pose
+            th = math.atan2(gy - ry, gx - rx)
+        x, y = gx, gy
+        d = load()
+        mola = mola_session_id(n)
+        if mola is None:
+            print("cannot identify the SLAM pose publisher. Refusing to record a waypoint that "
+                  "cannot be validated later.", file=sys.stderr)
+            return 1
+        entry = {"x": round(x, 4), "y": round(y, 4), "yaw": round(th, 4),
+                 "odom_epoch": round(time.time()), FRAME_KEY: FRAME_MAP,
+                 MOLA_SESSION_KEY: mola, "marked_on_map": True}
+        mp = current_map_name(n)
+        if not mp:
+            print("NO SAVED MAP IS LOADED. A map-frame coordinate means nothing without one -- "
+                  "refusing.", file=sys.stderr)
+            return 1
+        entry[MAP_NAME_KEY] = mp
+        d[a.name] = entry
+        save(d)
+        print(f"marked '{a.name}' ON THE MAP: x={x:+.3f} y={y:+.3f} "
+              f"yaw={math.degrees(th):+.1f} deg [frame=map, map='{mp}']")
+        print("  NOT a measured robot pose -- fine for a navigation goal, NOT for an arm target.")
+        print(f"  -> {STORE}")
+        return 0
+
     if not n.wait_for_pose():
         print(f"no pose: {n.src.description or 'nothing publishing'}", file=sys.stderr)
         return 1
@@ -476,7 +527,11 @@ def main() -> int:
                              "when MOLA is publishing a usable one, and always says which it "
                              "chose rather than deciding silently.")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("record", parents=[common]); r.add_argument("name"); r.set_defaults(fn=cmd_record)
+    r = sub.add_parser("record", parents=[common]); r.add_argument("name")
+    r.add_argument("--at", nargs="+", metavar=("X", "Y"),
+                   help="mark a MAP coordinate instead of capturing the robot's pose: "
+                        "--at X Y [YAW_DEG]. For navigation targets only, never arm targets.")
+    r.set_defaults(fn=cmd_record)
     sub.add_parser("list", parents=[common]).set_defaults(fn=cmd_list)
     sub.add_parser("where", parents=[common]).set_defaults(fn=cmd_where)
     rb = sub.add_parser("rebase", parents=[common], help="re-express waypoints after a ranger_base restart")

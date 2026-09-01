@@ -17,6 +17,7 @@ Both failures produce a stack that looks up. That is what makes them worth a tes
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -146,8 +147,14 @@ def test_every_existing_map_is_either_complete_or_obviously_grid_only():
 def test_map_persist_refuses_when_no_slam_is_running():
     """Behavioural: actually run it. It used to call MOLA's /map_save unconditionally, so on the
     slam_toolbox stack it failed with 'MOLA refused to save' and no map was written."""
+    # AN ISOLATED DOMAIN, NOT THE AMBIENT ONE. Run bare, this inherits ROS_DOMAIN_ID=9 and finds
+    # the LIVE slam_toolbox on the robot -- so instead of testing the refusal path it tried to
+    # serialize the real map under the name "unittest_probe" and hit the 180 s timeout
+    # (2026-09-01). A test for "no SLAM is running" has to guarantee no SLAM is running, and on
+    # this stack the only thing that guarantees that is a domain nothing else is using.
+    env = {**os.environ, "ROS_DOMAIN_ID": "77", "UTP_ROBOT_DOMAIN": "77"}
     r = subprocess.run(["bash", str(REPO / "bringup" / "map_persist.sh"), "unittest_probe"],
-                       capture_output=True, text=True, timeout=180)
+                       capture_output=True, text=True, timeout=180, env=env)
     assert r.returncode != 0, "must not claim success with no SLAM running"
     out = r.stdout + r.stderr
     assert "no SLAM is running" in out or "serialize_map" in out, \

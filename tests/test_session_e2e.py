@@ -175,13 +175,28 @@ def run(script, *args, env, timeout=120, cwd=None):
 
 @pytest.fixture
 def maps_dir():
-    """Work in the real maps/ dir (the scripts hardcode $REPO/maps) but clean up after."""
+    """Work in the real maps/ dir (the scripts hardcode $REPO/maps) but clean up after.
+
+    .loaded_map IS MOVED ASIDE FOR THE DURATION. Several tests assert it is ABSENT after a
+    refused save or nav -- "the script must not claim a map is live when it is not". That
+    assertion silently became untestable the moment a real map was loaded on the robot
+    (2026-09-01): the file existed before the test, so the test failed while the scripts were
+    behaving perfectly. Tests that assert absence must own the absence.
+    """
     d = REPO / "maps"
     before = {p.name for p in d.iterdir()}
-    yield d
-    for p in list(d.iterdir()):
-        if p.name not in before:
-            (shutil.rmtree if p.is_dir() else Path.unlink)(p)
+    loaded = d / ".loaded_map"
+    stash = loaded.read_bytes() if loaded.exists() else None
+    if stash is not None:
+        loaded.unlink()
+    try:
+        yield d
+    finally:
+        for p in list(d.iterdir()):
+            if p.name not in before:
+                (shutil.rmtree if p.is_dir() else Path.unlink)(p)
+        if stash is not None:
+            loaded.write_bytes(stash)
 
 
 # ============================================================================ map_persist save
