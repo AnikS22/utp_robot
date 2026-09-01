@@ -129,14 +129,15 @@ if [ "$cmd" = "map" ]; then
   # slam_toolbox in Jazzy is a LIFECYCLE node: it starts `unconfigured` and looks exactly like a
   # hung node until it is configured AND activated.
   # PARAMS FILE, NOT INLINE FLAGS. The inline version that used to be here set six parameters and
-  # took slam_toolbox's DEFAULTS for everything else in config/slam_os0.yaml -- including three
-  # that decide whether the map is usable at all:
-  #   min_laser_range 0.55  the OS0 sees the chassis at ~0.2 m. At the default 0.0 the robot is
-  #                         painted into the map at every pose it ever occupied.
+  # took slam_toolbox's DEFAULTS for everything else in config/slam_os0.yaml. Two of those decide
+  # whether the map is usable at all, and both were VERIFIED to take effect on 2026-09-01 by
+  # launching the node against this file and reading the parameters back:
   #   do_loop_closing true  without it a closed loop does not close; the map comes out bent and
   #                         every waypoint inherits the bend.
   #   stack_size_to_use     serializing a building-sized graph overflows the default stack, so
   #                         map_persist.sh's save would die on exactly the map worth keeping.
+  # Also verified taking effect: scan_topic /scan, base_frame base_link, resolution, mode,
+  # max_laser_range. NOT min_laser_range -- see config/slam_os0.yaml, it is inert on Jazzy.
   bg ros2 launch slam_toolbox online_async_launch.py \
      use_sim_time:=false slam_params_file:="$ROOT/config/slam_os0.yaml"
   sleep 5

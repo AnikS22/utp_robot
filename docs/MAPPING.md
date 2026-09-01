@@ -34,9 +34,15 @@ Two parameters it passes that are not optional:
   frame at all, slam_toolbox has nothing to anchor to, and nothing says so.
 - `slam_params_file:=config/slam_os0.yaml`. Stock slam_toolbox uses `base_frame: base_footprint`,
   which this stack does not have — with the stock value it publishes `/map` and looks healthy while
-  **never emitting `map → odom`**. That file also sets `min_laser_range: 0.55` (the OS0 sees the
-  chassis at ~0.2 m; at the default the robot is painted into the map at every pose it occupied),
-  `do_loop_closing: true`, and a `stack_size_to_use` large enough to serialize a building.
+  **never emitting `map → odom`**. That file also sets `do_loop_closing: true` and a
+  `stack_size_to_use` large enough to serialize a building. Both were verified to take effect on
+  2026-09-01 by launching the node against this file and reading the parameters back off it.
+
+  It also sets `min_laser_range: 0.55`, and **that one is inert** — slam_toolbox on Jazzy never
+  declares it (same measurement; `max_laser_range` reads back, `min_laser_range` does not). The
+  chassis is kept out of the map by `pointcloud_to_laserscan`'s `range_min:=0.50` and its
+  `min_height`/`max_height` band instead. That protection is real and already in `session.sh`; it
+  is just not where the config made it look.
 
 ### Driving technique, in rough order of how much it matters
 

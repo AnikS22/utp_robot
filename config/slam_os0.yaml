@@ -48,6 +48,14 @@ slam_toolbox:
     map_update_interval: 5.0
     resolution: 0.05
     restamp_tf: false
+    # min_laser_range IS INERT ON JAZZY. Upstream ships it in every stock config, but the node
+    # never declares it: launched against this file, configured, activated and fed scans,
+    # `ros2 param get /slam_toolbox min_laser_range` still answers "Parameter not set" while
+    # max_laser_range answers 20.0 (measured 2026-09-01). Do not rely on it to keep the chassis
+    # out of the map. What ACTUALLY does that is pointcloud_to_laserscan in session.sh:
+    # `range_min:=0.50` sets the scan message's own range_min, and the min_height/max_height band
+    # drops the chassis geometrically before the projection. Kept at a truthful value so that a
+    # future slam_toolbox which does honour it does not suddenly start mapping the robot.
     min_laser_range: 0.55
     max_laser_range: 20.0
     # The A1M8 produces about 7 scans/s. Keep enough overlap for repetitive corridors;

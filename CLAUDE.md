@@ -88,8 +88,11 @@ The mapping data path (OS0-128, since 2026-08-30):
   anywhere.
 - `config/slam_os0.yaml` is the live SLAM config and `bringup/session.sh` launches with it. Never
   launch slam_toolbox with inline `-p` flags: that silently takes stock defaults for
-  `min_laser_range` (the robot gets painted into the map), `do_loop_closing` (the map comes out
-  bent) and `stack_size_to_use` (serializing a building-sized graph dies).
+  `do_loop_closing` (the map comes out bent) and `stack_size_to_use` (serializing a building-sized
+  graph dies). Both verified to take effect 2026-09-01 by reading them back off the running node.
+- **`min_laser_range` is inert on Jazzy** — slam_toolbox never declares it, measured. The chassis
+  is kept out of the map by `pointcloud_to_laserscan`'s `range_min:=0.50` and its
+  `min_height`/`max_height` band, not by SLAM.
 
 DRIVING THE MAP: stow the arm, hold the RC, select **DualAckermann before moving**, broad turns at
 no more than ~0.25 m/s, pause after turns, and **close the loop** by returning past your start via

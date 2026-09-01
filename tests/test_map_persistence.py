@@ -209,17 +209,41 @@ def test_nothing_live_tells_you_to_run_an_archived_script():
 
 
 def test_slam_is_launched_from_the_params_file_not_inline_flags():
-    """Inline -p flags take slam_toolbox's DEFAULTS for everything not listed, including three
-    that decide whether the map is usable: min_laser_range (else the chassis is mapped in),
-    do_loop_closing (else the map comes out bent) and stack_size_to_use (else serializing a
-    building-sized graph dies — i.e. the save fails on exactly the map worth keeping)."""
+    """Inline -p flags take slam_toolbox's DEFAULTS for everything not listed, including two that
+    decide whether the map is usable: do_loop_closing (else the map comes out bent and every
+    waypoint inherits the bend) and stack_size_to_use (else serializing a building-sized graph
+    dies — the save fails on exactly the map worth keeping).
+
+    Both were verified to take effect on 2026-09-01 by launching
+    `localization_slam_toolbox_node --params-file config/slam_os0.yaml`, configuring it, and
+    reading the parameters back off the running node."""
     src = (REPO / "bringup" / "session.sh").read_text()
     assert "slam_os0.yaml" in src, "session.sh must launch slam_toolbox with config/slam_os0.yaml"
     assert "-p scan_topic:=/scan -p resolution:=0.05" not in src, \
         "the inline-parameter launch is back"
     params = (REPO / "config" / "slam_os0.yaml").read_text()
-    for key in ("min_laser_range", "do_loop_closing", "stack_size_to_use", "base_frame"):
+    for key in ("do_loop_closing", "stack_size_to_use", "base_frame", "scan_topic"):
         assert key in params, f"config/slam_os0.yaml lost {key}"
+
+
+def test_the_chassis_is_excluded_by_the_projection_not_by_min_laser_range():
+    """MEASURED 2026-09-01: slam_toolbox on Jazzy never declares `min_laser_range`. Launched
+    against config/slam_os0.yaml, configured, activated and fed scans, `ros2 param get
+    /slam_toolbox min_laser_range` answers "Parameter not set" while max_laser_range answers 20.0.
+
+    So the thing that keeps the chassis out of the map is pointcloud_to_laserscan's own
+    `range_min` and its height band, in session.sh. If those are ever dropped, the config will
+    still LOOK like it protects you and will not."""
+    src = (REPO / "bringup" / "session.sh").read_text()
+    p2l = [l for l in src.splitlines() if "range_min:=" in l]
+    assert p2l, "pointcloud_to_laserscan has no range_min — nothing excludes the chassis"
+    val = float(p2l[0].split("range_min:=")[1].split()[0])
+    assert val >= 0.4, f"range_min {val} is inside the chassis; the robot gets mapped in"
+    assert "min_height:=" in src and "max_height:=" in src, \
+        "the height band is what drops the chassis geometrically"
+    notes = (REPO / "config" / "slam_os0.yaml").read_text()
+    assert "INERT ON JAZZY" in notes, \
+        "slam_os0.yaml must say min_laser_range does nothing, or someone will rely on it"
 
 
 def test_the_live_scan_chain_is_one_chain():
