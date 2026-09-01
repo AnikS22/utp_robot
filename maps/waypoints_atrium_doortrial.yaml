@@ -7,43 +7,36 @@
 # value for every driver instance. goto and route_run REFUSE a waypoint whose session
 # does not match the running one. 'odom_epoch' is wall-clock provenance only -- nothing
 # reads it. See safety/waypoint_frame.py.
-call_button:
+button:
   frame: map
-  map_name: elevator
-  mola_session: 010fa575c2c506e9
-  odom_epoch: 1788299163
-  x: -1.4596
-  y: 2.3805
-  yaw: -2.1278
-car_facing_out:
+  map_name: atrium
+  mola_session: 010fa57588505f35
+  odom_epoch: 1788290313
+  x: 4.5243
+  y: 6.6257
+  yaw: 0.9213
+door:
   frame: map
-  map_name: elevator
-  mola_session: 010fa575d3f63065
-  odom_epoch: 1788301937
-  x: -1.8615
-  y: 0.4354
-  yaw: 1.0194
-car_panel:
+  map_name: atrium
+  mola_session: 010fa57588505f35
+  odom_epoch: 1788289649
+  x: 5.4897
+  y: 5.6368
+  yaw: 0.7631
+outside:
+  extended_m: 0.6
   frame: map
-  map_name: elevator
-  mola_session: 010fa575d3f63065
-  odom_epoch: 1788302060
-  x: -1.4313
-  y: 0.1325
-  yaw: 0.9387
-lift_door:
+  map_name: atrium
+  mola_session: 010fa57588505f35
+  odom_epoch: 1788289763
+  x: 7.6298
+  y: 7.8085
+  yaw: 0.7346
+start:
   frame: map
-  map_name: elevator
-  mola_session: 010fa575c2c506e9
-  odom_epoch: 1788297913
-  x: -0.9964
-  y: 1.6532
-  yaw: -2.0644
-lift_door_reverse:
-  frame: map
-  map_name: elevator
-  mola_session: 010fa575d3f63065
-  odom_epoch: 1788302227
-  x: -1.0863
-  y: 1.5343
-  yaw: 0.9797
+  map_name: atrium
+  mola_session: 010fa57588505f35
+  odom_epoch: 1788289402
+  x: 0.1604
+  y: -0.2158
+  yaw: -0.27

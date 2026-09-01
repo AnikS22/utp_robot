@@ -90,7 +90,7 @@ Visualization Manager:
       Color: 255; 85; 0
       Color Transformer: FlatColor
       Alpha: 1
-      Decay Time: 0.25
+      Decay Time: 0
       Position Transformer: XYZ
       Value: true
     # Where slam_toolbox believes the robot is. If this jumps, the scan matcher lost its pose --
@@ -161,7 +161,7 @@ Visualization Manager:
       Size (m): 0.02
       Style: Points
       Color Transformer: Intensity
-      Decay Time: 0.25
+      Decay Time: 0
       Position Transformer: XYZ
       Value: false
     # WHAT NAV2 DECIDED. /plan is the global route over the saved map; /local_plan is what MPPI

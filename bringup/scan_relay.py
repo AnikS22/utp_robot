@@ -101,7 +101,24 @@ MASK_MAX_DEG = 180.0    # THE WHOLE REAR ARC, both sides (the test is on |bearin
                         # Measuring the extent of a self-occlusion through a filter that is
                         # already deleting self-occlusions can only ever under-report it. Measure
                         # with range_min at its lowest, then mask.
-MASK_MAX_M = 1.00       # structure sits at 0.39-0.85; the room behind it is kept
+MASK_MAX_M = 0.90       # structure measured at 0.39-0.85 m; this sits just above it.
+                        #
+                        # WAS 1.00, AND THAT COST A MAP. Measured in open floor, where nothing
+                        # real lives inside a metre astern, so the choice looked free -- and I
+                        # generalised from the one place it was free. In a TIGHT space it is not:
+                        # measured inside the lift car, the side walls sit at min 1.00, median
+                        # 1.06-1.15 m, i.e. ON the old boundary, and the rear sectors floored at
+                        # exactly 1.00 -- the mask was deleting the very geometry the scan matcher
+                        # needs to resolve rotation. slam_toolbox then had only the forward
+                        # hemisphere, which is near-degenerate for heading, lost its lock on a
+                        # fast turn, and wrote the failed match into the map.
+                        #
+                        # 0.90 keeps 10 cm of margin over the structure while returning the walls
+                        # of any space wider than ~1.8 m. The honest fix is to mask the arm by its
+                        # 3D geometry instead of a polar wedge -- the OS0 sees behind perfectly
+                        # well and this throws away real returns to remove a known object. That is
+                        # a change to the projection, not to this file, and it is the right next
+                        # step if a tighter space than the lift is ever mapped.
 
 # One line every LOG_PERIOD_S at most. An operator needs to see the mask working -- "0 bins
 # masked" after the arm is re-stowed is the signal that the geometry moved -- but at 6-10 Hz a
