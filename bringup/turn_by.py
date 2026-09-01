@@ -39,7 +39,8 @@ from std_msgs.msg import String  # noqa: E402
 from safety.mux_watch import MuxWatch  # noqa: E402
 from safety.waypoint_drive import Limits, wrap  # noqa: E402
 
-CMD_TOPIC = "/cmd_vel_teleop"
+# Used by RosWorld's autonomous look ladder; route it through the gated servo source.
+CMD_TOPIC = "/cmd_vel_servo"
 RATE_HZ = 20.0
 YAW_TOL = math.radians(4.0)
 W_MIN = 0.12          # below this the chassis stalls rather than creeps

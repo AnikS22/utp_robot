@@ -23,6 +23,20 @@ can pass without operating something.
 FAIL CLOSED. Endpoint down, malformed reply, unparseable JSON -> kind="" and the raw text as the
 description. Never invent "door": a wrong kind sends the reasoner looking for a control that is
 not there, and the trial records a reasoning failure that was really a perception failure.
+
+THE CAMERA ALONE IS NOT ENOUGH, AND THAT IS NOT THE VLM's FAULT. 2026-09-01, on hardware: with
+the robot 0.72 m from CLOSED GLASS DOORS, this script returned blocked=False, "an open walkway
+with pillars". The picture genuinely shows an open walkway -- glass is transparent to a camera,
+so a correct reading of the image was a wrong reading of the world (captures/trial_ours_001).
+The lidar scan captured with that same frame had 39 returns inside the drive corridor, the
+nearest at 0.70 m. So when the capture directory also holds a scan.json, the camera verdict is
+fused with it through safety/blockage_fusion.py, which ORs the two: blocked if EITHER sensor says
+blocked, because the two fail on opposite physics and requiring agreement means requiring both to
+succeed on the case each is worst at. The reasoning for that lives in that module's docstring.
+
+No scan.json in the directory -> unchanged behaviour, camera only. The printed and JSON keys
+`blocked`, `kind` and `description` keep their existing meanings (bringup/ros_world.py and the
+archived route_run parse them); fusing only ever adds `evidence` and `nearest_ahead_m`.
 """
 from __future__ import annotations
 
@@ -33,6 +47,11 @@ import json
 import os
 import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from safety.blockage_fusion import fuse   # noqa: E402  -- pure logic, numpy/stdlib only
 
 SIM = Path.home() / "unlocking-the-path"
 KINDS = ("door", "elevator", "")
@@ -98,7 +117,8 @@ def parse(raw: str) -> dict:
             "note": ""}
 
 
-def ask(capture_dir: Path) -> dict:
+def ask_camera(capture_dir: Path) -> dict:
+    """The VLM call on its own. Callers almost certainly want ask(), which also uses the lidar."""
     rgb = capture_dir / "rgb.png"
     if not rgb.exists():
         return {"kind": "", "description": f"no rgb.png in {capture_dir}", "blocked": True,
@@ -128,6 +148,49 @@ def ask(capture_dir: Path) -> dict:
                 "blocked": True, "note": "call failed"}
 
 
+def _f(v) -> float:
+    """A scan field as a float, or NaN. NaN is what blockage_fusion reads as "no usable
+    geometry", which is the honest answer for a field that is missing or is not a number."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def ask(capture_dir: Path) -> dict:
+    """The camera verdict, fused with the lidar scan saved beside it if there is one.
+
+    This is the entry point bringup/ros_world.py imports, so the fusion applies to the live
+    pipeline and not only to this CLI. It runs on EVERY path, including the fail-closed ones (no
+    rgb.png, no credentials, VLM call failed), so `evidence` means the same thing every time a
+    scan is present rather than appearing only when the VLM happened to answer.
+
+    A scan.json that is missing or unreadable leaves the camera verdict standing -- exactly what
+    happened before this existed. That is deliberate and it is not a fail-open: the lidar can only
+    ADD a blockage here, never clear one, so losing it can never turn a blocked into a clear.
+    """
+    res = ask_camera(capture_dir)
+    scan_f = capture_dir / "scan.json"
+    if not scan_f.exists():
+        return res
+    try:
+        sc = json.loads(scan_f.read_text())
+        if not isinstance(sc, dict):
+            sc = {}
+        scan_note = ""
+    except Exception as e:
+        # Reported on its own key, NOT folded into `note`: `note` is this script's fail-closed
+        # marker and printing "failed closed" next to a camera verdict of clear would be a lie.
+        # An unreadable scan simply means the lidar contributed nothing, and evidence says so.
+        sc, scan_note = {}, f"scan.json unreadable: {type(e).__name__}"
+    out = dict(res)   # keep `note` and `model`; fuse() owns the five contract keys
+    out.update(fuse(res, sc.get("ranges"), _f(sc.get("angle_min")),
+                    _f(sc.get("angle_increment"))))
+    if scan_note:
+        out["scan_note"] = scan_note
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("capture")
@@ -140,6 +203,14 @@ def main() -> int:
     print(f"blocked     : {res['blocked']}")
     print(f"kind        : {res['kind'] or '(unclassified)'}")
     print(f"description : {res['description']}")
+    if "evidence" in res:
+        # Only printed when a scan was actually fused, so the old output is byte-identical when
+        # there is no scan.json. "neither" next to blocked=True means nothing could see at all.
+        near = res.get("nearest_ahead_m")
+        extra = "" if near is None else f"  (nearest {near:.2f} m ahead in the corridor)"
+        if res.get("scan_note"):
+            extra += f"  ({res['scan_note']})"
+        print(f"evidence    : {res['evidence']}{extra}")
     if res.get("note"):
         print(f"note        : {res['note']}  <- failed closed")
     return 0

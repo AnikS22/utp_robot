@@ -68,7 +68,7 @@ class Driver(Node):
         self.stamp = 0.0
         self.scan = None
         self.create_subscription(Odometry, "/odom", self._odom, 10)
-        self.create_subscription(LaserScan, "/scan_filtered", self._scan, qos_profile_sensor_data)
+        self.create_subscription(LaserScan, "/scan", self._scan, qos_profile_sensor_data)
         self.create_subscription(String, "/safety/status", self._safety, 10)
         self.pub = self.create_publisher(Twist, CMD_TOPIC, 10)
         self.mux = MuxWatch(time.monotonic())
@@ -192,7 +192,7 @@ def main() -> int:
     ap.add_argument("--dwell", type=float, default=0.0,
                     help="seconds to hold at each endpoint (use --pause instead to measure)")
     ap.add_argument("--no-veto", action="store_true",
-                    help="drive with NO obstacle check (requires /scan_filtered otherwise)")
+                    help="drive with NO obstacle check (requires /scan otherwise)")
     ap.add_argument("--go", action="store_true", help="actually drive")
     a = ap.parse_args()
 
@@ -262,7 +262,7 @@ def main() -> int:
             if n.scan is not None:
                 break
         if n.scan is None and not a.no_veto:
-            print("\nNOT DRIVING: no /scan_filtered, so the corridor veto would be inactive and "
+            print("\nNOT DRIVING: no /scan, so the corridor veto would be inactive and "
                   "the robot would drive with NO obstacle check.\n"
                   "  Start it with bringup/session.sh up, or pass --no-veto to drive blind "
                   "deliberately.", file=sys.stderr)

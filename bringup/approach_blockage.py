@@ -55,7 +55,8 @@ from safety.mux_watch import MuxWatch  # noqa: E402
 from safety.reach_envelope import MIN_LIDAR_RANGE_M  # noqa: E402
 from safety.waypoint_drive import corridor_blocked  # noqa: E402
 
-CMD_TOPIC = "/cmd_vel_teleop"
+# Autonomous pipeline motion: must pass the deadman-gated servo source in safety.yaml.
+CMD_TOPIC = "/cmd_vel_servo"
 RATE_HZ = 20.0
 V_APPROACH = 0.12          # slow: this drives deliberately AT something
 MAX_ADVANCE_M = 6.0        # never close more than this without a fresh decision
@@ -72,7 +73,7 @@ class Approach(Node):
         self.stamp = 0.0
         self.scan = None
         self.create_subscription(Odometry, "/odom", self._odom, 10)
-        self.create_subscription(LaserScan, "/scan_filtered", self._scan, qos_profile_sensor_data)
+        self.create_subscription(LaserScan, "/scan", self._scan, qos_profile_sensor_data)
         self.create_subscription(String, "/safety/status", self._safety, 10)
         self.pub = self.create_publisher(Twist, CMD_TOPIC, 10)
         self.mux = MuxWatch(time.monotonic())
@@ -246,7 +247,7 @@ def main() -> int:
     n = Approach()
     try:
         if not n.wait_ready():
-            print("no /odom or no /scan_filtered -- is the stack up?", file=sys.stderr)
+            print("no /odom or no /scan -- is the stack up?", file=sys.stderr)
             return 1
         if a.back > 0.0:
             ok, why = n.reverse(a.back, dry=a.dry_run)

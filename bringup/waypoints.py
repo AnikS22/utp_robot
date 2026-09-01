@@ -62,6 +62,7 @@ from safety.waypoint_drive import Limits, corridor_blocked, plan_step, to_goal, 
 STORE = Path(os.environ.get("UTP_WAYPOINTS", "")) if os.environ.get("UTP_WAYPOINTS") \
     else REPO / "maps" / "waypoints.yaml"
 CMD_TOPIC = "/cmd_vel_teleop"
+AUTONOMOUS_CMD_TOPIC = "/cmd_vel_servo"
 RATE_HZ = 20.0
 ODOM_STALE_S = 0.5
 
@@ -102,7 +103,7 @@ class Pose(Node):
         # PoseSource fills self.pose/self.stamp exactly as the old /odom callback did. It
         # resolves lazily, on first wait_for_pose(), so `list` pays nothing for TF settling.
         self.src = PoseSource(self, frame)
-        self.create_subscription(LaserScan, "/scan_filtered", self._scan, qos_profile_sensor_data)
+        self.create_subscription(LaserScan, "/scan", self._scan, qos_profile_sensor_data)
 
     def _scan(self, m: LaserScan) -> None:
         self.scan = m
@@ -129,8 +130,18 @@ def cmd_record(n: Pose, a) -> int:
     # The heading, when not given, faces from where the ROBOT IS NOW toward the point -- the
     # direction it will be travelling when it arrives.
     if getattr(a, "at", None):
+        # RESOLVE FIRST. PoseSource.frame is None until resolve() runs -- resolution is lazy on
+        # purpose, because settling TF costs up to 2.5 s and `waypoints.py list` should not pay
+        # it. Checking .frame before resolving compares against None and refuses every time,
+        # which is exactly what it did on 2026-09-01 with --frame map plainly on the command line.
+        ok, why = n.src.resolve()
+        if not ok:
+            print(why, file=sys.stderr)
+            return 1
+        print(f"  {why}")
         if n.src.frame != FRAME_MAP:
-            print("--at records a MAP-frame coordinate; run with --frame map", file=sys.stderr)
+            print(f"--at records a MAP-frame coordinate, but the resolved frame is "
+                  f"'{n.src.frame}'; run with --frame map", file=sys.stderr)
             return 1
         gx, gy = float(a.at[0]), float(a.at[1])
         if len(a.at) > 2:
@@ -308,19 +319,24 @@ def cmd_goto(n: Pose, a) -> int:
               file=sys.stderr)
 
     lim = Limits()
-    pub = n.create_publisher(Twist, CMD_TOPIC, 10)
+    # Manual waypoint driving remains on teleop so an operator can recover without the software
+    # deadman.  Campaign motion is autonomous and must use the mux source whose
+    # requires_enable gate is checked by run_campaign.py's preflight.
+    cmd_topic = AUTONOMOUS_CMD_TOPIC if a.deadman_gated else CMD_TOPIC
+    pub = n.create_publisher(Twist, cmd_topic, 10)
     if not a.go:
         x, y, th = n.pose
         dist, bear = to_goal(x, y, th, goal["x"], goal["y"])
         step = plan_step(dist, bear, wrap(goal["yaw"] - th), False, lim)
         print(f"DRY RUN. {dist:.2f} m away, bearing {math.degrees(bear):+.1f} deg")
         print(f"  first action: {step.state}  vx={step.twist.vx:.3f} wz={step.twist.wz:.3f}")
-        print(f"  would publish to {CMD_TOPIC} at {RATE_HZ:.0f} Hz. Re-run with --go to move.")
+        print(f"  would publish to {cmd_topic} at {RATE_HZ:.0f} Hz. Re-run with --go to move.")
         return 0
 
     print(f"DRIVING to '{a.name}'. Ctrl-C stops. E-stop is faster.")
     deadline = time.monotonic() + a.timeout
     last_state = None
+    result = 1
     try:
         while rclpy.ok() and time.monotonic() < deadline:
             rclpy.spin_once(n, timeout_sec=1.0/RATE_HZ)
@@ -341,11 +357,13 @@ def cmd_goto(n: Pose, a) -> int:
                 print(f"  [{step.state}] {dist:5.2f} m, bearing {math.degrees(bear):+6.1f} deg")
                 last_state = step.state
             if step.state == "arrived":
+                result = 0
                 break
         else:
             print("TIMEOUT -- stopping", file=sys.stderr)
     except KeyboardInterrupt:
         print("\ninterrupted")
+        result = 130
     finally:
         # The chassis coasts 1.26 s on a lost commander. An explicit zero is a COMMAND and stops
         # it now; letting the watchdog expire is 18 cm of uncommanded travel.
@@ -353,14 +371,14 @@ def cmd_goto(n: Pose, a) -> int:
             pub.publish(Twist())
             time.sleep(0.02)
         print("stopped (zero published)")
-    return 0
+    return result
 
 
 ANCHORS = REPO / "maps"
 
 
 def _collect_scans(n: Pose, count: int, timeout: float = 15.0) -> list:
-    """`count` distinct /scan_filtered sweeps from the current (stationary) pose."""
+    """`count` distinct masked /scan sweeps from the current (stationary) pose."""
     seen = set()
     out = []
     end = time.monotonic() + timeout
@@ -427,7 +445,7 @@ def cmd_relocalize(n: Pose, a) -> int:
         return 1
     live_scans = _collect_scans(n, count=3)
     if not live_scans:
-        print("no /scan_filtered -- is bringup/lidar3d.sh + the scan chain running? (bash bringup/session.sh up)", file=sys.stderr)
+        print("no /scan -- is bringup/lidar3d.sh + the scan chain running? (bash bringup/session.sh up)", file=sys.stderr)
         return 1
     ref = accumulate([s_["ranges"] for s_ in anc["scans"]], anc["scans"][0]["angle_min"],
                      anc["scans"][0]["angle_increment"])
@@ -560,6 +578,8 @@ def main() -> int:
     g.add_argument("--force", action="store_true",
                    help="drive even if the waypoint is from a dead odom session (it will be wrong)")
     g.add_argument("--go", action="store_true", help="actually move the robot")
+    g.add_argument("--deadman-gated", action="store_true",
+                   help="publish through the autonomous servo mux source; required by campaigns")
     g.add_argument("--timeout", type=float, default=120.0)
     g.set_defaults(fn=cmd_goto)
     a = ap.parse_args()

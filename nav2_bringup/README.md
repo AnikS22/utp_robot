@@ -5,7 +5,10 @@ Runs as a separate py3.12 process that consumes what the Isaac worker publishes 
 bridge and emits `/cmd_vel`. Built to `docs/integration_contract.md`.
 
 ## Files
-- `nav2_params.yaml` — costmaps, planner, controller, behaviors tuned for the Ranger footprint.
+- `nav2_params_os0_map.yaml` — **the one Nav2 config.** Costmaps, planner, controller and
+  behaviours for the Ranger footprint on the OS0-128 chain, localizing into a saved map.
+  `nav2_params.yaml` (sim mirror) and `nav2_params_os0.yaml` (rolling window) were archived on
+  2026-09-01 — see `archive/README.md`. Edit this file and only this file.
 - `ranger_nav.launch.py` — brings up the 5 lifecycle nodes + lifecycle manager + map server
   + the `lidar_link` alias TF (see gotchas).
 - `behavior_trees/*_no_spin.xml` — copies of the default nav-to-pose / nav-through-poses BTs with the
@@ -25,7 +28,7 @@ bridge and emits `/cmd_vel`. Built to `docs/integration_contract.md`.
   `ros2 topic echo /local_costmap/costmap` → non-zero lethal cells.
 - **No `spin` recovery.** The default BTs' recovery RoundRobin calls the `spin` action; with `spin`
   removed from `behavior_plugins`, that XML fails to load and the whole bringup aborts. Use the
-  `_no_spin` trees (already wired in `nav2_params.yaml`).
+  `_no_spin` trees (already wired in `nav2_params_os0_map.yaml`).
 
 ## What it consumes / produces
 | direction | topic / interface | type | notes |
@@ -55,7 +58,7 @@ ros2 launch .../ranger_nav.launch.py use_sim_time:=false
 python3 .../ranger_nav.launch.py
 ```
 
-Launch args: `map` (default placeholder), `params_file` (default `nav2_params.yaml`),
+Launch args: `map` (default placeholder), `params_file` (default `nav2_params_os0_map.yaml`),
 `use_sim_time` (default `true` — Isaac drives `/clock`), `autostart` (default `true`), `log_level`.
 
 ## Send a NavigateToPose goal (CLI)

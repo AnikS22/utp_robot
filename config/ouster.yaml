@@ -92,5 +92,87 @@ scan_slice:
   min_height_m: 0.20
   max_height_m: 1.20
   angle_increment_deg: 0.35     # ~1024 rays over 360 deg, matching the sensor's native columns
-  range_min_m: 0.50             # inside this is the robot's own superstructure
+  # 0.30. THIS WAS 0.70 FOR ABOUT AN HOUR AND IT NEARLY DROVE THE ROBOT THROUGH A GLASS DOOR.
+  #
+  # The history matters. The OS0 sees the robot's own arm, mast and chassis rear: 10 scans,
+  # stationary, open floor, nobody near, gave a fixed cluster at 0.70-0.85 m across the whole rear
+  # arc (|bearing| >= 74 deg) while the forward hemisphere read 2.87 m minimum. Nav2 marked those
+  # self-returns LETHAL around the footprint and refused to plan at all. The first fix was to
+  # raise range_min to 0.70 -- which worked, and was WRONG, because it is a global cutoff applied
+  # to every bearing.
+  #
+  # WHAT THAT COST, measured from captures/trial_ours_001/scan.json, taken at the closed doors:
+  # 85 returns within +-20 deg forward, NEAREST 0.72 m. The door was TWO CENTIMETRES above the
+  # cutoff. One more step and it would have dropped below range_min and disappeared from the scan
+  # completely -- not "seen and ignored", gone. The corridor veto, Nav2's obstacle layer and
+  # approach_blockage would all have been looking at an empty corridor with a door in it.
+  #
+  # A GLOBAL RANGE CUTOFF CANNOT SOLVE AN ANGULAR PROBLEM. The self-returns live in the rear arc,
+  # both sides; the obstacles that matter are forward. bringup/scan_relay.py masks the arc that is
+  # the robot and leaves every other bearing alone, which is the shape of the actual problem. See
+  # the self_mask block at the end of this file.
+  # 0.30 is below anything the sensor can see of the chassis in the forward arc and well inside
+  # the 0.72 m at which a door about to be hit first appears.
+  range_min_m: 0.45
   range_max_m: 40.0
+
+# SELF-OCCLUSION MASK, applied by bringup/scan_relay.py on the way from /scan_filtered to /scan.
+#
+# THE SAME MIRROR RULE AS scan_slice ABOVE, one file further along: nothing reads this block at
+# runtime -- the constants that run are MASK_MIN_DEG / MASK_MAX_DEG / MASK_MAX_M in
+# bringup/scan_relay.py -- and tests/test_scan_mask.py asserts the two agree. This is the
+# documented copy: change both, or the test fails.
+#
+# WHAT IT IS. The OS0 is on a mast at base_link (-0.375, 0, 1.146), behind the stowed xArm6, and
+# both are inside the 0.20-1.20 m slice band above. So the 2D scan contains the ROBOT. Bins whose
+# bearing is at least min_deg off the nose AND whose range is at most max_range_m are set to +inf
+# ("no return"), never deleted -- deleting would change the bin count and break the
+# angle_min/angle_increment contract every subscriber relies on.
+#
+# WHY NOT JUST RAISE range_min. Because the problem is ANGULAR and range_min is not. See the
+# range_min_m note above: at 0.70 it silenced the arm and very nearly deleted a glass door that
+# first appeared at 0.72 m. The mask removes the arc that is structure and leaves every other
+# bearing untouched; beyond max_range_m even the masked bearings keep the real room.
+#
+# MEASURED 2026-09-01, 10 scans, robot stationary on open floor, nobody nearby, in base_link.
+# Minimum range by 15-degree sector:
+#
+#     -120..-105   min 0.73   median 1.27
+#     -105.. -90   min 0.79   median 1.18
+#      -90..+60          3.0 - 8.8          <- forward hemisphere, completely clean
+#      +90..+105   min 0.73   median 1.67
+#     +105..+120   min 0.70   median 0.79
+#     +120..+135   min 0.70   median 0.72   <- pinned across all ten scans
+#     +135..+150   min 0.70   median 0.85
+#
+# A finer 5-degree sweep of the forward-left boundary fixed min_deg:
+#
+#     +70..+75   min 1.91   median 1.95   spread 0.09
+#     +75..+80   min 0.72   median 1.88   spread 1.20   <- BIMODAL: structure AND room
+#     +80..+85   min 0.71   median 1.81   spread 1.14
+#     +85..+90   min 0.72   median 1.83   spread 1.26
+#     +90..+95   min 1.79   median 1.99   spread 0.53
+#
+# Two populations at one bearing means structure in front of room, so the mask starts at 74, not
+# at 88 where it began. Below 74 the floor climbs smoothly with spread under 0.25 -- that is room.
+#
+# WHY max_deg IS 180 AND NOT 155. THIS IS THE IMPORTANT ONE. 155 came from a sweep taken while
+# range_min was 0.50, so everything closer than 0.50 m had already been deleted before the
+# measurement was made. At 155-180 deg those sectors read min 1.02-1.10 m and looked clean.
+# Dropping range_min to 0.30 and re-measuring the SAME bearings on the SAME stationary robot gave:
+#
+#     -180..-135   min 0.39
+#     +135..+180   min 0.55
+#     -135.. -90   min 1.00      <- already masked, i.e. the mask itself was holding
+#
+# 0.39 m astern is the chassis rear. It was always there; the cutoff was hiding it.
+# THE GENERAL LESSON: A CUTOFF THAT HIDES A SELF-RETURN ALSO HIDES THE FACT THAT YOU NEEDED A
+# MASK. Measuring self-occlusion through a filter that is already deleting self-occlusions can
+# only under-report it. Measure with range_min at its lowest, then mask.
+#
+# RE-MEASURE IF THE ARM MOVES OR THE MAST CHANGES -- this is a fact about the current build, not
+# about lidars. bringup/check_scan_geometry.py is the tool.
+self_mask:
+  min_deg: 74.0         # |bearing| off the nose at which structure starts; below this is room
+  max_deg: 180.0        # ... through dead astern. Symmetric: the test is on |bearing|.
+  max_range_m: 1.00     # structure sits at 0.39-0.85 m; the room behind it is kept

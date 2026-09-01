@@ -109,8 +109,8 @@ remapping only the controller leaves recovery behaviours driving the base around
 **3. `motion_model` is `DiffDrive`, not `Omni`.** MPPI-Omni emits strafe and yaw in one twist, and
 the Ranger firmware **drops `angular.z` whenever `linear.y` is non-zero**. The sim can run Omni
 because `utp/control/ranger_4ws.py` drives the four wheel joints directly — Isaac can, CAN cannot
-(the protocol offers a body twist and no per-wheel interface). Set in the `nav2_params_os0*.yaml`
-files. If doorway transit misbehaves, this is the first thing to re-open.
+(the protocol offers a body twist and no per-wheel interface). Set in `nav2_bringup/nav2_params_os0_map.yaml`
+file (there is now exactly one). If doorway transit misbehaves, this is the first thing to re-open.
 
 **4. `sensor_frame` is `base_link`, not `lidar_link`.** `/scan_filtered` is the Ouster cloud
 projected by `pointcloud_to_laserscan` with `target_frame:=base_link`, and **there is no
@@ -126,7 +126,7 @@ in a blind cone that no software setting fixes.
 
 ## Two map modes, and which one a campaign needs
 
-| | rolling window (`nav2_params_os0.yaml`) | saved map (`nav2_params_os0_map.yaml`) |
+| | rolling window (`archive/nav2_params_os0.yaml`, ARCHIVED 2026-09-01) | saved map (`nav2_params_os0_map.yaml`, the ONE live config) |
 |---|---|---|
 | needs a map first | no | yes — grid **and** pose graph |
 | global costmap | 24 m window travelling with the robot | the whole saved floor |
@@ -134,8 +134,12 @@ in a blind cone that no software setting fixes.
 | coordinates portable between sessions | **no** — origin is wherever the robot booted | yes |
 | use it for | a quick RViz click-and-drag check | **all 50 trials** |
 
-`session.sh nav` runs the second. The first is only worth using to confirm Nav2 is alive at all
-before a map exists.
+`session.sh nav` runs the second, and it is the only one that still exists in `nav2_bringup/`.
+The rolling-window variant was archived on 2026-09-01 because nothing launched it: it was a
+second 400-line copy that had to be hand-patched alongside the live one every time, and its
+only actual difference is dropping `static_layer` and adding a 24 m `rolling_window`. If you
+want it back for a pre-map smoke test, restore it from `archive/` or pass those four keys as
+a `--ros-args -p` override; do not fork the file again.
 
 ---
 

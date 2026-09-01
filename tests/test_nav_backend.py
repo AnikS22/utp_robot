@@ -75,6 +75,12 @@ def _run_nav2_goto(args, env=None):
     # the shell rather than nav2_goto.
     if env is None:
         env = {**os.environ, "ROS_DOMAIN_ID": os.environ.get("ROS_DOMAIN_ID", "9")}
+    # POINT THE PROVENANCE CHECK AT NOTHING. nav2_goto refuses a waypoint whose map_name does not
+    # match maps/.loaded_map -- correct on the robot, and fatal in a test that mocks the waypoint
+    # store: the REAL .loaded_map leaks in and every mocked goal is refused with exit 3. Six tests
+    # here failed that way the moment a real map was first loaded. Tests that mock a subsystem must
+    # mock ALL of its inputs, including the ones that live outside the process.
+    env.setdefault("UTP_LOADED_MAP", "/nonexistent/.loaded_map")
     return subprocess.run([sys.executable, str(REPO / "bringup" / "nav2_goto.py")] + args,
                           capture_output=True, text=True, timeout=60, cwd=str(REPO), env=env)
 
@@ -173,15 +179,23 @@ class _FakeGoalHandle:
         self.accepted = accepted
         self._status = status
         self.cancelled = False
+        self.result_future = None
+        self.cancel_future = None
 
     def get_result_async(self):
         f = _FakeFuture(); f._done = True
         f._value = _types.SimpleNamespace(status=self._status)
+        self.result_future = f
         return f
 
     def cancel_goal_async(self):
         self.cancelled = True
-        return _FakeFuture(done=True)
+        self.cancel_future = _FakeFuture(
+            done=True, value=_types.SimpleNamespace(goals_canceling=[object()]))
+        if self.result_future is not None:
+            self.result_future._done = True
+            self.result_future._value = _types.SimpleNamespace(status=5)
+        return self.cancel_future
 
 
 class _FakeFuture:
@@ -240,7 +254,10 @@ def _install_fake_ros(monkeypatch, *, server=True, accepted=True, status=4, neve
 
     if never_finishes:
         h = _FakeGoalHandle()
-        h.get_result_async = lambda: _FakeFuture(done=False)
+        def _pending_result():
+            h.result_future = _FakeFuture(done=False)
+            return h.result_future
+        h.get_result_async = _pending_result
         _FakeClient.send_goal_async = lambda self, goal: (
             sent.__setitem__("goal", goal), sent.__setitem__("handle", h),
             _FakeFuture(done=True, value=h))[-1]
@@ -261,7 +278,18 @@ def _install_fake_waypoints(monkeypatch, wp):
 
 
 def _nav2_main(monkeypatch, argv):
+    """Run nav2_goto.main() in-process against the installed fakes.
+
+    UTP_LOADED_MAP is pointed at nothing on purpose. nav2_goto refuses a waypoint whose map_name
+    does not match maps/.loaded_map, which is correct on the robot and fatal here: these tests mock
+    the waypoint store but the provenance file is real machine state OUTSIDE the process, so the
+    live map leaked in and every mocked goal was refused with exit 3. Six tests in this file broke
+    that way the moment a real map was first loaded on hardware.
+
+    The map-match refusal has its own test below, with the file mocked deliberately. A test that
+    mocks a subsystem has to mock ALL of its inputs, including the ones on disk."""
     import importlib
+    monkeypatch.setenv("UTP_LOADED_MAP", "/nonexistent/.loaded_map")
     monkeypatch.setattr(sys, "argv", ["nav2_goto.py"] + argv)
     mod = importlib.import_module("nav2_goto")
     importlib.reload(mod)
@@ -321,6 +349,8 @@ def test_behav_timeout_returns_6_and_cancels_the_goal(monkeypatch, capsys):
     sent = _install_fake_ros(monkeypatch, never_finishes=True)
     assert _nav2_main(monkeypatch, ["door", "--go", "--timeout", "0.2"]) == 6
     assert sent["handle"].cancelled, "a timed-out goal must be cancelled, not left running"
+    assert sent["handle"].cancel_future.done(), "must wait for cancellation acknowledgement"
+    assert sent["handle"].result_future.done(), "must wait for Nav2's terminal result"
 
 
 def test_behav_odom_frame_waypoint_refused_before_touching_ros(monkeypatch):
@@ -347,3 +377,230 @@ def test_behav_force_overrides_the_refusal(monkeypatch):
     sent = _install_fake_ros(monkeypatch)
     assert _nav2_main(monkeypatch, ["door", "--go", "--force"]) == 0
     assert "goal" in sent, "--force must actually drive"
+
+
+def test_behav_refuses_a_waypoint_recorded_in_a_different_map(monkeypatch, capsys, tmp_path):
+    """A waypoint carrying SOME map name was never enough. Two maps of the same building have
+    unrelated origins, so a coordinate valid in 'atrium' names a different physical place in
+    'atrium2d'. Driving it anyway is a confident arrival at the wrong spot, with nothing to notice.
+
+    This was live on 2026-09-01: every waypoint carried map_name 'atrium' while session.sh nav
+    defaulted MAP_NAME to 'atrium2d', and nothing compared the two."""
+    loaded = tmp_path / ".loaded_map"
+    loaded.write_text("some_other_map 010fa575ab3b4f7a\n")
+    monkeypatch.setenv("UTP_LOADED_MAP", str(loaded))
+    _install_fake_waypoints(monkeypatch, GOOD_WP)      # GOOD_WP is map_name 'atrium2d'
+    sent = _install_fake_ros(monkeypatch)
+    import importlib, sys as _s
+    monkeypatch.setattr(_s, "argv", ["nav2_goto.py", "door", "--go"])
+    mod = importlib.import_module("nav2_goto"); importlib.reload(mod)
+    assert mod.main() == 3, "must refuse a waypoint whose map is not the one loaded"
+    assert not sent, "nothing may be sent when the map does not match"
+    err = capsys.readouterr().err
+    assert "some_other_map" in err and "atrium2d" in err, \
+        "the refusal must name BOTH maps, or the operator cannot tell which to load"
+
+
+def test_behav_force_overrides_the_map_mismatch(monkeypatch, tmp_path):
+    """--force exists so a known-good coordinate is still drivable when provenance is unavailable.
+    It must be explicit; it must never be the default path."""
+    loaded = tmp_path / ".loaded_map"
+    loaded.write_text("some_other_map 010fa575ab3b4f7a\n")
+    monkeypatch.setenv("UTP_LOADED_MAP", str(loaded))
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    sent = _install_fake_ros(monkeypatch)
+    import importlib, sys as _s
+    monkeypatch.setattr(_s, "argv", ["nav2_goto.py", "door", "--go", "--force"])
+    mod = importlib.import_module("nav2_goto"); importlib.reload(mod)
+    assert mod.main() == 0
+    assert sent, "--force must actually send the goal"
+
+
+# ============================================================================================
+# THE MACHINE-READABLE RESULT LINE
+#
+# RosWorld decides what happened by substring-matching this script's stdout, and it tests
+# `arrived` FIRST -- so any stdout line carrying that substring reports success, a diagnostic
+# reading "not arrived" included. A `blocked` verdict starts reason -> ground -> press, so a
+# stray word can put the arm at a wall. nav2_goto now ends every attempt with a JSON RESULT line
+# and that line is the contract; the prose lines stay only until RosWorld migrates.
+#
+# These tests run main() against the same fakes as the block above. None of them string-match
+# source.
+# ============================================================================================
+
+# status -> the exit code(s) it may be reported with, pinned HERE so widening the enum or
+# re-pointing a status at a different exit code has to be a deliberate edit in two files.
+EXPECTED_STATUS_EXIT = {
+    "arrived":   (0,),
+    "blocked":   (0,),       # Nav2 STATUS_ABORTED only
+    "timeout":   (6,),
+    "rejected":  (5,),
+    "refused":   (2, 3),
+    "no_server": (4,),
+    "cancelled": (4, 130),
+    "error":     (4,),
+}
+LEGACY_WORDS = ("arrived", "blocked")
+
+
+def _result_line(out: str) -> dict:
+    """The RESULT line must be the LAST non-blank stdout line, and the only one."""
+    lines = [l for l in out.splitlines() if l.strip()]
+    assert lines, "nav2_goto produced no stdout at all"
+    tagged = [l for l in lines if l.startswith("RESULT ")]
+    assert len(tagged) == 1, f"expected exactly one RESULT line, got {len(tagged)}: {lines}"
+    assert lines[-1] is tagged[0], (
+        f"the RESULT line must be the LAST stdout line, or a caller reading the tail of a log "
+        f"gets prose instead of a verdict. Last line was: {lines[-1]!r}")
+    payload = _json.loads(lines[-1][len("RESULT "):])          # raises if it is not valid JSON
+    assert set(payload) == {"status", "waypoint", "elapsed_s", "detail"}, payload
+    assert payload["status"] in EXPECTED_STATUS_EXIT, f"status outside the enum: {payload}"
+    assert isinstance(payload["elapsed_s"], (int, float)) and not isinstance(
+        payload["elapsed_s"], bool), payload
+    assert isinstance(payload["detail"], str), payload
+    return payload
+
+
+def _check(rc: int, out: str, waypoint: str, expect_status: str) -> dict:
+    """Every assertion that must hold on every path, in one place."""
+    res = _result_line(out)
+    assert res["status"] == expect_status, f"expected {expect_status}, got {res}"
+    assert res["waypoint"] == waypoint, res
+    assert rc in EXPECTED_STATUS_EXIT[expect_status], (
+        f"status {res['status']!r} came back with exit {rc}; the exit-code contract with RosWorld "
+        f"says {EXPECTED_STATUS_EXIT[expect_status]}")
+    # THE LEGACY CALLER IS STILL LIVE. It greps all of stdout, so no non-outcome path may leak
+    # either word -- not in the detail, not anywhere.
+    if expect_status not in ("arrived", "blocked"):
+        for w in LEGACY_WORDS:
+            assert w not in out, (
+                f"a {expect_status} path put {w!r} on stdout; RosWorld still substring-matches "
+                f"stdout and would report a navigation outcome that did not happen:\n{out}")
+    return res
+
+
+def test_result_enum_and_exit_map_are_the_closed_set():
+    """The enum is closed. A new status is a change to the FSM's vocabulary, not a detail."""
+    import importlib
+    mod = importlib.import_module("nav2_goto")
+    importlib.reload(mod)
+    assert {k: tuple(v) for k, v in mod.STATUS_EXIT.items()} == EXPECTED_STATUS_EXIT
+
+
+def test_result_arrived(monkeypatch, capsys):
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    _install_fake_ros(monkeypatch, status=4)              # 4 == SUCCEEDED
+    rc = _nav2_main(monkeypatch, ["door", "--go"])
+    out = capsys.readouterr().out
+    _check(rc, out, "door", "arrived")
+    # LEGACY, and it must survive verbatim: ros_world.py is mid-edit by someone else today.
+    assert any(l.startswith("arrived at 'door'") for l in out.splitlines()), out
+
+
+def test_result_blocked_is_reserved_for_nav2_aborted(monkeypatch, capsys):
+    """STATUS_ABORTED (6) is the ONLY thing that may say `blocked` -- it is what starts the
+    reason -> ground -> press chain and drives the arm at whatever the grounder finds."""
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    _install_fake_ros(monkeypatch, status=6)
+    rc = _nav2_main(monkeypatch, ["door", "--go"])
+    out = capsys.readouterr().out
+    _check(rc, out, "door", "blocked")
+    assert any(l.startswith("blocked: Nav2 ABORTED") for l in out.splitlines()), out
+
+
+def test_result_canceled_goal_is_cancelled_not_blocked(monkeypatch, capsys):
+    """5 == CANCELED is a control-plane event: an operator, a supervisor, a preempting goal.
+    Calling it `blocked` manufactures a claim about the world out of a claim about software."""
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    _install_fake_ros(monkeypatch, status=5)
+    rc = _nav2_main(monkeypatch, ["door", "--go"])
+    _check(rc, capsys.readouterr().out, "door", "cancelled")
+
+
+@pytest.mark.parametrize("nav_status", [0, 1, 2])          # UNKNOWN / ACCEPTED / EXECUTING
+def test_result_non_terminal_status_is_error(monkeypatch, capsys, nav_status):
+    """A non-terminal status coming back as a RESULT means the action server is confused. That is
+    not a statement about the world and must not start the perception-and-action chain."""
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    _install_fake_ros(monkeypatch, status=nav_status)
+    rc = _nav2_main(monkeypatch, ["door", "--go"])
+    _check(rc, capsys.readouterr().out, "door", "error")
+
+
+def test_result_timeout(monkeypatch, capsys):
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    sent = _install_fake_ros(monkeypatch, never_finishes=True)
+    rc = _nav2_main(monkeypatch, ["door", "--go", "--timeout", "0.2"])
+    res = _check(rc, capsys.readouterr().out, "door", "timeout")
+    assert sent["handle"].cancelled, "a timed-out goal must still be cancelled"
+    assert "terminal status 5" in res["detail"]
+    assert res["elapsed_s"] >= 0.2, f"elapsed_s must report real waiting time: {res}"
+
+
+def test_result_rejected_goal(monkeypatch, capsys):
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    _install_fake_ros(monkeypatch, accepted=False)
+    rc = _nav2_main(monkeypatch, ["door", "--go"])
+    _check(rc, capsys.readouterr().out, "door", "rejected")
+
+
+def test_result_no_action_server(monkeypatch, capsys):
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    _install_fake_ros(monkeypatch, server=False)
+    rc = _nav2_main(monkeypatch, ["door", "--go"])
+    _check(rc, capsys.readouterr().out, "door", "no_server")
+
+
+def test_result_unknown_waypoint_is_refused(monkeypatch, capsys):
+    _install_fake_waypoints(monkeypatch, {})
+    sent = _install_fake_ros(monkeypatch)
+    rc = _nav2_main(monkeypatch, ["door", "--go"])
+    _check(rc, capsys.readouterr().out, "door", "refused")
+    assert "goal" not in sent
+
+
+def test_result_odom_frame_waypoint_is_refused(monkeypatch, capsys):
+    _install_fake_waypoints(monkeypatch, {"door": {"x": 1, "y": 2, "yaw": 0, "frame": "odom"}})
+    sent = _install_fake_ros(monkeypatch)
+    rc = _nav2_main(monkeypatch, ["door", "--go"])
+    _check(rc, capsys.readouterr().out, "door", "refused")
+    assert "goal" not in sent, "must refuse before sending anything"
+
+
+def test_result_nameless_map_waypoint_is_refused(monkeypatch, capsys):
+    _install_fake_waypoints(monkeypatch, {"door": {"x": 1, "y": 2, "yaw": 0, "frame": "map"}})
+    _install_fake_ros(monkeypatch)
+    rc = _nav2_main(monkeypatch, ["door", "--go"])
+    _check(rc, capsys.readouterr().out, "door", "refused")
+
+
+def test_result_map_mismatch_is_refused(monkeypatch, capsys, tmp_path):
+    """The 2026-09-01 case: every waypoint carried map_name 'atrium' while the loaded map was
+    'atrium2d'. A confident arrival at the wrong place is the hardest failure to notice."""
+    loaded = tmp_path / ".loaded_map"
+    loaded.write_text("some_other_map 010fa575ab3b4f7a\n")
+    monkeypatch.setenv("UTP_LOADED_MAP", str(loaded))
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    sent = _install_fake_ros(monkeypatch)
+    import importlib, sys as _s
+    monkeypatch.setattr(_s, "argv", ["nav2_goto.py", "door", "--go"])
+    mod = importlib.import_module("nav2_goto"); importlib.reload(mod)
+    rc = mod.main()
+    _check(rc, capsys.readouterr().out, "door", "refused")
+    assert not sent, "nothing may be sent when the map does not match"
+
+
+def test_dry_run_emits_no_result_line(monkeypatch, capsys):
+    """A dry run attempted no navigation, so it has no outcome. Forcing one out of a closed
+    outcome enum is the same error as calling a cancelled goal `blocked`. Absence of a RESULT
+    line is therefore the signal, and it is never an arrival."""
+    _install_fake_waypoints(monkeypatch, GOOD_WP)
+    sent = _install_fake_ros(monkeypatch)
+    assert _nav2_main(monkeypatch, ["door"]) == 0
+    out = capsys.readouterr().out
+    assert "goal" not in sent
+    assert "RESULT " not in out, f"a dry run must not report a navigation outcome:\n{out}"
+    assert "DRY RUN" in out
+    for w in LEGACY_WORDS:
+        assert w not in out, f"a dry run put {w!r} on stdout: {out}"

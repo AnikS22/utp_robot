@@ -1712,3 +1712,384 @@ before the next long drive**; it has now taken the robot down mid-session twice.
 2. **Nav2 has never actually driven the robot.** Everything is active and planning; no goal has
    been executed.
 3. **The press.** Unchanged from 2026-08-29 and still the ICRA deliverable.
+
+## 2026-09-01 — a map you can come back to, and five separate ways the robot was stopping itself
+
+The headline is that `maps/atrium` is the **first map on this project that can be relocalized
+into rather than only drawn**. Everything else today was the same story told five times: a
+subsystem doing exactly what it was configured to do, producing nothing, and reporting it
+somewhere nobody was reading. Nav2 aborted every goal, the controller ran at a third of its
+configured rate, the robot's own arm was a lethal obstacle wrapped round its footprint, and the
+pipeline's navigate step returned before it ever touched Nav2. All five are fixed. None of them
+has yet been strung together into a completed leg.
+
+### The map
+
+    772 x 855 cells @ 0.05 m  =  38.6 x 42.8 m,  10,452 occupied
+    maps/atrium.posegraph  29 MB
+    maps/atrium.data       11 MB
+    maps/atrium.pgm + atrium.yaml
+
+The pose graph is the whole point. Every earlier map in `maps/` is a `.pgm`/`.yaml` pair — a
+picture of a building, with nothing in it that slam_toolbox can resume a scan-matcher against.
+`map_persist.sh save` now writes the graph and the grid together, so for the first time a
+waypoint recorded in the map frame on one day means the same physical place on the next.
+
+### Silent discard, again: localization mode throws the saved map away if you do not seed it
+
+`slam_toolbox` in `mode: localization` with a `map_file_name` and **no** `map_start_pose` logs
+exactly one line:
+
+    LocalizationSlamToolbox: Map starting pose not specified. Set either map_start_pose or map_start_at_dock.
+
+and then comes up **ACTIVE anyway**, on a brand-new empty graph rooted at the robot's feet. It
+publishes a `/map`, it publishes `map->odom`, `ros2 lifecycle get` says active, and every check in
+`session.sh nav` passes. The saved map is simply not in it.
+
+The evidence was in the grid dimensions and nowhere else: the saved atrium is **772 x 855**;
+without the seed the node published **486 x 585** with the robot at (0, 0). The operator drew the
+correct conclusion from the wrong premise — the map on screen was not the atrium, so the atrium
+must be bad — and was about to re-drive the entire building. Forty minutes of driving, to rebuild
+a map that was already fine, because a parameter default failed open.
+
+**Fix.** `config/slam_os0.yaml` now carries `map_start_pose: [0.2888, -0.4561, -0.5207]`, the pose
+the robot was parked at when the map was saved. That is a *parking-spot-specific* number: seeded
+from the wrong spot, localization converges confidently to the wrong place, which is worse than
+not converging. So the mapping RViz config also gained the **2D Pose Estimate** tool — click where
+the robot actually is and the seed is corrected by hand.
+
+### Nav2 aborted every goal, eight milliseconds short
+
+Three goals, three aborts, each in under a second:
+
+    Lookup would require extrapolation into the future ... looking up transform from frame [map] to frame [odom]
+    Unable to transform goal pose into costmap frame
+    Goal failed
+
+`transform_tolerance` was **0.2 s** and was not absorbing the jitter in the map->odom publish;
+raised to **1.0 s** in all four places in `nav2_bringup/nav2_params_os0_map.yaml`. Small fix,
+recorded because of the diagnostic trap that came with it: **RViz keeps drawing a stale `Path`
+forever.** The green line from the first goal stayed on screen through all three aborts, so the
+screen said "planned, driving" while the log said "goal failed" three times. Read the log, not the
+picture — the picture has no timeout.
+
+### The controller was missing its rate by 3x, and that was the jitter
+
+    Control loop missed its desired rate of 20.0000 Hz. Current loop rate is 7.1874 Hz.
+
+MPPI's cost critic has `consider_footprint: true`, so each sample-step is a full **rectangular**
+footprint check rather than a point lookup. At `batch_size: 2000` x `time_steps: 56` that is
+**112,000 footprint checks per cycle inside a 50 ms budget**. It never had a chance; it took
+139 ms and the base got a command every seventh of a second with no fixed phase, which is what the
+sawing looked like from outside.
+
+Retuned:
+
+| | before | after |
+|---|---|---|
+| `controller_frequency` | 20.0 | **10.0** |
+| `model_dt` | 0.05 | **0.1** |
+| `time_steps` | 56 | **40** |
+| `batch_size` | 2000 | **1000** |
+| footprint checks / cycle | 112,000 in 50 ms | **40,000 in 100 ms** |
+| horizon | 2.8 s | **4.0 s** |
+
+Note that the horizon got **longer in time** while the work got smaller — 40 steps at 0.1 s is
+4.0 s of lookahead against 56 at 0.05 s. A 4WS base with a ~1.5 s re-steer lag needs to be
+planning a second and a half ahead of the wheel it is about to point, so a short fast horizon was
+the wrong trade twice over. 10 Hz is also honest about the input: `/scan` arrives at **~6.4 Hz**.
+A controller cannot be fresher than its costmap.
+
+### The robot was seeing itself, and it stopped Nav2 dead
+
+Measured properly this time: 10 scans, robot stationary on open floor, nobody within several
+metres, minimum range per 15° sector in `base_link`:
+
+| sector (deg) | min (m) | median (m) |
+|---|---|---|
+| -120..-105 | 0.73 | 1.27 |
+| -105..-90 | 0.79 | 1.18 |
+| **-90..+60** | **3.0** | — (every bin 3.0-8.8 m; the forward hemisphere is completely clean) |
+| +90..+105 | 0.73 | 1.67 |
+| +105..+120 | 0.70 | 0.79 |
+| +120..+135 | **0.70** | **0.72** (pinned across all ten scans) |
+| +135..+150 | 0.70 | 0.85 |
+
+That is the stowed arm and the mast. They sit inside the 0.20–1.20 m height band that
+`pointcloud_to_laserscan` slices, **by design** — the band was chosen to catch low obstacles and
+the superstructure is in it. It is asymmetric because the arm folds to one side.
+
+What it cost: Nav2's obstacle layer marked those returns **LETHAL, wrapped around the footprint**,
+so the planner believed the robot was standing inside an obstacle. It accepted goals, produced no
+usable plan, and never moved — with **4.10 m of clear floor straight ahead**. Another failure that
+looks like a planner bug and is a sensor bug.
+
+**Fix, two parts.** `pointcloud_to_laserscan` `range_min` 0.50 -> **0.70**, and a measured
+self-occlusion sector mask in `bringup/scan_relay.py`: `MASK_MIN_DEG 74`, `MASK_MAX_DEG 155`,
+`MASK_MAX_M 1.00`. A sector mask rather than a bigger `range_min` because `range_min` blinds the
+robot in *every* direction to buy clearance in one; the mask discards only the bearings and only
+the radii where the robot's own structure is, and keeps the real room behind it. After the mask
+the forward-left sector went from min **0.70 m to min 1.88 m**, and **no return below 0.99 m
+remains at any bearing**.
+
+**The diagnostic rule this reinforces** — it is the same rule as the A1M8's dead arc recorded in
+`config/lidar.yaml`: a return that does not move between scans, only appears astern, and sits at a
+fixed radius is **the robot, not the room**. Check bearings before believing a range.
+
+### The pipeline never navigated. Not once.
+
+`bringup/ros_world.py` `navigate_to_goal()` checked the camera for a blockage **before** driving.
+The camera can see a glass door from 8 m, so `current_blockage()` returned *blocked* before the
+wheels had turned, the method returned, and the Nav2 leg below it was never reached. Three
+consecutive live trials recorded **`path_length_m` 0.0 with the goal 8 m away**, and then
+`approach_blockage` crept the robot forward along whatever heading it already happened to have.
+From outside it looked like navigation. The robot had never navigated.
+
+The operator stated the rule that drove the fix, and it belongs in the record verbatim:
+
+> the VLM is triggered when Nav2, on its path to the goal, discovers it is blocked — not when a
+> camera notices a door somewhere in frame.
+
+**Fix.** The camera blockage check is gated on `NEAR_GOAL_M = 2.5`. Beyond that the leg is Nav2's
+problem; inside it, the camera is allowed to have an opinion. The glass safety is not lost — glass
+is invisible to the lidar and the camera check still runs — it just no longer fires from 8 m out
+and cancels the drive that was supposed to take us to the door.
+
+### The VLM path works end to end, including vision
+
+Real image round-trip through the FAU endpoint (`https://chat.hpc.fau.edu/api/v1`, model
+`openai/gemma4-vibe`), `latency_vlm_s` **1.645**. On a real camera frame:
+
+    planned_action  'none'
+    abstain         True
+    params          {'look': 'closer'}
+    rationale       "The glass doors are visible, but the control mechanism (button or card
+                     reader) to open them is not clearly identifiable in the current view and
+                     requires a closer look."
+
+That is **correct behaviour**, not a failure: it declined to act on a control it could not
+resolve, and asked for the one thing that would resolve it. It also independently confirms the
+doors are **glass** — which the lidar cannot tell us, because it sees straight through them.
+
+### The gripper is not what the docs say
+
+    get_gripper_version() -> '5.2.1'      standard electric xArm Gripper
+    tcp_offset            -> [0, 0, 172, 0, 0, 0]
+    tcp_load              -> 0.82 kg
+
+`docs/CALIBRATION.md` item ② says the TCP offset is unset, that it is "the only thing blocking a
+press", and describes a "~0.12 m stylus". **All three are stale.** The offset is set, the load is
+set, and the tool is a gripper. Item ② has been rewritten today; what actually remains open is
+narrower — whether 172 mm is the right flange-to-fingertip number for *this* gripper *as mounted*,
+which still wants the two-configuration touch test.
+
+**And a trap that cost time.** Calling `robotiq_get_status()` to probe which gripper is fitted
+retunes the TOOL modbus bus to Robotiq's **115200** baud and does not restore it. The controller
+then loses the xArm Gripper, which talks at **2000000**, and raises controller error **19, "End
+Effector Communication Error"**. It presents as a dead gripper. It is a baud rate. Recovery, no
+power cycle needed:
+
+```python
+arm.clean_error()
+arm.set_tgpio_modbus_baudrate(2000000)
+```
+
+Do not probe for a gripper you do not have. The probe is destructive.
+
+### Corrections to my own measurements
+
+All four of these are mine and all four cost session time.
+
+**(a) I raised the OS0 to 1024x10 on a wrong recollection** that the good map had been built at
+1024. It had not. The ~2 MB PointCloud2 dropped `/scan_filtered` from 3.8 to **1.5 Hz** while
+`pointcloud_to_laserscan` burned **1.6% of one core** — which is the tell: at 1.6% it was never
+*receiving* the clouds, not struggling to process them. Reverted to 512x10.
+
+**(b) I then tried `udp_profile_lidar: RNG15_RFL8_NIR8`** to shrink the message, and made it
+worse. The driver pads its PointCloud2 to a fixed layout regardless of the wire profile:
+`point_step` went **16 -> 48 bytes**, the message **1.05 -> 3.15 MB**, and `/scan` **6.4 -> 4.0 Hz**.
+Reverted. **The UDP profile governs sensor -> driver, not driver -> ROS.**
+
+**(c) `ros2 topic hz` is not a reliable instrument on this stack.** It reported **1.7 Hz** and
+**10.0 Hz** for the same topic minutes apart. A cheap subscriber counting messages over 20 s said
+**6.4 Hz**, repeatably. Every rate in this entry comes from a subscriber. Measure with a
+subscriber.
+
+**(d) I killed the lidar twice with over-broad process kills.** Matching `comm == "ros2"` caught
+the launch wrappers; a `/proc` cmdline match caught my own shell. One `kill -9` left **188 stale
+FastDDS shared-memory files** in `/dev/shm`, which degraded DDS for everything until they were
+cleared:
+
+```bash
+rm -f /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_*
+```
+
+### Still open: the OS0 throughput problem, not fixed
+
+`/ouster/points` delivers a **median gap of exactly 100 ms** — a perfect 10 Hz — and then loses
+bursts: roughly **11 gaps > 0.5 s per 45 s**, worst **1402 ms**. A planner that gets a costmap
+update, then nothing for 1.4 s, is driving blind for a metre.
+
+Ruled out today:
+
+* **Not the socket buffer.** `net.core.rmem_max` to 2147483647 and `rmem_default` to 16 MB changed
+  nothing — 11 gaps after versus 10 before.
+* **Not the wire and not heat.** Sensor telemetry healthy: `internal_temperature_deg_c` 36,
+  `input_voltage_mv` 23903, no *new* `ETHERNET_LINK_BAD` alerts, 0 RX errors, 0 carrier errors.
+
+That leaves the DDS serialization path. **The real fix is composition**: run
+`ouster_ros::OusterDriver` and `pointcloud_to_laserscan::PointCloudToLaserScanNode` in one
+component container, so the cloud is passed by pointer and never serialized at all. Both
+components exist — verified with `ros2 component types`. **Caveat, stated before anyone builds on
+it:** `OusterDriver` is a **lifecycle** node, and lifecycle publishers do not reliably support
+intra-process comms. This needs testing, not assuming.
+
+### Two tests were reaching into the live robot
+
+`test_map_persist_refuses_when_no_slam_is_running` ran `map_persist.sh` with **no domain
+isolation**. It inherited `ROS_DOMAIN_ID=9`, found the live `slam_toolbox`, and began serializing
+the **real** map under the name `unittest_probe` before hitting its 180 s timeout. Nothing was
+written. That is luck, not design. It now runs on domain 77, and the 180 s timeout became a 2 s
+pass.
+
+Separately, the `maps_dir` fixture works in the **real** `maps/` directory, and two tests assert
+that `.loaded_map` is **absent**. An earlier run had left `e2e_noact 010fa575dbdb10b8` in the real
+file — which would have made `waypoints.py` and `nav2_goto.py` refuse every map-frame waypoint,
+with a perfectly correct error message about the wrong map being loaded.
+
+Two rules, both broken by the same fixture:
+
+1. **A test that asserts something is absent must own that absence** — it creates the directory it
+   asserts about, or it is asserting about the operator's data.
+2. **A test must never be able to reach the live robot.** Domain isolation is not optional in a
+   repo where the tests and the hardware share a machine.
+
+### What is still not proven
+
+Unchanged from 2026-08-30 except where today made it sharper.
+
+1. **The press has never landed on the plate.** Last attempt missed by **10 cm**. Item ② being
+   stale sent us looking at the TCP; the offset is in fact set, so the 10 cm still wants an
+   explanation and the hand-eye / reprojection chain remains the suspect. Whether 172 mm is right
+   for this gripper as mounted is untested and is the one TCP question still live.
+2. **Nav2 has still not completed a full leg to a waypoint.** Today removed four separate reasons
+   it could not (extrapolation aborts, a 7 Hz controller, a lethal self-obstacle, a navigate step
+   that returned before navigating). It has not yet driven one.
+3. **The chassis angular stall floor `w_min` has still never been measured.** Ten minutes:
+   `python3 bringup/characterise_twist.py --go --wz` at 0.30 / 0.20 / 0.12 / 0.08. The lowest `wz`
+   that still rotates the body IS `w_min`. Until it is done, a Nav2 goal that plans correctly and
+   does not move stays ambiguous between a planner problem and a chassis floor.
+4. **Glass is still invisible to the lidar**, so the obstacle layer cannot mark the atrium doors
+   and Nav2 will still plan straight through them. The VLM confirmed the doors are glass from a
+   camera frame today; nothing in the costmap knows it. That is a collision risk, and it is why
+   the task is to press the plate rather than drive at the door.
+
+
+## 2026-09-01b — the first complete press-and-exit on hardware, and eight ways the robot stopped itself
+
+**THE RESULT.** The mechanical chain ran end to end, autonomously, for the first time:
+
+    navigate to 'button'   ARRIVED 21.8 s, 0.19 m off
+    ground the plate       'the accessible door push button' 0.581 via gdino, lifted from real
+                           depth, 186x191 px. The FIRE ALARM 20 cm away was scored and REJECTED.
+    fire-alarm veto        SAFE -- strongest forbidden hit (0.797) landed on the actual alarm
+    press                  the arm reached and pressed the plate
+    retract                packed pose, confirmed by the mux from measured joint angles
+    navigate to 'outside'  ARRIVED 18.4 s, 0.24 m off, through the doorway
+
+`bringup/press_route.sh` is that sequence written down so it can be repeated instead of retyped.
+
+**WHY IT HAD NOT WORKED BEFORE.** Eight separate faults, every one of which presented as a
+healthy system. In the order they were found:
+
+1. NAV2 WAS FED THE ROBOT'S OWN ARM. Both costmaps consumed `/scan_filtered` -- the RAW
+   projection -- while the self-occlusion mask published `/scan`. Both are BEST_EFFORT, so the
+   wrong data arrived perfectly, at full rate, with no error anywhere. The arm and mast return at
+   a fixed 0.70-0.85 m across |bearing| 74-180 deg, so Nav2 marked lethal cells wrapped around its
+   own footprint and refused to plan: goals accepted, no motion, 4.10 m of clear floor ahead. The
+   params' comment claimed `/scan_filtered` was the CLEANED topic -- true of the retired A1M8
+   chain, inverted on this one, and that inversion is why it survived several readings.
+
+2. THE PIPELINE NEVER NAVIGATED. `ros_world.navigate_to_goal` checked the camera for a blockage
+   BEFORE driving. A glass door is visible from 8 m, so it returned `blocked` before the wheels
+   turned and the Nav2 leg below was unreachable: three live trials recorded `path_length_m 0.0`
+   with the goal 8 m away, then `approach_blockage` crept the robot along whatever heading it
+   already had. From outside it looked like navigation.
+
+3. ODOM SUBTRACTED FROM A MAP WAYPOINT. The distance gate added to fix (2) called
+   `waypoints.py where` with no `--frame`, which resolves to ODOM. Measured: 5.09 m reported for a
+   true 2.59 m. Two origins, one subtraction.
+
+4. STAGED LEGS BROKE NAVIGATION THAT WORKED. Mid-leg supervision cancels the Nav2 goal at every
+   stage boundary and re-plans from wherever it stopped; the robot stuttered and wandered where a
+   single goal arrived cleanly. One uninterrupted goal is now the default; staging is behind
+   `UTP_NAV_STAGED=1`, which is what you want closing on glass and nothing else.
+
+5. THE PRESS PHOTOGRAPHED ITS OWN ARM. `press_run.sh` moved the arm to the press-ready pose
+   BEFORE taking the frame, on a comment claiming ready "clears the camera view". It does the
+   opposite: `captures/press_151940` shows the arm filling the frame, the plate hidden behind it,
+   and the detector choosing a corner of the FIRE ALARM at 0.38. The operator stopped it on the
+   E-stop. It also made `--dry-run` a lie -- without `--go` the arm does not move, so the dry run
+   grounded from the stowed pose and returned the plate at 0.58: a clean preview of a scene the
+   real run would never see. Order is now LOOK -> GROUND -> SHOW -> READY -> REACH.
+
+6. TWO STOW POSES, AND A MISSING DEPENDENCY. The operator set a new packed pose; `stow_arm.py`
+   carried its own literal of the old one. The arm folded to the old pose, `arm_monitor_node.py`
+   compared against the new one, `/safety/arm_stowed` stayed false, and the base refused every
+   command while the arm was -- by its own account -- stowed. Fixed by reading the config; the fix
+   then failed AGAIN because `stow_arm.py` runs under `.venv-arm`, which has the xArm SDK and NOT
+   PyYAML, so `import yaml` raised and the silent fallback restored the old pose. It is a regex
+   now. Both interpreters were verified to agree.
+
+7. J2 HAS A LIMIT THE CONTROLLER ONLY REPORTS AS A FAULT. The operator set -55 deg in UFACTORY
+   Studio; past it the arm reaches the rover laptop. Commanding EXACTLY -55 makes the software
+   limit clamp the trajectory and return error 23 ("Large Motor Position Deviation") with the arm
+   stopped and nothing saying which joint -- twice, both times arriving exactly on target.
+   `safety/arm_limits.py` now refuses such a command by name, and the packed pose sits at -54.
+
+8. THE CUTOFF THAT HID THE DOOR, THEN THE ARM. `range_min` was raised to 0.70 to silence the
+   self-returns. Measured from `captures/trial_ours_001/scan.json`, taken at the closed doors: 85
+   returns within +-20 deg forward, NEAREST 0.72 m -- the door was TWO CENTIMETRES above the
+   cutoff, and one step closer it would have vanished from the scan entirely. Dropped to 0.30,
+   which then exposed the PACKED ARM at 0.31-0.36 m dead ahead as a permanent obstacle: the FSM
+   declared "glass doors 0.30 m ahead" while parked 8 m from any door, and reversed away from its
+   own arm. Settled at 0.45 -- above the arm, below the door -- with the angular mask
+   (74-180 deg, under 1.00 m) doing the work a global cutoff cannot.
+
+**SENSOR FUSION.** `safety/blockage_fusion.py`: blocked if EITHER camera or lidar says so. The two
+real captures are the argument, not a principle -- `trial_ours_001` has the camera reporting "an
+open walkway with pillars" through closed glass while the lidar has 0.70 m ahead;
+`trial_ours_002` has the camera correctly calling "closed glass doors" while the lidar sees
+nothing nearer than 1.40 m. An AND would have cleared BOTH, and one of them is a door at 0.72 m.
+It also closed a fail-open: an all-NaN scan made `corridor_blocked` return False on every
+comparison, so a DEAD LIDAR read exactly like an open corridor.
+
+**THE MAP, AND WHAT WAS LOST.** `atrium` was saved with its pose graph (772 x 855 @ 0.05 m,
+29 MB .posegraph + 11 MB .data) -- the first relocalizable map on this project. It was then
+DESTROYED on disk by `tests/test_session_e2e.py`: its fixture works in the real `maps/` directory
+and cleaned up only files that were NEW, so a test using the literal names `atrium`/`atrium2d`
+overwrote the real ones with 12-byte stubs and left them. The grid came back from git; the pose
+graph was untracked and is gone. `serialize_map` on the still-running node returns `result=0` and
+WRITES NOTHING in localization mode -- confirmed twice -- so the in-memory graph could not be
+recovered either. The fixture now snapshots and restores every file it touches, and raises on any
+it cannot. AMCL localizes against the grid, so the map is not lost for navigation; only
+slam_toolbox relocalization is.
+
+**ALSO FIXED:** every non-SUCCEEDED Nav2 status was reported as `blocked`, so a CANCELLED goal
+would have started reason -> ground -> press and driven the arm at whatever it found; a waypoint's
+`map_name` was never compared to the loaded map (`session.sh` defaulted to `atrium2d` while every
+waypoint said `atrium`); `session.sh nav` trusted any live `/map` and would certify the requested
+map as loaded while a MAPPING session or a different map was serving it; the campaign's
+return-to-start leg used the ODOM driver on map-frame waypoints, which would have dead-reckoned
+home and measured drift against wherever it landed.
+
+**STILL NOT TRUE:**
+* No force or pressure sensor is fitted (`get_ft_sensor_data` answers with zeros) and
+  `collision_sensitivity` is 0 -- the arm has no contact protection. The operator judged the
+  failure mode acceptable: worst case the arm pushes the base back slightly.
+* `tcp_offset`/`tcp_load` are zero and do not survive a power cycle; SDK writes return success and
+  a fresh connection reads zeros. Set them in UFACTORY Studio, which is the path known to persist.
+* `requires_enable: false` on BOTH `nav` and `servo` -- the operator's supervised-run decision,
+  with the E-stop in hand. `run_campaign.py` refuses to start while it is false.
+* The escalation reverses into the arc the self-mask blinds. Attended only.
+* 11 tests in `test_ros_world_escalation.py` are red, from the staged-leg default changing.

@@ -24,7 +24,12 @@ sources:
   - name: servo
     topic: "/cmd_vel_servo"         # utp/pipeline/*_world.py approach / retreat / look-around
     priority: 50
-    requires_enable: true
+    # requires_enable: false -- SAME SUPERVISED DECISION AS `nav` ABOVE, 2026-09-01. The approach,
+    # look-around and retreat loops run under this source. With it true and no deadman held, the
+    # mux discarded every one of them and the FSM reported "moved=False" on each rung -- an inert
+    # look ladder that reads in the record as "looked and saw nothing". MUST GO BACK TO TRUE for
+    # any campaign; bringup/run_campaign.py refuses to start while it is false.
+    requires_enable: false
     allows_arm_override: false
   - name: nav
     topic: "/cmd_vel_nav"           # Nav2 controller_server output (remapped in the launch file)
@@ -104,5 +109,10 @@ arm_monitor:
     stale_after_s: 3.0        # self-generated at 1 Hz; only a dead node makes this go stale
   xarm:
     ip: "${ENV:UTP_XARM_IP:192.168.1.221}"   # VERIFIED reachable 2026-08-25 via enx00e04c674c60 (192.168.1.100/24)
-    stow_pose_deg: [0.0, -45.0, -45.0, 0.0, 90.0, 0.0]
+    # THE OPERATOR'S PACKED POSE, set on the robot 2026-09-01 and saved to
+    # calib/arm_packed.json. It was [0,-45,-45,0,90,0] -- if the two ever disagree the arm
+    # parks somewhere the mux does not recognise, arm_stowed stays false, and the base
+    # refuses to move with everything looking healthy.
+    # J2 is -55, the hard limit set in UFACTORY Studio; see safety/arm_limits.py.
+    stow_pose_deg: [0.01, -54.0, -9.85, 0.01, 68.03, -0.01]
     joint_tolerance_deg: 5.0

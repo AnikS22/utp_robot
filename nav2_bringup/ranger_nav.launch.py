@@ -35,7 +35,16 @@ from launch_ros.actions import Node
 
 def generate_launch_description() -> LaunchDescription:
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
-    default_params = os.path.join(pkg_dir, "nav2_params.yaml")
+    # THE ONE Nav2 config. nav2_params.yaml (the sim mirror) and nav2_params_os0.yaml (the
+    # rolling-window variant) were archived on 2026-09-01: three near-identical 400-line
+    # files meant the /scan_filtered -> /scan fix that cost most of that session had to be
+    # applied BY HAND three times. Worse, this default pointed at the sim mirror, which
+    # still carried sensor_frame: lidar_link (no such TF on this robot -- docs/NAV2.md
+    # gotcha 4, "the single most expensive bug this stack has had") and motion_model: Omni
+    # (the Ranger firmware drops angular.z when linear.y is non-zero). A bare launch with
+    # no params_file therefore came up blind. session.sh always passes params_file
+    # explicitly, so nothing live ever read that default -- which is exactly why it rotted.
+    default_params = os.path.join(pkg_dir, "nav2_params_os0_map.yaml")
     default_map = os.path.join(pkg_dir, "maps", "placeholder_map.yaml")
 
     # ---- launch args -------------------------------------------------------
@@ -76,7 +85,7 @@ def generate_launch_description() -> LaunchDescription:
     common_overrides = {"use_sim_time": use_sim_time}
 
     # HARDWARE FIX: resolve the behavior-tree XMLs from THIS FILE's location.
-    # nav2_params.yaml ships them as absolute paths into a specific developer's home directory
+    # nav2_params_os0_map.yaml ships them as absolute paths into a specific developer's home directory
     # (/home/minghanwei/...), so bt_navigator fails to activate on every other machine with
     # "Couldn't open input XML file" -- and because the lifecycle manager then aborts the whole
     # bringup, Nav2 does not come up at all. Overriding here rather than editing the copied YAML

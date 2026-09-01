@@ -96,7 +96,7 @@ if ! alive /scan_filtered; then
      -r cloud_in:=/ouster/points -r scan:=/scan_filtered \
      -p target_frame:=base_link -p min_height:=0.20 -p max_height:=1.20 \
      -p angle_min:=-3.14159 -p angle_max:=3.14159 -p angle_increment:=0.0061 \
-     -p range_min:=0.50 -p range_max:=40.0 -p use_inf:=true
+     -p range_min:=0.45 -p range_max:=40.0 -p use_inf:=true
   waitfor 20 /scan_filtered || die "no /scan_filtered"
 fi
 echo "  /scan_filtered ok"
@@ -163,7 +163,11 @@ if [ "$cmd" = "map" ]; then
 fi
 
 # ------------------------------------------------------------------------------ 5b. nav (map)
-MAP_NAME=${MAP_NAME:-atrium2d}
+# DEFAULT MUST BE A MAP THAT EXISTS AND IS RELOCALIZABLE. 'atrium2d' was the default while every
+# waypoint on disk carried map_name 'atrium', and atrium2d is grid-only (no .posegraph/.data), so
+# the default could not be relocalized into AND disagreed with every waypoint. Nothing compared
+# them until nav2_goto gained its map-match check on 2026-09-01.
+MAP_NAME=${MAP_NAME:-atrium}
 start_nav() {
   say "5/6  localization + Nav2 on the SAVED map '$MAP_NAME'"
   [ -f "maps/$MAP_NAME.yaml" ] || die "maps/$MAP_NAME.yaml not found. Make one: bash bringup/session.sh map"
@@ -179,6 +183,40 @@ start_nav() {
             bash bringup/session.sh map
             bash bringup/map_persist.sh $MAP_NAME"
   done
+  # AN EXISTING /map IS NOT EVIDENCE THAT THE RIGHT MAP IS LOADED, and trusting it was a real
+  # bug. `alive /map` is true for a still-running MAPPING session, and for a localization session
+  # holding a DIFFERENT map. In either case this used to skip the launch below and then write
+  # maps/.loaded_map certifying that $MAP_NAME is live -- manufacturing the exact provenance that
+  # waypoints.py and nav2_goto.py were built to trust. The documented flow map -> nav with no
+  # `down` in between lands you there, silently, in the wrong coordinate frame.
+  #
+  # So interrogate the node instead of the topic. A publisher on /map answers "something is
+  # running"; the parameters answer "what, and on which map".
+  if alive /map; then
+    LIVE_MODE=$(timeout 8 ros2 param get /slam_toolbox mode 2>/dev/null | tail -1)
+    LIVE_MAP=$(timeout 8 ros2 param get /slam_toolbox map_file_name 2>/dev/null | tail -1)
+    case "$LIVE_MODE" in
+      *localization*) ;;
+      *) die "something is already publishing /map and it is NOT in localization mode
+        (mode reads: ${LIVE_MODE:-unreadable}). A mapping session keeps rewriting the map under
+        your waypoints, and this script would have certified '$MAP_NAME' as loaded anyway.
+        Stop it first:  bash bringup/session.sh down" ;;
+    esac
+    # ros2 prints `String value is: /path/to/map`. Compare the final path component exactly:
+    # substring matching makes requested map `atrium` incorrectly accept live map `atrium2d`.
+    LIVE_MAP_VALUE=${LIVE_MAP##*: }
+    LIVE_MAP_VALUE=${LIVE_MAP_VALUE#\"}; LIVE_MAP_VALUE=${LIVE_MAP_VALUE%\"}
+    LIVE_MAP_VALUE=${LIVE_MAP_VALUE#\'}; LIVE_MAP_VALUE=${LIVE_MAP_VALUE%\'}
+    LIVE_MAP_NAME=${LIVE_MAP_VALUE##*/}
+    if [ "$LIVE_MAP_NAME" = "$MAP_NAME" ]; then
+      echo "  /map already served by localization on '$MAP_NAME'"
+    else
+      die "slam_toolbox is localizing in a DIFFERENT map (map_file_name reads:
+        ${LIVE_MAP:-unreadable}), not '$MAP_NAME'. Their origins are unrelated, so every waypoint
+        would resolve to the wrong physical place. Stop it first:
+            bash bringup/session.sh down"
+    fi
+  fi
   if ! alive /map; then
     # LOCALIZATION mode, not mapping: 50 passes through the same corridor must not keep rewriting
     # the map underneath the waypoints. slam_toolbox owns BOTH /map and map->odom here, which is
@@ -224,13 +262,17 @@ PYEOF
   [ -n "$SESS" ] || die "cannot identify the slam session (is exactly one node publishing /map?)"
   printf '%s %s\n' "$MAP_NAME" "$SESS" > "$ROOT/maps/.loaded_map"
   echo "  maps/.loaded_map -> $MAP_NAME [slam ${SESS:0:8}]"
-  # THE BEHAVIOUR-TREE PATHS IN THE PARAMS ARE ABSOLUTE AND POINT AT THE SIM CHECKOUT.
-  # nav2_params_os0_map.yaml carries
-  #   default_nav_to_pose_bt_xml: "/home/<someone>/Desktop/Unlocking_the_path/nav2_bringup/..."
-  # which is a path on the WORKSTATION. On the rover laptop it does not exist, bt_navigator fails
-  # to load its tree, and Nav2 comes up looking healthy while navigate_to_pose never works --
-  # exactly the silent half-failure docs/NAV2.md warns about. This repo ships its own copies of
-  # both trees, so rewrite the two lines to point at them, wherever this repo happens to live.
+  # THE BEHAVIOUR-TREE PATHS IN THE PARAMS ARE ABSOLUTE AND POINT AT THE SIM CHECKOUT
+  # (default_nav_{to_pose,through_poses}_bt_xml -> /home/<someone>/Desktop/...). Unresolved,
+  # bt_navigator loads no tree, the lifecycle manager aborts, and Nav2 comes up looking healthy
+  # while navigate_to_pose never works -- the silent half-failure docs/NAV2.md warns about.
+  #
+  # REDUNDANCY CLAIM, SETTLED 2026-09-01: ranger_nav.launch.py DOES already resolve both keys from
+  # its own __file__ and passes them to bt_navigator as the LAST entry of `parameters=`, which wins
+  # over params_file -- so the launch file, not this sed, is what decides at runtime. The rewrite
+  # is kept anyway: it keeps the params file we hand Nav2 agreeing with the node that will run
+  # (a params file that lies about the running config is its own trap), and it is asserted by
+  # tests/test_session_e2e.py and tests/test_stack_wiring.py. Drop it only together with those.
   RUNTIME_PARAMS=/tmp/utp_nav2_params_runtime.yaml
   sed -E "s#(default_nav_to_pose_bt_xml:).*#\1 \"$ROOT/nav2_bringup/behavior_trees/navigate_to_pose_no_spin.xml\"#; \
           s#(default_nav_through_poses_bt_xml:).*#\1 \"$ROOT/nav2_bringup/behavior_trees/navigate_through_poses_no_spin.xml\"#" \

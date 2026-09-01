@@ -48,21 +48,6 @@ CAP="$REPO/captures/$NAME"
 # plainly (0.413, SAFE) and its direct 3D lift put it 10 cm right and 5 cm above where a target
 # reprojected through odometry had sent the arm -- which is why that press missed a 12 cm plate.
 # Raise the arm first, THEN look, and the target the arm aims at was measured from where the arm is.
-echo
-echo "=============================================================="
-echo " 1/6  READY     wrist to the press orientation (clears the camera view)"
-echo "=============================================================="
-# Stow and press are different orientations: stow folds the wrist to J5=90 so the tool points up
-# out of the way; a press needs it pointing AT the wall (J5 ~ 2.5). approach_target.py holds
-# whatever orientation the arm starts in, so approaching straight out of stow reaches at the stow
-# angle and skids off a round button. The ready pose is the OPERATOR'S, captured with
-# `stow_arm.py --save-ready`, not a number invented here.
-if [ "$MODE" = "--go" ]; then
-    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --ready --go || {
-        echo "could not reach the press-ready pose; not approaching" >&2; exit 5; }
-else
-    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --ready || true
-fi
 
 
 echo
@@ -126,6 +111,30 @@ if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
     sleep 1
 else
     echo "  (no display; open it yourself)"
+fi
+
+# GROUND FIRST, THEN MOVE. This used to run before the LOOK stage, on the claim that the ready
+# pose clears the camera. On 2026-09-01 it did the opposite: captures/press_151940 shows the arm
+# filling the frame with the ADA plate hidden behind it, and the detector -- handed a photo of the
+# robot's own arm -- chose a corner of the FIRE ALARM at 0.38. The operator stopped it.
+# It also made --dry-run a lie: without --go the arm does not move, so the dry run grounded from
+# the stowed pose and returned the plate at 0.58, a clean preview of a scene the real run would
+# never see. The manual sequence that DID work grounded with the arm parked, then moved.
+# The target is a point in base_link; moving the arm afterwards cannot change where it is.
+echo
+echo "=============================================================="
+echo " 4b/6 READY     wrist to the press orientation -- AFTER grounding"
+echo "=============================================================="
+# Stow and press are different orientations: stow folds the wrist to J5=90 so the tool points up
+# out of the way; a press needs it pointing AT the wall (J5 ~ 2.5). approach_target.py holds
+# whatever orientation the arm starts in, so approaching straight out of stow reaches at the stow
+# angle and skids off a round button. The ready pose is the OPERATOR'S, captured with
+# `stow_arm.py --save-ready`, not a number invented here.
+if [ "$MODE" = "--go" ]; then
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --ready --go || {
+        echo "could not reach the press-ready pose; not approaching" >&2; exit 5; }
+else
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --ready || true
 fi
 
 echo

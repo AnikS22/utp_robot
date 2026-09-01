@@ -87,7 +87,7 @@ class Grabber(Node):
         # works; detect_frame uses it only when the depth lift fails, and says so.
         self.scan = None
         from sensor_msgs.msg import LaserScan
-        self.create_subscription(LaserScan, os.environ.get("UTP_SCAN_TOPIC", "/scan_filtered"),
+        self.create_subscription(LaserScan, os.environ.get("UTP_SCAN_TOPIC", "/scan"),
                                  lambda m: setattr(self, "scan", m), qos_profile_sensor_data)
         try:
             from tf2_ros import Buffer, TransformListener

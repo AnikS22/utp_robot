@@ -99,9 +99,24 @@ def _install_fakes(monkeypatch, *, world, trial_results, goto_rc=0, calls=None):
 
 
 def _argv(tmp_path, **over):
+    # Campaign-loop tests exercise trial bookkeeping, not the mux preflight.  Give
+    # them an explicit, isolated safe config so their outcome cannot depend on the
+    # operator's live config/safety.yaml (which is intentionally changed during
+    # supervised robot work).  The preflight itself is covered exhaustively in
+    # test_campaign_safety.py.
+    safety = tmp_path / "safety.yaml"
+    safety.write_text("""sources:
+  - name: teleop
+    requires_enable: false
+  - name: nav
+    requires_enable: true
+  - name: servo
+    requires_enable: true
+""")
     a = {"--trials": "3", "--method": "passive", "--start": "start",
          "--out": str(tmp_path / "campaign.jsonl"), "--settle": "0",
-         "--config": str(REPO / "config" / "pipeline")}
+         "--config": str(REPO / "config" / "pipeline"),
+         "--safety-config": str(safety)}
     a.update(over)
     out = ["run_campaign.py"]
     for k, v in a.items():
@@ -149,6 +164,19 @@ def test_return_to_start_is_not_a_dry_run(monkeypatch, tmp_path):
     assert calls["goto"], "the campaign never tried to return to start"
     for cmd in calls["goto"]:
         assert "goto" in cmd and "--go" in cmd, f"return-to-start was a dry run: {cmd}"
+
+
+def test_return_to_start_uses_deadman_gated_mux_source(monkeypatch, tmp_path):
+    """Campaign return is autonomous motion and must not use waypoints.py's manual teleop
+    default, which deliberately remains available without the software deadman."""
+    w = FakeWorld()
+    rc, calls = _install_fakes(monkeypatch, world=w,
+                              trial_results=[{"success": True, "failure_category": None}])
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path))
+    rc.main()
+    assert calls["goto"], "the campaign never tried to return to start"
+    for cmd in calls["goto"]:
+        assert "--deadman-gated" in cmd, f"autonomous return used manual teleop source: {cmd}"
 
 
 def test_drift_is_measured_against_the_anchor_not_the_previous_trial(monkeypatch, tmp_path):

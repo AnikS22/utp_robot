@@ -33,31 +33,51 @@ measure the error with a rule.
 this is a pure translation, as assumed above. Consequence: with 0.764 m of arm from 0.740 m, the
 **1.067 m ADA elevator hall call is reachable**. At the flush 0.345 m mount it would not be.
 
-## ② Tool TCP offset — **STILL OPEN, and it is the only thing blocking a press**
+## ② Tool TCP offset — **SET on the arm; the number itself is unverified**
 
-**The fitted tool is a GRIPPER, not the stylus these docs assume.** Checked on the arm 2026-08-21:
+**MEASURED 2026-09-01, read back off the live controller:**
 
-    tcp_offset = [0, 0, 0, 0, 0, 0]      tcp_load = [0, [0, 0, 0]]
+    get_gripper_version() -> '5.2.1'          standard electric xArm Gripper
+    tcp_offset            -> [0, 0, 172, 0, 0, 0]     mm
+    tcp_load              -> 0.82 kg
 
-So `get_position()` reports the **flange**, and the arm believes its tool is a bare plate. Two
-consequences, and the second is the one that matters for a contact move: every commanded position
-is short by the tool length, **and** the collision-detection thresholds are calibrated for no
-payload, so the arm will either nuisance-trip on its own gripper or fail to notice a real contact.
+This supersedes what this item said before. There is **no stylus** on this robot and there never
+was one on the current build; the fitted tool is an xArm Gripper. The earlier reading of
+`tcp_offset = [0,0,0,0,0,0]` / `tcp_load = 0` from 2026-08-21 no longer holds, and the claim that
+this item was "the only thing blocking a press" was wrong — the arm knows about its tool, in both
+geometry and payload, and the 10 cm press miss of 2026-08-29 is **not** explained by an unset TCP.
+Look at item ⑧ and the observe→press reprojection instead.
 
-Hand-eye (item ⑧) no longer depends on this — it now solves the marker offset for itself. But a
-**press** does: the calibration knows where the *marker* is, not where the *fingertips* are.
+**What is actually still open:** whether **172 mm is the correct flange-face → fingertip distance
+for THIS gripper AS MOUNTED**. 172 mm is a plausible catalogue figure for an xArm Gripper, and
+nobody on this project has confirmed it against the hardware. Nothing has checked the fingertip
+*reference point* either — whether it means closed fingertips, the pad centre, or the gripper body
+face. An error here is a **pure offset along the approach axis**: it never averages out, and at
+contact it is the difference between pressing a 12 cm plate and pushing on the wall beside it.
 
-**What is needed:** flange face → fingertips, along the gripper's pointing direction, ±3 mm. Plus
-the gripper's mass for `set_tcp_load`.
+**Method — the two-configuration touch test.** Pick one fixed physical point (a taped cross on a
+wall). Command the tool tip to it from two clearly different arm configurations — e.g. approaching
+from the left and from the right, or with the wrist rolled 90° between attempts. If the TCP is
+right, the fingertip lands on the same physical point both times. If it is wrong by δ along the
+tool axis, the two touches separate by roughly 2δ·sin(half the angle between the approach
+directions), which is why two *different* configurations are required and repeating the same one
+proves nothing.
 
-**Why here.** The end effector is a ~0.12 m stylus. Until the arm knows about it, every commanded
-position refers to the flange and lands ~12 cm short along the approach axis.
-
-**Method.** Measure the stylus **as mounted** (they get bent and re-seated). Set it with
-`set_tcp_offset` on the xArm. Verify by touching a fixed point from two different arm
-configurations — the tip should reach the same physical point both times.
+Correct with `set_tcp_offset` and re-run. Leave `tcp_load` at the measured 0.82 kg unless the
+gripper is changed — it is what the collision-detection thresholds are calibrated against, and a
+wrong load either nuisance-trips on the gripper's own weight or fails to notice a real contact.
 
 **Accept:** same physical point from two configurations within **±5 mm**.
+
+**Do not probe for a Robotiq gripper.** Calling `robotiq_get_status()` retunes the TOOL modbus bus
+to Robotiq's 115200 baud and does not restore it. The xArm Gripper talks at 2000000, so the
+controller immediately loses it and raises error **19, "End Effector Communication Error"** — which
+looks exactly like a dead gripper and is a baud rate. Recovery, no power cycle:
+
+```python
+arm.clean_error()
+arm.set_tgpio_modbus_baudrate(2000000)
+```
 
 ## ③ Lidar mount pose — `base_link → lidar_link`
 
@@ -273,7 +293,7 @@ assuming it.
 | # | Calibration | Accept | Blocks |
 |---|---|---|---|
 | ① | Riser `base_link→link_base` | ±5 mm | every press, elevator tier |
-| ② | Stylus TCP offset | ±5 mm | every press |
+| ② | Gripper TCP offset (set: 172 mm, 0.82 kg — unverified) | ±5 mm | every press |
 | ③ | Lidar mount pose | ±2 cm | mapping, costmap |
 | ④ | Scan direction / zero-angle | ±5° | mapping, navigation |
 | ⑤ | Odometry scale | 2% / 3% | servo loops, Nav2 |

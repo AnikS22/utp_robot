@@ -1,37 +1,4 @@
-# Nav2 parameters for the OS0-128 + MOLA stack, ROLLING WINDOW (no saved map).
-#
-# Derived from nav2_params.yaml (which mirrors the sim) by bringup/../nav2_bringup. Four changes,
-# each of which would otherwise stop Nav2 working on THIS robot:
-#
-#  1. sensor_frame: lidar_link -> base_link.
-#     /scan_filtered no longer comes from the RPLIDAR. It is the Ouster cloud projected by
-#     pointcloud_to_laserscan with target_frame:=base_link, so its frame IS base_link. There is
-#     no base_link->lidar_link TF on this robot at all (health.py reports it MISSING), so the
-#     ObservationBuffer would drop every scan and the obstacle layer would never mark or clear.
-#
-#  2. motion_model: Omni -> DiffDrive.
-#     MPPI-Omni emits strafe and yaw in the SAME twist. The Ranger CAN protocol takes one body
-#     twist and the FIRMWARE picks a mode from it (docs/HARDWARE_SPECS.md):
-#         linear.y != 0     -> PARALLEL, and angular.z is DROPPED
-#         small turn radius -> SPINNING, and linear.x is DROPPED
-#     so an Omni twist is silently truncated on the way to the wheels. EXPERIMENT_LOG 2026-08-21
-#     recorded this and left Omni to "match the sim"; the sim can do it because Isaac drives the
-#     four wheel joints directly, and this robot cannot. DiffDrive emits vx+wz only, which is the
-#     one mix the firmware keeps intact -- the same conclusion safety/waypoint_drive.py reached.
-#
-#  3. global_costmap: static_layer removed, rolling_window enabled.
-#     There is no saved occupancy grid. MOLA supplies map->odom, and the global costmap is built
-#     from live scan in a window that travels with the robot. Enough to plan around what the
-#     robot can currently see, which is the point of this mode.
-#
-#  4. Launch with localization:=slam so neither map_server nor AMCL starts. EXACTLY ONE source
-#     may publish map->odom and that source is MOLA.
-#
-# WHAT THIS MODE CANNOT DO: plan around an obstacle it has never seen. The global costmap only
-# knows the rolling window, so a goal behind a wall the robot has not observed will be planned
-# straight through it and then re-planned when the wall appears. For whole-floor planning, save
-# a MOLA map and project it to an occupancy grid.
-
+# =============================================================================
 # Nav2 params — AgileX Ranger Mini 3 base (M1.2)  |  ROS2 Jazzy / Nav2 1.3.x
 # =============================================================================
 # Built to docs/integration_contract.md:
@@ -143,8 +110,7 @@ controller_server:
       transform_tolerance: 0.2        # DDS bridge jitter
       temperature: 0.3
       gamma: 0.015
-      motion_model: "DiffDrive"      # [OS0] vx+wz only -- the firmware DROPS angular.z whenever
-                               # linear.y is non-zero, so an Omni twist is truncated. See header note 2.
+      motion_model: "Omni"           # Ranger 4WS: vx, vy, wz (strafe to center in doorways)
       visualize: false
       regenerate_noises: false
       AckermannConstraints:
@@ -274,20 +240,33 @@ global_costmap:
       # Rectangular footprint, base_link at center: length 0.72 (x), width 0.50 (y)
       footprint: "[[0.36, 0.25], [0.36, -0.25], [-0.36, -0.25], [-0.36, 0.25]]"  # [NONDEFAULT]
       footprint_padding: 0.03         # [NONDEFAULT] small safety pad around the body
-      # [OS0] No saved occupancy grid: no static_layer, and the global costmap rolls with
-      # the robot instead of covering a fixed world. See header note 3.
-      rolling_window: true
-      width: 24
-      height: 24
-      resolution: 0.05
-      plugins: ["obstacle_layer", "inflation_layer"]
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
         observation_sources: scan
         scan:
-          topic: /scan_filtered       # rear chassis sector removed; raw /scan is diagnostic only
-          sensor_frame: base_link     # [OS0] pointcloud_to_laserscan target_frame; lidar_link does not exist here
+          topic: /scan       # MASKED + RELIABLE. See bringup/scan_relay.py.
+                                      # WAS /scan_filtered UNTIL 2026-09-01, and the old comment here
+                                      # was INVERTED and cost most of a session: it claimed this
+                                      # topic was the cleaned one. It described the
+                                      # retired A1M8 chain, where filter_scan.py produced a cleaned
+                                      # /scan_filtered. On the OS0 chain it is the other way round:
+                                      # pointcloud_to_laserscan publishes /scan_filtered RAW, and
+                                      # scan_relay.py publishes the cleaned /scan.
+                                      # RAW MEANS IT CONTAINS THE ROBOT. The stowed arm and mast sit
+                                      # inside the 0.20-1.20 m height band and return at a fixed
+                                      # 0.70-0.85 m across |bearing| 74-155 deg (10 scans, stationary,
+                                      # open floor). Feeding that to the obstacle layer marks LETHAL
+                                      # cells wrapped around the footprint, so Nav2 believes it is
+                                      # standing inside an obstacle: it accepts goals, produces no
+                                      # usable plan and never moves, with metres clear ahead.
+                                      # There was no QoS error to notice -- both are BEST_EFFORT, so
+                                      # the wrong data arrived perfectly.
+          sensor_frame: lidar_link    # [NONDEFAULT] per integration contract TF tree
           data_type: "LaserScan"
           # [NONDEFAULT] MULTI-FLOOR z-BAND. Nav2's ObservationBuffer discards scan points whose z
           # (in the costmap's GLOBAL frame) falls outside [min_obstacle_height, max_obstacle_height].
@@ -345,8 +324,8 @@ local_costmap:
         enabled: true
         observation_sources: scan
         scan:
-          topic: /scan_filtered       # rear chassis sector removed
-          sensor_frame: base_link     # [OS0] see header note 1
+          topic: /scan       # MASKED + RELIABLE (scan_relay.py); see the global costmap above
+          sensor_frame: lidar_link    # [NONDEFAULT]
           data_type: "LaserScan"
           # [NONDEFAULT] MULTI-FLOOR z-BAND. Nav2's ObservationBuffer discards scan points whose z
           # (in the costmap's GLOBAL frame) falls outside [min_obstacle_height, max_obstacle_height].
@@ -399,7 +378,7 @@ amcl:
                                       # -- the same trap that bit slam_toolbox (config/slam_os0.yaml).
     odom_frame_id: "odom"
     global_frame_id: "map"
-    scan_topic: /scan_filtered
+    scan_topic: /scan          # unused (Nav2 launches localization:=slam) but kept consistent
 
     # OmniMotionModel, not Differential: the Ranger is 4WS and genuinely produces lateral motion in
     # PARALLEL mode, so /odom carries a non-zero vy that a differential model cannot represent and

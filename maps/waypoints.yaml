@@ -7,11 +7,36 @@
 # value for every driver instance. goto and route_run REFUSE a waypoint whose session
 # does not match the running one. 'odom_epoch' is wall-clock provenance only -- nothing
 # reads it. See safety/waypoint_frame.py.
+button:
+  frame: map
+  map_name: atrium
+  mola_session: 010fa57588505f35
+  odom_epoch: 1788290313
+  x: 4.5243
+  y: 6.6257
+  yaw: 0.9213
+door:
+  frame: map
+  map_name: atrium
+  mola_session: 010fa57588505f35
+  odom_epoch: 1788289649
+  x: 5.4897
+  y: 5.6368
+  yaw: 0.7631
+outside:
+  extended_m: 0.6
+  frame: map
+  map_name: atrium
+  mola_session: 010fa57588505f35
+  odom_epoch: 1788289763
+  x: 7.6298
+  y: 7.8085
+  yaw: 0.7346
 start:
   frame: map
   map_name: atrium
-  mola_session: 010fa575ab3b4f7a
-  odom_epoch: 1788279689
-  x: 0.2888
-  y: -0.4561
-  yaw: -0.5207
+  mola_session: 010fa57588505f35
+  odom_epoch: 1788289402
+  x: 0.1604
+  y: -0.2158
+  yaw: -0.27

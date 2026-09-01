@@ -143,10 +143,13 @@ controller_server:
       vx_std: 0.2
       vy_std: 0.2
       wz_std: 0.4
-      vx_max: 0.5                     # indoor cruise (Ranger cap 1.5 m/s)
+      vx_max: 0.6                     # indoor cruise, at the mux ceiling max_vx 0.6
+                                      # (Ranger cap is 1.5 m/s; the mux clamps anything above 0.6)
       vx_min: -0.35                   # allow modest reversing to back out + re-approach a tight door
       vy_max: 0.5                     # 4WS strafe (Omni)
-      wz_max: 1.5
+      # Must not exceed config/safety.yaml limits.max_wz. MPPI scores trajectories against this
+      # model; asking for 1.5 and clamping the executed twist to 0.8 makes its prediction false.
+      wz_max: 0.8
       ax_max: 2.5                     # gentle accels — high-CoM xArm6 base must not be jerked
       ax_min: -2.5
       ay_max: 2.5
@@ -297,7 +300,23 @@ global_costmap:
         enabled: true
         observation_sources: scan
         scan:
-          topic: /scan_filtered       # rear chassis sector removed; raw /scan is diagnostic only
+          topic: /scan       # MASKED + RELIABLE. See bringup/scan_relay.py.
+                                      # WAS /scan_filtered UNTIL 2026-09-01, and the old comment here
+                                      # was INVERTED and cost most of a session: it claimed this
+                                      # topic was the cleaned one. It described the
+                                      # retired A1M8 chain, where filter_scan.py produced a cleaned
+                                      # /scan_filtered. On the OS0 chain it is the other way round:
+                                      # pointcloud_to_laserscan publishes /scan_filtered RAW, and
+                                      # scan_relay.py publishes the cleaned /scan.
+                                      # RAW MEANS IT CONTAINS THE ROBOT. The stowed arm and mast sit
+                                      # inside the 0.20-1.20 m height band and return at a fixed
+                                      # 0.70-0.85 m across |bearing| 74-155 deg (10 scans, stationary,
+                                      # open floor). Feeding that to the obstacle layer marks LETHAL
+                                      # cells wrapped around the footprint, so Nav2 believes it is
+                                      # standing inside an obstacle: it accepts goals, produces no
+                                      # usable plan and never moves, with metres clear ahead.
+                                      # There was no QoS error to notice -- both are BEST_EFFORT, so
+                                      # the wrong data arrived perfectly.
           sensor_frame: base_link     # [OS0] pointcloud_to_laserscan target_frame; lidar_link does not exist here
           data_type: "LaserScan"
           # [NONDEFAULT] MULTI-FLOOR z-BAND. Nav2's ObservationBuffer discards scan points whose z
@@ -356,7 +375,7 @@ local_costmap:
         enabled: true
         observation_sources: scan
         scan:
-          topic: /scan_filtered       # rear chassis sector removed
+          topic: /scan       # MASKED + RELIABLE (scan_relay.py); see the global costmap above
           sensor_frame: base_link     # [OS0] see header note 1
           data_type: "LaserScan"
           # [NONDEFAULT] MULTI-FLOOR z-BAND. Nav2's ObservationBuffer discards scan points whose z
@@ -410,7 +429,7 @@ amcl:
                                       # -- the same trap that bit slam_toolbox (config/slam_os0.yaml).
     odom_frame_id: "odom"
     global_frame_id: "map"
-    scan_topic: /scan_filtered
+    scan_topic: /scan          # unused (Nav2 launches localization:=slam) but kept consistent
 
     # OmniMotionModel, not Differential: the Ranger is 4WS and genuinely produces lateral motion in
     # PARALLEL mode, so /odom carries a non-zero vy that a differential model cannot represent and

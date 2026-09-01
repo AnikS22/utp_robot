@@ -93,6 +93,20 @@ topic)
 node)   cat "$S/nodes" 2>/dev/null ;;
 action) cat "$S/actions" 2>/dev/null ;;
 lifecycle) echo active ;;
+param)
+    # `ros2 param get /slam_toolbox <key>`. session.sh nav interrogates the RUNNING node before
+    # trusting an existing /map, because a live /map publisher may be a MAPPING session or a
+    # localization session holding a DIFFERENT map -- and skipping the launch in either case used
+    # to write .loaded_map certifying the requested map was active. A topic says "something is
+    # running"; only the parameters say what, and on which map.
+    #
+    # $FAKE_STATE/slam_mode and /slam_map let a test pose as any of those. Defaults describe the
+    # healthy case so existing tests are unaffected.
+    case "$4" in
+    mode)          echo "String value is: $(cat "$S/slam_mode" 2>/dev/null || echo localization)" ;;
+    map_file_name) echo "String value is: $(cat "$S/slam_map" 2>/dev/null || echo "${UTP_E2E_MAP:-}")" ;;
+    *)             echo "Parameter not set" ;;
+    esac ;;
 run)
     # `ros2 run tf2_ros tf2_echo map odom` is a real, blocking check in start_nav, wrapped in
     # `timeout`. Answer it directly; a sleeping shim would make every run look like "no TF".
@@ -175,16 +189,39 @@ def run(script, *args, env, timeout=120, cwd=None):
 
 @pytest.fixture
 def maps_dir():
-    """Work in the real maps/ dir (the scripts hardcode $REPO/maps) but clean up after.
+    """The real maps/ dir (the scripts hardcode $REPO/maps), with EVERY change undone afterwards.
 
-    .loaded_map IS MOVED ASIDE FOR THE DURATION. Several tests assert it is ABSENT after a
-    refused save or nav -- "the script must not claim a map is live when it is not". That
-    assertion silently became untestable the moment a real map was loaded on the robot
-    (2026-09-01): the file existed before the test, so the test failed while the scripts were
-    behaving perfectly. Tests that assert absence must own the absence.
+    THIS FIXTURE DESTROYED THE SESSION'S MAP ON 2026-09-01. It used to clean up by deleting files
+    that were NEW, which silently permits the opposite failure: a test that OVERWRITES an existing
+    file. One test used the literal names `atrium`/`atrium2d`, the fake ros2 shim wrote its 12-byte
+    stubs over maps/atrium.pgm, .yaml, .posegraph and .data, and cleanup left the stubs in place
+    because they were not new. The grid came back from git. The pose graph was untracked and is
+    simply gone -- and the stubs still EXISTED, so session.sh's `[ -f ]` guard passed and
+    slam_toolbox would have come up ACTIVE on an empty graph wearing the saved map's name.
+
+    So: snapshot before, restore after. Small files are copied aside and put back byte for byte.
+    Anything too large to copy per test is hashed, and a change RAISES -- because the alternative
+    is discovering it hours later, which is what happened.
+
+    .loaded_map is moved aside separately: several tests assert it is ABSENT after a refused save
+    or nav, and that assertion became unsatisfiable the moment a real map was loaded. A test that
+    asserts absence must own the absence.
     """
+    import hashlib
     d = REPO / "maps"
-    before = {p.name for p in d.iterdir()}
+    COPY_LIMIT = 4 * 1024 * 1024
+
+    def snapshot():
+        state = {}
+        for f in d.rglob("*"):
+            if not f.is_file():
+                continue
+            b = f.stat().st_size
+            state[f] = (b, f.read_bytes() if b <= COPY_LIMIT
+                        else hashlib.sha256(f.read_bytes()).hexdigest())
+        return state
+
+    before = snapshot()
     loaded = d / ".loaded_map"
     stash = loaded.read_bytes() if loaded.exists() else None
     if stash is not None:
@@ -192,11 +229,30 @@ def maps_dir():
     try:
         yield d
     finally:
-        for p in list(d.iterdir()):
-            if p.name not in before:
-                (shutil.rmtree if p.is_dir() else Path.unlink)(p)
+        clobbered = []
+        for f, (size, keep) in before.items():
+            if f == loaded:
+                continue
+            if not f.exists() or f.stat().st_size != size or (
+                    isinstance(keep, bytes) and f.read_bytes() != keep) or (
+                    isinstance(keep, str)
+                    and hashlib.sha256(f.read_bytes()).hexdigest() != keep):
+                if isinstance(keep, bytes):
+                    f.parent.mkdir(parents=True, exist_ok=True)
+                    f.write_bytes(keep)          # restored byte for byte
+                else:
+                    clobbered.append(str(f.relative_to(REPO)))
+        for f in list(d.rglob("*")):
+            if f.is_file() and f not in before and f != loaded:
+                f.unlink()
+            elif f.is_dir() and not any(f.iterdir()):
+                f.rmdir()
         if stash is not None:
             loaded.write_bytes(stash)
+        assert not clobbered, (
+            "a test overwrote real map data too large to restore automatically:\n  "
+            + "\n  ".join(clobbered)
+            + "\nRecover from git if tracked. Tests must use test-owned map names.")
 
 
 # ============================================================================ map_persist save
@@ -363,6 +419,10 @@ HARNESS = r'''
 set -uo pipefail
 ROOT="{root}"
 MAP_NAME="{map_name}"
+# The shim answers `ros2 param get /slam_toolbox map_file_name` with this, so a pre-existing /map
+# looks like a localization session already holding the map under test. Tests that want the
+# WRONG map or a mapping session write $FAKE_STATE/slam_map or /slam_mode instead.
+export UTP_E2E_MAP="{map_name}"
 say()  {{ echo "### $*"; }}
 die()  {{ echo "STOP: $*" >&2; exit 1; }}
 bg()   {{ echo "BG: $*" >> "$FAKE_STATE/bg.log"; }}
@@ -427,6 +487,26 @@ def test_nav_launches_and_records_provenance_for_a_complete_map(world, maps_dir)
     assert r.returncode == 0, r.stdout + r.stderr
     name, sess = (maps_dir / ".loaded_map").read_text().split()
     assert name == "e2e_full2" and len(sess) == 16, (name, sess)
+
+
+def test_nav_does_not_accept_a_live_map_whose_name_only_contains_the_requested_name(
+        world, maps_dir):
+    """`atrium` must not match an already-running `atrium2d` localization session."""
+    # Use test-owned names. This originally wrote fixtures over maps/atrium.{yaml,pgm}, and the
+    # maps_dir fixture only removes NEW paths; it cannot restore an existing active map it clobbers.
+    requested, live = "e2e_atrium", "e2e_atrium2d"
+    for ext, content in (("yaml", f"image: {requested}.pgm\n"), ("posegraph", "graph\n"),
+                         ("data", "x\n")):
+        (maps_dir / f"{requested}.{ext}").write_text(content)
+    (maps_dir / f"{requested}.pgm").write_bytes(b"P5\n1 1\n255\n\x00")
+    (world.state / "slam_map").write_text(f"/tmp/maps/{live}\n")
+
+    r = run_start_nav(world, requested)
+
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "DIFFERENT map" in r.stderr and live in r.stderr, r.stderr
+    assert not (maps_dir / ".loaded_map").exists(), \
+        "a prefix match must not certify the requested map as loaded"
 
 
 def test_nav_uses_the_params_file_not_inline_slam_flags(world, maps_dir):

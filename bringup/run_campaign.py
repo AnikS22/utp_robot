@@ -37,6 +37,13 @@ Anything that makes SUBSEQUENT trials unmeasurable, rather than merely unsuccess
   * an odom discontinuity                     -> the driver restarted under us
 A trial that simply FAILS (door did not open, target never found) is data and the campaign
 continues -- that is the experiment, not an error.
+
+WHAT IT REFUSES TO START AT ALL
+-------------------------------
+Before the first trial, and before --dry-run gets to skip anything, this reads the mux config
+(config/safety.yaml) and refuses unless the deadman still gates the autonomous sources. See
+"THE CAMPAIGN INTERLOCK PREFLIGHT" below for why a campaign needs that when a supervised drive
+does not, and for the one flag that overrides it -- which stamps every trial record it writes.
 """
 from __future__ import annotations
 
@@ -97,8 +104,206 @@ def pose_err(a, b) -> tuple[float, float]:
     return d, dy
 
 
+# ---------------------------------------------------------------------------------------------
+# THE CAMPAIGN INTERLOCK PREFLIGHT  (added 2026-09-01 after a code review)
+# ---------------------------------------------------------------------------------------------
+# config/safety.yaml's mux is the ONLY publisher of /cmd_vel, and `requires_enable: true` on the
+# autonomous sources is what makes a lost commander a BOUNDED event: bringup/deadman.py publishes
+# /safety/enable at 20 Hz only while a human is physically holding a button, and the arbiter
+# discards every autonomous command within timeouts.gate_s (0.2 s) of that hold ending --
+# safety/arbiter.py, `if chosen.requires_enable and not enable: blocked("deadman")`.
+#
+# On 2026-09-01 the operator set `requires_enable: false` on the `nav` source, deliberately and
+# with a real argument, written out in full above the setting: holding a browser deadman costs
+# the hand that would otherwise be on the chassis E-stop, and the E-stop cuts MOTOR POWER, which
+# is strictly stronger than a software gate that only stops commands reaching the driver (the
+# chassis still coasts ~1.26 s / ~18 cm afterwards, measured 2026-08-21). That trade is sound for
+# a SUPERVISED DRIVE with a human standing at the robot. The same comment says, in as many words,
+# that it is NOT valid for the 50-trial campaign and must be set back to true first.
+#
+# NOTHING ENFORCED THAT. A comment is not an interlock, and this script would have run 50
+# autonomous trials with the gate stood down. What makes a campaign different is not the risk per
+# command, it is the exposure and where the human is looking: 50 trials is about an hour of
+# autonomous base motion during which the operator is at a laptop scoring trials rather than
+# standing over the E-stop, and the deadman check further down only re-runs BETWEEN trials -- a
+# released deadman is therefore noticed up to a whole trial's worth of motion late. With
+# requires_enable:true it does not need to be noticed at all: the base stops in 0.2 s because the
+# mux stops passing commands. That property is the reason a campaign is allowed to be run by one
+# person, and it is what this preflight checks is still true.
+#
+# FAIL CLOSED. A missing, unparseable, or unrecognisable config is a REFUSAL, not a pass. A
+# preflight that waves through what it could not read is worse than no preflight at all, because
+# after the first time it "passes" nobody opens the file themselves.
+#
+# The return-to-start leg invokes waypoints.py with --deadman-gated, routing it through the servo
+# source checked below.  Manual `waypoints.py goto` remains on teleop by default; campaign code
+# must never omit that flag.
+SAFETY_CONFIG = Path(os.environ.get("UTP_SAFETY_CONFIG", REPO / "config" / "safety.yaml"))
+
+# Typed in full, every time, on purpose. `--force` gets typed by habit within a week; this does
+# not, and it is long enough to be visible in the shell history that ends up in EXPERIMENT_LOG.md.
+UNSAFE_OVERRIDE_FLAG = "--i-accept-an-unsafe-campaign"
+
+# The one source a human is holding themselves. safety/arbiter.py: teleop sets requires_enable
+# False because "a human already has their hand on the control", and it is the ONLY source that
+# may carry allows_arm_override -- the recovery path for a stuck arm, not an operating mode.
+HUMAN_SOURCE = "teleop"
+
+# Sources the campaign's autonomous motion actually comes out of. If the config does not describe
+# both of them it is not the mux config this robot runs, and we do not get to guess which.
+REQUIRED_SOURCES = ("nav", "servo")
+
+_ABSENT = object()
+
+
+def mux_safety_violations(path) -> list[str]:
+    """Reasons `path` is not a safe mux config to run a CAMPAIGN against. Empty list == safe.
+
+    Every return path that is not "I read this file, I understood it, and it holds" produces a
+    violation. Unreadable, unparseable, wrong shape, right shape with a non-boolean where a
+    boolean belongs -- all refusals. The question this answers is not "is anything obviously
+    wrong" but "can I PROVE the deadman still bounds autonomous motion", and no evidence is not
+    proof. Same discipline as every gate in safety/arbiter.py: never-seen and stale both mean no.
+    """
+    path = Path(path)
+    try:
+        import yaml
+    except Exception as e:                            # pragma: no cover - PyYAML is a hard dep
+        return [f"PyYAML will not import ({type(e).__name__}: {e}), so {path} cannot be read. "
+                f"The mux config is unverifiable, which is a refusal, not a pass."]
+    try:
+        raw = path.read_text()
+    except OSError as e:
+        return [f"cannot read the mux config {path} ({type(e).__name__}: {e}). Nothing here can "
+                f"say whether the deadman still gates autonomous motion."]
+    try:
+        doc = yaml.safe_load(raw)
+    except Exception as e:
+        return [f"{path} is not parseable YAML ({type(e).__name__}: {e}). Note the mux itself "
+                f"would fail to load it too -- fix the file, do not run around it."]
+    if not isinstance(doc, dict):
+        return [f"{path} does not contain a YAML mapping (got {type(doc).__name__}); this is not "
+                f"the twist-mux config."]
+
+    sources = doc.get("sources", _ABSENT)
+    if sources is _ABSENT:
+        return [f"{path} has no `sources:` list, so it declares no mux sources at all. Either it "
+                f"is the wrong file or the mux is unconfigured; both are refusals."]
+    if not isinstance(sources, list) or not sources:
+        return [f"{path}: `sources:` is {type(sources).__name__} and must be a non-empty list of "
+                f"mux sources."]
+
+    bad: list[str] = []
+    names: list[str] = []
+    for i, s in enumerate(sources):
+        if not isinstance(s, dict):
+            bad.append(f"{path}: sources[{i}] is {type(s).__name__}, not a mapping — this file "
+                       f"is not shaped like a mux config.")
+            continue
+        name = s.get("name")
+        if not isinstance(name, str) or not name.strip():
+            bad.append(f"{path}: sources[{i}] has no usable `name:` ({name!r}); an unnamed source "
+                       f"cannot be reasoned about.")
+            continue
+        name = name.strip()
+        names.append(name)
+
+        # ---- requires_enable: the deadman gate -------------------------------------------------
+        if name != HUMAN_SOURCE:
+            req = s.get("requires_enable", _ABSENT)
+            if req is _ABSENT:
+                # twist_mux_node.py defaults this to True, which is the safe direction -- but the
+                # campaign will not take a safety property on loan from a default in another file
+                # that a refactor can change without touching this one. State it here.
+                bad.append(f"source '{name}' does not state `requires_enable` at all. The mux "
+                           f"defaults it to true, but a campaign must not infer its one bound on "
+                           f"a lost commander from a default: write `requires_enable: true` under "
+                           f"`- name: {name}` in {path}.")
+            elif not isinstance(req, bool):
+                bad.append(f"source '{name}' has `requires_enable: {req!r}`, which is not a "
+                           f"boolean. YAML will hand the mux something truthy and this preflight "
+                           f"cannot tell what was meant. Write `requires_enable: true`.")
+            elif req is False:
+                bad.append(f"source '{name}' has `requires_enable: false` — the deadman gate is "
+                           f"STOOD DOWN for an autonomous source. Autonomous commands would reach "
+                           f"the base whether or not a human is holding /safety/enable. Fix: in "
+                           f"{path}, under `- name: {name}`, set `requires_enable: true`.")
+
+        # ---- allows_arm_override: driving with the arm out -------------------------------------
+        arm = s.get("allows_arm_override", _ABSENT)
+        if arm is _ABSENT:
+            pass                                   # absent == false in the mux, and false is safe
+        elif not isinstance(arm, bool):
+            bad.append(f"source '{name}' has `allows_arm_override: {arm!r}`, which is not a "
+                       f"boolean. Write true or false.")
+        elif arm is True and name != HUMAN_SOURCE:
+            bad.append(f"source '{name}' has `allows_arm_override: true`. That lets it drive the "
+                       f"base with the arm EXTENDED, and the tool tip then sweeps a ~0.88 m "
+                       f"radius through space the costmap believes is empty (config/safety.yaml, "
+                       f"limits.max_wz). Only '{HUMAN_SOURCE}' may have it — that is a human's "
+                       f"deliberate recovery path for a stuck arm, not something autonomous. Fix: "
+                       f"in {path}, under `- name: {name}`, set `allows_arm_override: false`.")
+
+    for req_name in REQUIRED_SOURCES:
+        if req_name not in names:
+            bad.append(f"{path} declares no '{req_name}' source (found: {names or 'none'}). The "
+                       f"campaign's autonomous motion comes out of nav and servo; a config that "
+                       f"does not describe them is not the one governing this robot, and a "
+                       f"preflight that cannot find what it was asked to check must refuse.")
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        bad.append(f"{path} declares duplicate source name(s) {dupes}; which one the mux keeps is "
+                   f"not something this check should be guessing at.")
+    return bad
+
+
+def print_refusal(path, violations: list[str]) -> None:
+    """Loud, specific, and it names the edit. Written for someone standing up at the robot."""
+    w = sys.stderr
+    print("\n" + "=" * 94, file=w)
+    print("[campaign] REFUSING TO START — the base-motion mux is not campaign-safe.", file=w)
+    print(f"           config checked: {path}", file=w)
+    print("=" * 94, file=w)
+    for i, v in enumerate(violations, 1):
+        print(f"  {i}) {v}", file=w)
+    print(f"""
+WHY THIS IS A CAMPAIGN RULE AND NOT A GENERAL ONE
+  A supervised drive has a human at the robot with a hand on the chassis E-stop, which
+  cuts motor power and is stronger than any software gate. A campaign does not: it is
+  ~an hour of autonomous base motion with the operator at a laptop scoring trials, and
+  this script only re-checks the deadman BETWEEN trials — so a commander lost mid-trial
+  keeps driving until that trial ends. `requires_enable: true` bounds it to 0.2 s with
+  nobody having to notice anything. Restore it, then start the campaign.
+
+IF YOU MEANT IT (supervised, hand on the E-stop, watching every trial)
+  re-run with {UNSAFE_OVERRIDE_FLAG} . It is deliberately long to type, and
+  EVERY trial record written will carry unsafe_campaign_override: true plus the reasons
+  above — so this dataset can never be mistaken for one run with the gate up.""", file=w)
+    print("=" * 94 + "\n", file=w)
+
+
+def print_override_warning(path, violations: list[str]) -> None:
+    """The override is allowed to exist; it is not allowed to be quiet."""
+    w = sys.stderr
+    print("\n" + "!" * 94, file=w)
+    print(f"[campaign] RUNNING WITH THE INTERLOCK DOWN — {UNSAFE_OVERRIDE_FLAG} was given.", file=w)
+    print(f"           config: {path}", file=w)
+    for i, v in enumerate(violations, 1):
+        print(f"  {i}) {v}", file=w)
+    print("  Nothing stops the base when the deadman is released except you and the E-stop.", file=w)
+    print("  Stay at the robot. Every trial record is stamped unsafe_campaign_override: true.",
+          file=w)
+    print("!" * 94 + "\n", file=w)
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
+    # allow_abbrev=False, and it is the interlock that needs it. argparse accepts any unambiguous
+    # PREFIX of a long option, so with abbreviation on, `--i-accept` silently means
+    # `--i-accept-an-unsafe-campaign` -- and the whole point of that flag is that it costs
+    # something to type. Found by tests/test_campaign_safety.py, which asserts the shorthands do
+    # not work. The cost is that `--tri 50` no longer means `--trials 50`; every caller in this
+    # repo (bringup/session.sh) spells its flags out anyway.
+    ap = argparse.ArgumentParser(description=__doc__, allow_abbrev=False,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--trials", type=int, required=True)
     ap.add_argument("--method", default="ours")
@@ -117,8 +322,33 @@ def main() -> int:
     ap.add_argument("--resume", action="store_true", help="continue from what is already in --out")
     ap.add_argument("--config", type=Path,
                     default=Path(os.environ.get("UTP_CONFIG_DIR", REPO / "config" / "pipeline")))
+    ap.add_argument("--safety-config", type=Path, default=SAFETY_CONFIG,
+                    help="mux config the interlock preflight reads "
+                         "(default $UTP_SAFETY_CONFIG or config/safety.yaml). Whatever is "
+                         "checked is recorded in every trial record.")
+    # No --force. A short flag becomes muscle memory in a week and then the interlock is
+    # decoration; this one has to be meant, and it shows up in shell history and in the records.
+    ap.add_argument(UNSAFE_OVERRIDE_FLAG, dest="accept_unsafe", action="store_true",
+                    help="run even though the mux config is not campaign-safe. Prints why, and "
+                         "stamps unsafe_campaign_override on EVERY trial record.")
     a = ap.parse_args()
     signal.signal(signal.SIGINT, _sigint)
+
+    # ---- interlock preflight: before the output file exists, before --resume, before --dry-run.
+    # --dry-run is INSIDE this on purpose. A dry run that skips the check is how people learn the
+    # check is optional, and the dry run is exactly where you want to be told that safety.yaml
+    # still needs restoring -- while nothing is moving, not three minutes later with the robot
+    # already out on the floor.
+    violations = mux_safety_violations(a.safety_config)
+    if violations and not a.accept_unsafe:
+        print_refusal(a.safety_config, violations)
+        return 2
+    unsafe_override = bool(violations)          # only reachable True with the flag typed in full
+    if unsafe_override:
+        print_override_warning(a.safety_config, violations)
+    else:
+        print(f"[campaign] mux interlock ok — deadman gates the autonomous sources "
+              f"({a.safety_config})")
 
     a.out.parent.mkdir(parents=True, exist_ok=True)
     done = 0
@@ -215,8 +445,28 @@ def main() -> int:
             # `waypoints.py goto` is a DRY RUN unless --go is passed; without it the robot would
             # never actually return and every residual below would be measured against a robot that
             # had not moved -- a silently perfect-looking campaign of invalid trials.
-            rc = subprocess.run([sys.executable, str(REPO / "bringup" / "waypoints.py"),
-                                 "goto", a.start, "--go"], cwd=str(REPO)).returncode
+            # NAV2 FOR A MAP-FRAME START, waypoints.py only for an odom one. `waypoints.py goto`
+            # is the ODOM driver: it subtracts a stored coordinate from a live odom pose, which is
+            # meaningless for a map-frame waypoint and drives to an arbitrary place. Every waypoint
+            # recorded on 2026-09-01 is map-frame, so the return leg would have dead-reckoned home
+            # and then measured drift against wherever it ended up -- a campaign of invalid trials
+            # that looks fine in the record, which is the exact failure this file exists to avoid.
+            import yaml as _yaml
+            _store = Path(os.environ.get("UTP_WAYPOINTS") or (REPO / "maps" / "waypoints.yaml"))
+            try:
+                _frame = (_yaml.safe_load(_store.read_text()) or {}).get(a.start, {}).get("frame")
+            except Exception:
+                _frame = None
+            if _frame == "map":
+                _cmd = [sys.executable, str(REPO / "bringup" / "nav2_goto.py"), a.start, "--go"]
+            elif _frame == "odom":
+                _cmd = [sys.executable, str(REPO / "bringup" / "waypoints.py"),
+                        "goto", a.start, "--go", "--deadman-gated"]
+            else:
+                print(f"[campaign] '{a.start}' has frame {_frame!r} -- refusing to guess how to "
+                      f"drive home; a wrong return invalidates every later trial.", flush=True)
+                _cmd = None
+            rc = subprocess.run(_cmd, cwd=str(REPO)).returncode if _cmd else 1
             returned = (rc == 0)
             time.sleep(a.settle)
             back = world._pose()
@@ -226,7 +476,14 @@ def main() -> int:
 
         d = rec if isinstance(rec, dict) else getattr(rec, "__dict__", {}) if rec else {}
         d = dict(d)
+        # THE INTERLOCK IS PART OF THE PROVENANCE OF THE DATA, exactly like `hardware`. A trial
+        # run with the deadman gate stood down is not the same measurement as one run with it up,
+        # and a year from now the only place that difference survives is this record.
         d.update(world="ros_hardware", hardware=True, dry_run=bool(a.dry_run),
+                 deadman_interlock_verified=(not unsafe_override),
+                 unsafe_campaign_override=unsafe_override,
+                 unsafe_campaign_reasons=(list(violations) if unsafe_override else None),
+                 mux_config=str(a.safety_config),
                  campaign_index=n, campaign_method=a.method, trial_wall_s=round(dt, 1),
                  returned_to_start=returned,
                  return_drift_m=None if drift is None else round(drift, 4),

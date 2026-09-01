@@ -52,7 +52,8 @@ from safety.reach_envelope import (APPROACH_BUDGET_S, ARM_REACH_M as ENVELOPE_M,
                                    press_pose_ok, stalled)
 from safety.waypoint_drive import Limits, corridor_blocked, wrap  # noqa: E402
 
-CMD_TOPIC = "/cmd_vel_teleop"
+# Autonomous pipeline motion: must pass the deadman-gated servo source in safety.yaml.
+CMD_TOPIC = "/cmd_vel_servo"
 RATE_HZ = 20.0
 ARM_REACH_M = 0.88          # xArm6 envelope with the riser fitted (HARDWARE_SPECS)
 PRESS_STANDOFF_M = 0.55     # the press pose proven on 2026-08-25
@@ -72,7 +73,7 @@ class Facer(Node):
         self.scan = None
         self.tfb = None
         self.create_subscription(Odometry, "/odom", self._odom, 10)
-        self.create_subscription(LaserScan, "/scan_filtered", self._scan, qos_profile_sensor_data)
+        self.create_subscription(LaserScan, "/scan", self._scan, qos_profile_sensor_data)
         self.create_subscription(String, "/safety/status", self._safety, 10)
         self.pub = self.create_publisher(Twist, CMD_TOPIC, 10)
         self.mux = MuxWatch(time.monotonic())

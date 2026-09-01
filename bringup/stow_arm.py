@@ -34,7 +34,41 @@ sys.path.insert(0, str(REPO / ".venv-arm/lib/python3.12/site-packages"))
 ARM_IP = "192.168.1.221"
 READY_FILE = REPO / "calib" / "arm_ready.json"
 STOW_FILE = REPO / "calib" / "arm_stow.json"
-STOW_DEG = [0.0, -45.0, -45.0, 0.0, 90.0, 0.0]   # config/safety.yaml arm_monitor.xarm.stow_pose_deg
+def _stow_from_config() -> list[float]:
+    """The stow pose, READ FROM config/safety.yaml rather than duplicated here.
+
+    It used to be a literal in this file with a comment saying it must match the config. On
+    2026-09-01 the operator set a new packed pose and the two silently disagreed: this script
+    drove the arm to the OLD pose, safety/arm_monitor_node.py compared against the NEW one, and
+    /safety/arm_stowed stayed false -- so the base refused every Nav2 command while the arm was,
+    by its own account, stowed. Nothing errored. A comment asking two files to agree is not a
+    mechanism; reading one file is.
+
+    Falls back to the historical literal only if the config cannot be read, and says so, because
+    an arm that will not fold is worse than one that folds to a stale pose."""
+    # NO YAML IMPORT. This script runs under .venv-arm, which carries the xArm SDK and NOT PyYAML,
+    # so `import yaml` raised ModuleNotFoundError, the fallback below fired, and the arm folded to
+    # the HISTORICAL pose while safety/arm_monitor_node.py (running under ROS's python, which does
+    # have yaml) compared against the configured one. /safety/arm_stowed stayed false and the base
+    # refused to move -- the exact failure this function was written to prevent, reintroduced by a
+    # missing dependency in a different interpreter. A one-line regex has no such dependency.
+    import re
+    try:
+        txt = (REPO / "config" / "safety.yaml").read_text()
+        m = re.search(r"^\s*stow_pose_deg:\s*\[([^\]]*)\]", txt, re.M)
+        if not m:
+            raise ValueError("stow_pose_deg not found in config/safety.yaml")
+        v = [float(x) for x in m.group(1).split(",")]
+        if len(v) != 6:
+            raise ValueError(f"stow_pose_deg has {len(v)} joints, expected 6")
+        return v
+    except Exception as e:
+        print(f"WARNING: could not read stow_pose_deg from config/safety.yaml ({e}); "
+              f"falling back to the historical pose", file=sys.stderr)
+        return [0.0, -45.0, -45.0, 0.0, 90.0, 0.0]
+
+
+STOW_DEG = _stow_from_config()
 TOL_DEG = 5.0
 SPEED_DEG_S = 20.0                                # a crawl; there is no benefit to going faster
 
@@ -123,6 +157,18 @@ def main() -> int:
         arm.disconnect()
         return 1
     arm.motion_enable(True); arm.set_mode(0); arm.set_state(0); time.sleep(0.5)
+    # HARD JOINT LIMITS THIS BUILD HAS THAT THE CONTROLLER REPORTS ONLY AS A FAULT. Commanding
+    # J2 to exactly -55 (the operator's UFACTORY limit) makes the software limit clamp the
+    # trajectory and return error 23, "Large Motor Position Deviation", with the arm stopped and
+    # nothing saying which joint. Checked here so a bad pose is a sentence, not a fault.
+    sys.path.insert(0, str(REPO))
+    from safety.arm_limits import violations as _violations
+    _bad = _violations(target)          # target is DEGREES here (set_servo_angle default)
+    if _bad:
+        print("REFUSING to command this pose:", file=sys.stderr)
+        for _b in _bad:
+            print(f"  {_b}", file=sys.stderr)
+        return 1
     code = arm.set_servo_angle(angle=target, speed=SPEED_DEG_S, wait=True)
     now = arm.get_servo_angle()[1][:6]
     ok = all(abs(c - s) <= TOL_DEG for c, s in zip(now, target))

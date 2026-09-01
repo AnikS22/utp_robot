@@ -18,6 +18,7 @@ Both failures produce a stack that looks up. That is what makes them worth a tes
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -210,7 +211,14 @@ def test_nothing_live_tells_you_to_run_an_archived_script():
             # `archive/<name>` is a correct reference TO the archive; a bare `bringup/<name>` or
             # `bash <name>` is a dangling instruction.
             for form in (f"bringup/{name}", f"config/{name}", f"tests/{name}"):
-                if form in txt:
+                # WORD BOUNDARY BEFORE THE DIRECTORY. A plain substring test reports
+                # "nav2_bringup/nav2_params.yaml" as a dangling "bringup/nav2_params.yaml",
+                # because one contains the other. That fired on 2026-09-01 against
+                # docs/CONSOLIDATION.md, which names those files precisely BECAUSE it documents
+                # archiving them -- a document about the graveyard has to name the graves.
+                # A false positive here is not harmless: it trains people to ignore this test,
+                # and this test is the one that stops an instruction pointing at nothing.
+                if re.search(r"(?<![\w/])" + re.escape(form), txt):
                     bad.append(f"{p.relative_to(REPO)} -> {form}")
     assert not bad, "live files reference archived scripts:\n  " + "\n  ".join(sorted(bad))
 
@@ -233,21 +241,43 @@ def test_slam_is_launched_from_the_params_file_not_inline_flags():
         assert key in params, f"config/slam_os0.yaml lost {key}"
 
 
-def test_the_chassis_is_excluded_by_the_projection_not_by_min_laser_range():
+def test_the_chassis_is_excluded_by_a_sector_mask_not_by_a_global_range_cutoff():
     """MEASURED 2026-09-01: slam_toolbox on Jazzy never declares `min_laser_range`. Launched
     against config/slam_os0.yaml, configured, activated and fed scans, `ros2 param get
     /slam_toolbox min_laser_range` answers "Parameter not set" while max_laser_range answers 20.0.
+    So SLAM does not exclude the chassis and never did.
 
-    So the thing that keeps the chassis out of the map is pointcloud_to_laserscan's own
-    `range_min` and its height band, in session.sh. If those are ever dropped, the config will
-    still LOOK like it protects you and will not."""
+    THIS TEST USED TO ASSERT `range_min >= 0.4`, AND THAT ASSERTION WAS ITSELF THE BUG.
+    Raising range_min to 0.70 did silence the arm and mast, and it very nearly drove the robot
+    through a glass door: `captures/trial_ours_001/scan.json`, taken at the closed doors, holds 85
+    returns within +-20 degrees forward with the NEAREST AT 0.72 m. The cutoff was two centimetres
+    below the door. One step closer and the door would not have been "seen and ignored" -- it
+    would have been absent from the scan, and the corridor veto, Nav2's obstacle layer and
+    approach_blockage would all have been reading an empty corridor.
+
+    A GLOBAL RANGE CUTOFF CANNOT SOLVE AN ANGULAR PROBLEM. The self-returns live in the rear
+    quarters (|bearing| 74-180 deg, fixed radius 0.70-0.85 m across ten stationary scans); the
+    obstacles that matter are forward. bringup/scan_relay.py masks the bearings that are the robot
+    and leaves every other direction alone. range_min is now 0.30 so a close obstacle stays
+    visible, and the test asserts the opposite of what it used to: the cutoff must be LOW, and the
+    protection must come from the mask.
+
+    tests/test_scan_mask.py owns the mask's own behaviour, including a real-data assertion that
+    the 0.72 m door survives it."""
     src = (REPO / "bringup" / "session.sh").read_text()
     p2l = [l for l in src.splitlines() if "range_min:=" in l]
-    assert p2l, "pointcloud_to_laserscan has no range_min — nothing excludes the chassis"
+    assert p2l, "pointcloud_to_laserscan has no range_min at all"
     val = float(p2l[0].split("range_min:=")[1].split()[0])
-    assert val >= 0.4, f"range_min {val} is inside the chassis; the robot gets mapped in"
+    assert val <= 0.50, (
+        f"range_min {val} is high enough to hide a real obstacle. A door was measured at 0.72 m "
+        f"and the packed arm returns at 0.31-0.36 m, so the cutoff must sit between them; "
+        f"a global cutoff near that value blinds the robot to the thing it is about to hit. "
+        f"Self-returns are removed by the sector mask in bringup/scan_relay.py, not by this.")
     assert "min_height:=" in src and "max_height:=" in src, \
-        "the height band is what drops the chassis geometrically"
+        "the height band is what drops the floor and ceiling geometrically"
+    relay = (REPO / "bringup" / "scan_relay.py").read_text()
+    assert "MASK_MIN_DEG" in relay and "MASK_MAX_DEG" in relay, \
+        "the self-occlusion mask is gone; nothing now removes the arm and mast from the scan"
     notes = (REPO / "config" / "slam_os0.yaml").read_text()
     assert "INERT ON JAZZY" in notes, \
         "slam_os0.yaml must say min_laser_range does nothing, or someone will rely on it"

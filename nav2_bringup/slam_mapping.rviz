@@ -10,6 +10,22 @@ Panels:
 Visualization Manager:
   Class: ""
   Displays:
+    # EVERY RECORDED WAYPOINT, WITH ITS HEADING. The arrow is the point: on 2026-09-01 three
+    # waypoints were clicked as POSITIONS and their orientations derived geometrically, which
+    # aimed `door` straight through the doorway instead of at the doors. Position-only markers
+    # would have looked correct. Published by bringup/waypoint_markers.py.
+    - Class: rviz_default_plugins/MarkerArray
+      Name: WAYPOINTS (arrow = heading)
+      Enabled: true
+      Topic:
+        Value: /waypoint_markers
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Namespaces:
+        {}
+      Value: true
     - Class: rviz_default_plugins/Polygon
       Name: ROBOT (footprint)
       Enabled: true

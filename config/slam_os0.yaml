@@ -65,8 +65,9 @@ slam_toolbox:
     # `ros2 param get /slam_toolbox min_laser_range` still answers "Parameter not set" while
     # max_laser_range answers 20.0 (measured 2026-09-01). Do not rely on it to keep the chassis
     # out of the map. What ACTUALLY does that is pointcloud_to_laserscan in session.sh:
-    # `range_min:=0.50` sets the scan message's own range_min, and the min_height/max_height band
-    # drops the chassis geometrically before the projection. Kept at a truthful value so that a
+    # `range_min:=0.30` sets the scan message's own range_min, the min_height/max_height band
+    # removes most chassis geometry, and scan_relay.py masks the remaining measured self-return
+    # sectors without blinding the forward arc. Kept at a truthful value so that a
     # future slam_toolbox which does honour it does not suddenly start mapping the robot.
     min_laser_range: 0.55
     max_laser_range: 20.0
