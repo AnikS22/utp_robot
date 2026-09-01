@@ -175,4 +175,4 @@ scan_slice:
 self_mask:
   min_deg: 74.0         # |bearing| off the nose at which structure starts; below this is room
   max_deg: 180.0        # ... through dead astern. Symmetric: the test is on |bearing|.
-  max_range_m: 1.00     # structure sits at 0.39-0.85 m; the room behind it is kept
+  max_range_m: 0.90    # kept in step with bringup/scan_relay.py MASK_MAX_M. WAS 1.00, and that cost a map:

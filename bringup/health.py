@@ -43,7 +43,10 @@ WARN = "warn"
 
 USB_IDS = [
     ("8086:0b07", "RealSense D435", CRITICAL),
-    ("10c4:ea60", "RPLIDAR (CP2102)", CRITICAL),
+    # The A1M8 was replaced by the Ouster OS0, which is ETHERNET, not USB. Leaving this at
+    # CRITICAL means unplugging a retired sensor blocks the whole bring-up. The OS0's liveness
+    # is already covered by lidar3d.sh's HTTP probe and by the /scan rate check below.
+    ("10c4:ea60", "RPLIDAR (CP2102) - retired, informational only", INFO),
     ("1d50:606f", "USB-CAN adapter", CRITICAL),
 ]
 
@@ -201,7 +204,7 @@ n.destroy_node(); rclpy.shutdown()
     rep.add("/scan", scan > 3.0, f"{scan:.1f} Hz (expect ~6.5)"
             + ("" if scan > 3.0 else "  <- lidar node alive but silent? restart bringup/lidar3d.sh"))
     rep.add("camera", cam > 20.0, f"{cam:.1f} Hz on camera_info (expect ~30)"
-            + ("" if cam > 20.0 else "  <- restart bringup/camera.sh"))
+            + ("" if cam > 20.0 else "  <- check the USB LINK SPEED first: a D435 on a USB 2 port cannot open the configured 1280x720x30 + 848x480x30 profiles and loops on xioctl errno=5. Restarting will not help."))
     rep.add("/odom", odom > 20.0, f"{odom:.1f} Hz"
             + ("" if odom > 20.0 else "  <- ranger driver not publishing"))
     # /odom at full rate carrying nothing but zeros is what a dead CAN link looks like from ROS.
@@ -211,7 +214,7 @@ n.destroy_node(); rclpy.shutdown()
                 f"{moving} of {int(odom*5)} samples non-zero"
                 + ("" if moving else "  <- all zeros. Correct if the robot is stationary; if it "
                                      "is MOVING, the CAN link is dead"), INFO)
-    for want in ("odom>base_link", "map>odom", "base_link>lidar_link",
+    for want in ("odom>base_link", "map>odom", "base_link>os_sensor",
                  "base_link>mast_cam_link"):
         detail = "present" if want in edges else "MISSING"
         if want == "odom>base_link" and want not in edges:

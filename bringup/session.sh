@@ -253,7 +253,12 @@ start_nav() {
     waitfor 40 /map || die "no /map — slam_toolbox localization did not activate"
   fi
   echo "  /map ok"
-  timeout 10 ros2 run tf2_ros tf2_echo map odom >/dev/null 2>&1 \
+  # Same grep-not-exit-code rule as the odom->base_link check above. This copy was missed when
+  # that one was fixed, 170 lines earlier in the same file, and it sits in start_nav() -- the
+  # path taken by `session.sh nav` and `session.sh campaign`. So every Nav2 (re)start died here
+  # with "slam_toolbox has not localized", whether or not map->odom was healthy.
+  _tf="$(timeout 10 ros2 run tf2_ros tf2_echo map odom 2>&1 | head -20)"
+  printf '%s\n' "$_tf" | grep -q 'Translation:' \
     || die "TF map->odom missing — slam_toolbox has not localized into the map yet. Drive a few
         metres so it can match, then re-run."
   echo "  TF map->odom ok (localized)"
@@ -301,7 +306,12 @@ PYEOF
   grep -q "$ROOT/nav2_bringup/behavior_trees" "$RUNTIME_PARAMS" \
     || die "behaviour-tree path rewrite failed — bt_navigator would load nothing"
   echo "  behaviour trees -> $ROOT/nav2_bringup/behavior_trees (rewritten from the sim path)"
-  if ! ros2 node list 2>/dev/null | grep -q bt_navigator; then
+  # GUARD ON THE CAPABILITY, NOT THE NAME. This used to test `ros2 node list | grep bt_navigator`.
+  # A bt_navigator that came up unconfigured -- the exact failure warned about below and in
+  # nav2_goto.py -- still appears in `ros2 node list`, so the relaunch was skipped, the wait for
+  # navigate_to_pose then timed out, and the script died without ever retrying. Orphaned nodes
+  # from a killed `ros2 launch` hit this the same way. The action either exists or it does not.
+  if ! ros2 action list 2>/dev/null | grep -q navigate_to_pose; then
     bg ros2 launch "$ROOT/nav2_bringup/ranger_nav.launch.py" \
        params_file:="$RUNTIME_PARAMS" localization:=slam
     sleep 8

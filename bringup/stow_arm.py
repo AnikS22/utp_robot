@@ -63,9 +63,14 @@ def _stow_from_config() -> list[float]:
             raise ValueError(f"stow_pose_deg has {len(v)} joints, expected 6")
         return v
     except Exception as e:
-        print(f"WARNING: could not read stow_pose_deg from config/safety.yaml ({e}); "
-              f"falling back to the historical pose", file=sys.stderr)
-        return [0.0, -45.0, -45.0, 0.0, 90.0, 0.0]
+        # DO NOT FALL BACK TO A LITERAL. This used to return [0, -45, -45, 0, 90, 0], and on
+        # 2026-09-01 that silently folded the arm to a pose safety/arm_monitor_node.py does not
+        # recognise: /safety/arm_stowed stayed false, the mux discarded every base command, and
+        # the robot looked like a navigation failure. "The arm will not fold" is a loud, correct
+        # failure; "the arm folded somewhere the interlock does not accept" is the silent one.
+        print(f"FATAL: could not read stow_pose_deg from config/safety.yaml ({e}). "
+              f"Refusing to guess the stow pose.", file=sys.stderr)
+        raise SystemExit(1)
 
 
 STOW_DEG = _stow_from_config()

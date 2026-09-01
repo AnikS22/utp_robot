@@ -28,6 +28,14 @@
 # the tape, because "elevator button" loses to four larger fire-service keyswitches above it.
 set -uo pipefail
 
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$REPO/bringup/env.sh"
+
+# NOTE: this block MUST stay below `source env.sh`. It used to sit above it, where
+# ROS_DOMAIN_ID=9 had not been exported and /opt/ros/jazzy/setup.bash had not been sourced,
+# so the arm_stowed query ran on domain 0 (or with no `ros2` on PATH at all), always came
+# back empty, and the script always refused to start with '<no publisher>'.
 # ---- PREFLIGHT -------------------------------------------------------------------------------
 # This route runs on its OWN Nav2 params. nav2_params_os0_map.yaml (the door trial) leaves the MPPI
 # cost critic checking the full rectangle against an inflation radius smaller than the circumscribed
@@ -45,9 +53,6 @@ if [ "$stowed" != "true" ]; then
 fi
 echo "  preflight: arm stowed, nav2 params = elevator fork"
 # ----------------------------------------------------------------------------------------------
-
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$REPO/bringup/env.sh"
 
 CALL_QUERY="${UTP_CALL_QUERY:-the elevator call button on the wall}"
 FLOOR_QUERY="${UTP_FLOOR_QUERY:-the blue elevator button}"

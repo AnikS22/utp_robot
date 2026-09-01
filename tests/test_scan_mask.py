@@ -134,7 +134,7 @@ def test_a_distant_return_astern_is_kept():
     out, n = mask_self_returns(_scan(at={120.0: 2.0}), AMIN, AINC)
     assert out[_bin(120.0)] == 2.0
     assert n == 0
-    assert MASK_MAX_M == 1.00
+    assert MASK_MAX_M == 0.90
 
 
 def test_the_radius_boundary_is_inclusive_and_tight():
@@ -330,18 +330,21 @@ def test_the_config_does_not_still_claim_the_155_limit():
         "the reason 155 was wrong must stay written down, or it will be re-derived"
 
 
-def test_range_min_is_030_in_both_places():
+def test_range_min_is_045_in_both_places():
     """The mask only works because range_min is LOW. At 0.70 there is nothing left astern to mask
     and nothing left at 0.72 forward either. These two files must agree AND must agree on 0.30.
 
-    NOTE: tests/test_map_persistence.py::test_the_chassis_is_excluded_by_the_projection_not_by_
-    min_laser_range still asserts range_min >= 0.4, which was true when the projection was the
-    only thing keeping the chassis out of the map. It no longer is -- scan_relay.py's mask is --
-    and that assertion now contradicts this one."""
+    SETTLED AT 0.45 ON 2026-09-01, after both ends were measured on the robot:
+      0.70 -- put the cutoff 2 cm under a real door at 0.72 m, so the door vanished.
+      0.30 -- exposed the PACKED ARM, which sits at 0.31-0.36 m, straight into the map.
+      0.45 -- clears the packed arm and still sees the door.
+    This test asserted 0.30 until then and had gone red against two config files that already
+    agreed on 0.45; the constant it was guarding had moved and it had not. 0.45 also satisfies
+    tests/test_map_persistence.py's range_min >= 0.4, so the contradiction noted here is gone."""
     import yaml
     cfg = yaml.safe_load((REPO / "config" / "ouster.yaml").read_text())
-    assert cfg["scan_slice"]["range_min_m"] == 0.30
+    assert cfg["scan_slice"]["range_min_m"] == 0.45
 
     src = (REPO / "bringup" / "session.sh").read_text()
     line = next(l for l in src.splitlines() if "range_min:=" in l)
-    assert float(line.split("range_min:=")[1].split()[0]) == 0.30
+    assert float(line.split("range_min:=")[1].split()[0]) == 0.45
