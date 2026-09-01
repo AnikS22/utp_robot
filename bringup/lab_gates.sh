@@ -80,10 +80,20 @@ fi
 # ---------------------------------------------------------------- 2. TF + safety
 if want 2; then
 gate 2 "TF chain and the deadman (nothing moves)"
-tf() { timeout 6 ros2 run tf2_ros tf2_echo "$1" "$2" >/dev/null 2>&1 && ok "TF $1 -> $2" || bad "TF $1 -> $2 MISSING"; }
+# GREP FOR THE TRANSFORM, DO NOT TEST tf2_echo'S EXIT CODE. tf2_echo never returns on its own, so
+# `timeout 6 ... && ok || bad` reported MISSING for every transform on the robot, including ones
+# session.sh had just confirmed present two lines earlier. Measured: exit code 124 with a healthy
+# odom->base_link. A "Translation:" line in the output is positive proof the lookup succeeded; the
+# first line is a "frame does not exist" notice printed while the listener buffer fills, so read
+# several lines before deciding.
+tf() {
+  local out
+  out="$(timeout 8 ros2 run tf2_ros tf2_echo "$1" "$2" 2>&1 | head -20)"
+  printf '%s\n' "$out" | grep -q 'Translation:' && ok "TF $1 -> $2" || bad "TF $1 -> $2 MISSING"
+}
 tf odom base_link      # needs ranger launched with publish_odom_tf:=true (NOT the default)
 tf base_link os_sensor
-tf base_link camera_link
+tf base_link mast_cam_link
 # GUARDS: two publishers of odom->base_link is the 2026-08-21b two-publishers-on-/map bug again.
 N=$(timeout 8 ros2 topic info /tf 2>/dev/null | awk '/Publisher count/{print $3}')
 note "/tf publisher count: ${N:-?} (each extra one is a candidate duplicate — check if TF flickers)"
@@ -91,8 +101,16 @@ note "/tf publisher count: ${N:-?} (each extra one is a candidate duplicate — 
 # NOTHING in the repo published it, so every autonomous command was correctly discarded and the
 # system looked dead while behaving exactly as designed.
 R=$(timeout 8 ros2 topic hz /safety/enable 2>/dev/null | awk '/average rate/{print $3; exit}')
-[ -n "$R" ] && ok "/safety/enable publishing @ ${R} Hz" \
-             || bad "/safety/enable SILENT — run bringup/deadman.py or EVERY autonomous command is dropped"
+# Only a FAILURE if safety.yaml actually gates something on it. The operator runs supervised with a
+# hand on the physical e-stop and requires_enable: false on nav and servo; there a silent
+# /safety/enable changes nothing and must not block the ladder. estop and arm_stowed are untouched.
+if [ -n "$R" ]; then
+  ok "/safety/enable publishing @ ${R} Hz"
+elif grep -qE '^[[:space:]]*requires_enable:[[:space:]]*true' "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/config/safety.yaml" 2>/dev/null; then
+  bad "/safety/enable SILENT — a source in safety.yaml requires it; every autonomous command is dropped"
+else
+  ok "/safety/enable silent, and no source requires it (supervised, operator on the e-stop)"
+fi
 fi
 
 # ---------------------------------------------------------------- 3. chassis (MOVES)
@@ -121,7 +139,7 @@ if timeout 6 ros2 topic echo /map --once >/dev/null 2>&1; then ok "/map is being
 # appear — indistinguishable from a hung node.
 S=$(timeout 6 ros2 lifecycle get /slam_toolbox 2>/dev/null | head -1)
 [ -n "$S" ] && note "slam_toolbox lifecycle state: $S  (must be 'active')"
-timeout 6 ros2 run tf2_ros tf2_echo map odom >/dev/null 2>&1 && ok "TF map -> odom" || bad "TF map -> odom MISSING"
+tf map odom
 note "drive a short loop and confirm the map does not smear and the pose does not jump."
 fi
 

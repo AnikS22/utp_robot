@@ -80,7 +80,12 @@ if ! alive /odom; then
   waitfor 25 /odom || die "no /odom after 25 s"
 fi
 echo "  /odom ok"
-timeout 6 ros2 run tf2_ros tf2_echo odom base_link >/dev/null 2>&1 \
+# Grep for the transform; do NOT test tf2_echo's exit code. tf2_echo never returns on its own, so
+# `timeout 6 ... || die` (what used to be here) always saw 124 and always died -- the check could
+# only ever fail. It went unnoticed because nav2 was usually already running and the relaunch below
+# is guarded, so this line was rarely reached. A Translation line is positive proof.
+_tf="$(timeout 8 ros2 run tf2_ros tf2_echo odom base_link 2>&1 | head -20)"
+printf '%s\n' "$_tf" | grep -q 'Translation:' \
   || die "TF odom->base_link missing — was the launch given publish_odom_tf:=true ?"
 echo "  TF odom->base_link ok"
 echo "  NOTE: from here on, do NOT restart the ranger driver. It re-zeroes odom and every"
@@ -109,14 +114,27 @@ echo "  /scan ok (relay running)"
 say "3/6  safety"
 bg bash bringup/safety.sh; sleep 3
 echo "  mux + arm gate started"
-echo
-echo "  >>> START THE DEADMAN IN ANOTHER TERMINAL AND HOLD IT:"
-echo "  >>>     cd $ROOT && python3 bringup/deadman.py"
-echo "  >>> Nothing autonomous moves without it. safety.yaml gates nav+servo on /safety/enable,"
-echo "  >>> and a silent /safety/enable makes the robot look dead while behaving correctly."
-echo
-printf "  waiting for /safety/enable ... "
-waitfor 180 /safety/enable && echo "ok" || die "/safety/enable never appeared"
+# ASK FOR THE DEADMAN ONLY IF SOMETHING IS ACTUALLY GATED ON IT.
+# This block used to demand /safety/enable unconditionally. That is wrong once the operator has set
+# requires_enable: false on nav and servo -- the mux then never consults /safety/enable, so waiting
+# for it blocks bringup on a signal that changes nothing. It is also the WRONG SAFETY TRADE on this
+# robot: the deadman is a browser button, and holding it costs the operator the hand that would
+# otherwise be on the physical e-stop. The operator has stated this repeatedly and it is their call.
+# The e-stop and arm_stowed gates are untouched and still hard-block every source.
+# Read the config rather than assuming, so this tracks whatever safety.yaml actually says.
+if grep -qE '^[[:space:]]*requires_enable:[[:space:]]*true' "$ROOT/config/safety.yaml"; then
+  echo
+  echo "  >>> START THE DEADMAN IN ANOTHER TERMINAL AND HOLD IT:"
+  echo "  >>>     cd $ROOT && python3 bringup/deadman.py"
+  echo "  >>> safety.yaml has a source with requires_enable: true, and a silent /safety/enable"
+  echo "  >>> makes the robot look dead while behaving correctly."
+  echo
+  printf "  waiting for /safety/enable ... "
+  waitfor 180 /safety/enable && echo "ok" || die "/safety/enable never appeared"
+else
+  echo "  deadman not required — no source in safety.yaml sets requires_enable: true"
+  echo "  (e-stop and arm_stowed gates remain active; operator is on the physical e-stop)"
+fi
 
 # ------------------------------------------------------------------------------ 4. health
 say "4/6  health + gates"
