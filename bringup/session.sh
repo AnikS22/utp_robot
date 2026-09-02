@@ -147,6 +147,21 @@ echo "  /scan_filtered ok"
 # The relay is NOT optional: p2l publishes BEST_EFFORT, slam_toolbox subscribes RELIABLE, and
 # incompatible DDS QoS delivers zero messages with no error anywhere.
 alive /scan || { bg python3 bringup/scan_relay.py; waitfor 20 /scan || die "no /scan — relay failed"; }
+
+# 2b. THE CAMERA. session.sh has always GATED on the camera without ever STARTING it: health.py
+# fails CRITICAL on camera_info < 20 Hz and lab_gates gate 2 requires base_link -> mast_cam_link,
+# but camera.sh appeared nowhere in this script -- only in README.md as a manual step. So a clean
+# boot could not pass its own bring-up, and the advice printed on failure ("restart camera.sh")
+# was the step the script should have taken itself.
+# Guarded on camera_info, not on the node: a leaked realsense node holds the USB device while
+# publishing nothing, which is the state that produced 0.0 Hz with a healthy-looking node list.
+if ! alive /mast_cam/color/camera_info; then
+  bash "$ROOT/bringup/camera.sh" || die "camera.sh failed -- check the USB link speed first: on a
+        USB 2 port the D435 cannot open the profiles in config/camera.yaml and loops on
+        xioctl(VIDIOC_S_FMT) errno=5. Restarting it again will not help."
+  waitfor 30 /mast_cam/color/camera_info || die "no camera_info 30 s after camera.sh"
+fi
+echo "  camera ok"
 echo "  /scan ok (relay running)"
 
 # ------------------------------------------------------------------------------ 3. safety

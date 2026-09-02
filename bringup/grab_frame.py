@@ -241,9 +241,38 @@ def main() -> int:
           f"range {np.nanmin(depth_m):.2f}-{np.nanmax(depth_m):.2f} m")
     print(f"  frame {node.info.header.frame_id}  fx={K[0,0]:.1f} fy={K[1,1]:.1f} "
           f"cx={K[0,2]:.1f} cy={K[1,2]:.1f}")
+    # SIZE MISMATCH IS FATAL, NOT A WARNING. This used to print and then `return 0`, having already
+    # written rgb.png, depth.npy and cam.json -- so press_run.sh, which checks the exit status, went
+    # straight on to ground a box in RGB pixels and read its range out of a depth image with
+    # different geometry. The whole point of subscribing to aligned_depth_to_color is that
+    # depth[y,x] corresponds to rgb[y,x]; when it does not, every 3D point is wrong and nothing
+    # downstream can tell. UTP_DEPTH_TOPIC can silently substitute an unaligned topic, which is
+    # exactly how this happens by accident.
     if rgb.shape[:2] != depth_m.shape[:2]:
-        print("  WARNING: rgb and depth differ in size -- depth is NOT aligned to colour, so "
-              "depth[y,x] does not correspond to rgb[y,x].", file=sys.stderr)
+        print(f"FATAL: rgb {rgb.shape[:2]} and depth {depth_m.shape[:2]} differ in size -- depth is "
+              f"NOT aligned to colour, so depth[y,x] does not correspond to rgb[y,x] and every "
+              f"grounded 3D point would be wrong. Check UTP_DEPTH_TOPIC "
+              f"(currently {os.environ.get('UTP_DEPTH_TOPIC', '<unset, using the aligned topic>')}).",
+              file=sys.stderr)
+        node.destroy_node(); rclpy.shutdown()
+        return 6
+
+    # AND CHECK THAT THE TWO FRAMES ARE THE SAME MOMENT. ready() only counts messages per topic --
+    # it proves each stream produced enough frames, not that the pair belongs together. There is no
+    # time synchroniser here, so a stalled or delayed depth stream yields a detection whose BOX came
+    # from one instant and whose RANGE came from another, and it looks entirely normal: the box is
+    # crisp, the depth is valid, the veto passes, the reach check passes. The arm then goes to a
+    # point that never existed. Generous threshold -- this is meant to catch a stalled stream, not
+    # to police normal jitter between two USB streams.
+    _skew = abs((node.rgb.header.stamp.sec - node.depth.header.stamp.sec)
+                + (node.rgb.header.stamp.nanosec - node.depth.header.stamp.nanosec) * 1e-9)
+    if _skew > 0.20:
+        print(f"FATAL: rgb and depth are {_skew*1000:.0f} ms apart. They are not the same moment, so "
+              f"a box grounded in the colour frame would be ranged against a different one. "
+              f"Suspect a stalled stream or a saturated USB link.", file=sys.stderr)
+        node.destroy_node(); rclpy.shutdown()
+        return 7
+    print(f"  rgb/depth skew {_skew*1000:.0f} ms")
 
     node.destroy_node(); rclpy.shutdown()
     return 0

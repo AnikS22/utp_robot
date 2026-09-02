@@ -101,6 +101,50 @@ print("  gates:", json.dumps(g))
 sys.exit(0 if (g["arm_stowed"] and not g["estop_latched"]) else 1)
 PY
 
+# THE WAYPOINTS THIS ROUTE WILL ACTUALLY DRIVE TO. A checker that nothing calls is not a check.
+# check_waypoint.py samples the padded 0.72 x 0.50 m footprint against the map; car_panel was
+# recorded with 18 lethal cells under the robot while its centre cell read free, and MPPI
+# (consider_footprint: true, collision_cost 1e6) can never terminate a trajectory there. That is a
+# thirty-second refusal here instead of an unexplained abort at the lift.
+say "0b PREFLIGHT -- waypoint footprints"
+python3 "$REPO/bringup/check_waypoint.py" call_button lift_door_reverse car_facing_out car_panel lift_door \
+    || die "a waypoint on this route is not drivable as recorded. Re-record it and check again."
+
+# THE ARM'S TOOL GEOMETRY. session.sh sets this but treats failure as a warning, on purpose -- a
+# mapping drive does not need the arm. The press does: with tcp_offset at zero every Cartesian
+# command refers to the flange and the tip lands ~172 mm short, which reads as a calibration error
+# rather than a missing setting. So the route, which exists only to press things, refuses.
+say "0c PREFLIGHT -- arm tool geometry"
+if [ -z "$DRY" ]; then
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/arm_tool.py" 2>&1 | tee /tmp/utp_arm_tool_report.txt
+    grep -qiE 'tcp_offset.*\[?\s*0(\.0+)?\s*,\s*0(\.0+)?\s*,\s*0(\.0+)?' /tmp/utp_arm_tool_report.txt \
+        && die "the arm's tcp_offset is ZERO. Every press will land ~172 mm short.
+        Fix:  $REPO/.venv-arm/bin/python bringup/arm_tool.py --set"
+fi
+
+# IS THE ROBOT WHERE IT THINKS IT IS? session.sh's nav stage accepts ANY map->odom transform --
+# which proves slam_toolbox published a transform, not that the scan matched the elevator map at
+# the right pose. config/slam_os0.yaml's map_start_pose is still the ATRIUM parking spot, and a
+# seed metres wrong converges confidently into the wrong corridor while every named check passes.
+# Measured 2026-09-01: a robot 4.6 m from where it believed it was, still publishing a confident TF.
+# Recorded fits at waypoint time were 77.9-88.5%. Thresholds here are deliberately forgiving --
+# a person standing behind the robot drags the number down without the pose being wrong.
+say "0d PREFLIGHT -- localization fit"
+if [ -z "$DRY" ]; then
+    fitline="$(timeout 60 python3 "$REPO/bringup/relocalise.py" --check 2>&1 | grep -oE 'fit [0-9.]+%' | tail -1)"
+    fitpct="${fitline#fit }"; fitpct="${fitpct%\%}"
+    if [ -z "$fitpct" ]; then
+        die "could not score the localization fit. Is slam_toolbox up in LOCALIZATION mode on 'elevator'?"
+    fi
+    awk -v f="$fitpct" 'BEGIN{exit !(f < 60)}' && die "localization fit is ${fitpct}% -- the robot does
+        not know where it is, and every waypoint below is in a frame it is not actually in.
+        Seed the pose in RViz (2D Pose Estimate; ignored in MAPPING mode) or run:
+          python3 bringup/relocalise.py"
+    awk -v f="$fitpct" 'BEGIN{exit !(f < 75)}' \
+        && echo "  WARNING: fit ${fitpct}% is low. Fine if someone is standing near the robot; not fine otherwise."
+    echo "  localization fit ${fitpct}%"
+fi
+
 # ---------------------------------------------------------------------------------- the route
 nav   call_button
 press "the elevator call button on the wall"
