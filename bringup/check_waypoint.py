@@ -3,7 +3,7 @@
 
     python3 bringup/check_waypoint.py                 # every waypoint in the store
     python3 bringup/check_waypoint.py car_panel       # just this one
-    python3 bringup/check_waypoint.py --button-h 1.05 # also test a known button height
+    python3 bringup/check_waypoint.py --standoff 1.4  # what the pose would show from further back
 
 WHY THIS EXISTS. On 2026-09-01 `car_panel` was recorded with the robot's footprint 59 mm inside a
 wall. Every check anyone ran said it was fine, because every check looked at the waypoint's CELL --
@@ -14,11 +14,15 @@ aborts, the planner looks broken, and hours go into Nav2 parameters that were ne
 
 Checking a point where the planner checks a rectangle is the whole bug. This checks the rectangle.
 
-It also answers the second question that cost a day -- "can the camera even see the button from
-here?" -- which turned out to be geometry, not tuning. The D435's vertical FOV is 43.2 degrees
-(NOT the D455's) and the camera sits high, at z = 1.471 m in base_link, looking 5.4 degrees down.
-Close to a wall that combination puts anything below chest height off the bottom of the frame:
-from a pose 0.47 m off the panel, a button at 1.067 m lands on image row 718 of 720.
+It also reports HOW MUCH WALL THE POSE PUTS IN FRAME. Nothing here needs to know how high the
+button is -- the whole point of the system is that the VLM finds it. But the VLM can only ground
+what is inside the image, and that is pure geometry: the D435's vertical FOV is 43.2 degrees (NOT
+the D455's) and the lens sits at z = 1.471 m looking 5.4 degrees down, so the closer you park the
+narrower the strip of wall you see. From 0.53 m the camera shows a 0.68 m strip; from 1.4 m it
+shows about 1.5 m. A pose that shows a narrow strip is a pose where grounding depends on luck
+about where the panel happens to sit, which is exactly the dependency the pipeline exists to
+remove. safety/reach_envelope.SURVEY_STANDOFF_M = 1.40 is this number, and its comment says why:
+"where to stop in order to LOOK is not where to stop in order to PRESS."
 
 Everything here is offline. No ROS, no robot, no network -- run it while the robot is off.
 """
@@ -158,8 +162,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("waypoint", nargs="*", help="names to check (default: all)")
-    ap.add_argument("--button-h", type=float, action="append", default=[],
-                    help="button height in metres to test visibility for; repeatable")
+    ap.add_argument("--standoff", type=float, default=None,
+                    help="also report the wall strip visible from this distance (survey pose)")
     a = ap.parse_args()
 
     wps = load_waypoints()
@@ -170,7 +174,6 @@ def main() -> int:
         print(f"have: {', '.join(sorted(wps))}", file=sys.stderr)
         return 2
 
-    heights = a.button_h or [1.067, 1.10, 1.22]
     bad = 0
     cache = {}
 
@@ -229,18 +232,24 @@ def main() -> int:
                 print(f"  SEE *and* REACH     EMPTY -- no height is both visible and reachable here")
                 bad += 1
 
-        for h in heights:
-            r = image_row(h, wall)
-            if r < 0 or r > 720:
-                verdict = "OUT OF FRAME"
-            elif r > 690 or r < 30:
-                verdict = "marginal -- on the frame edge"
-            else:
-                verdict = "in frame"
-            reach_ok = ""
-            if rb is not None:
-                reach_ok = "" if rb[0] <= h <= rb[1] else "   (out of arm reach)"
-            print(f"    button at {h:.3f} m   image row {r:6.0f}/720   {verdict}{reach_ok}")
+        strip = hi - lo
+        print(f"  WALL STRIP IN VIEW  {strip:.2f} m tall")
+        # DO NOT "FIX" A NARROW STRIP BY BACKING THE WAYPOINT OFF. Measured trade-off, wall
+        # distance vs (strip seen / height that is both visible AND inside the 0.88 m arm envelope):
+        #     0.53 m -> 0.69 m seen, 0.40 m usable        0.75 m -> 0.86 m seen, 0.27 m usable
+        #     0.60 m -> 0.74 m seen, 0.38 m usable        0.85 m -> 0.94 m seen, 0.09 m usable
+        # Backing off buys a little more wall in frame and destroys the reachable band, because the
+        # arm sphere is centred 0.74 m up and shrinks fast as the wall recedes. The usable window is
+        # widest at 0.45-0.60 m, which is where these poses already are. If grounding fails at press
+        # range the answer is a TWO-STAGE approach -- ground far, then close in, which is what
+        # bringup/face_target.py does -- not a waypoint parked further back.
+        if strip < 0.80:
+            print(f"                      narrow, but this is near the optimum: backing off trades")
+            print(f"                      reach for view and the usable band shrinks faster than the")
+            print(f"                      strip grows. Do not move the waypoint back to fix it.")
+        if a.standoff:
+            slo, shi, _ = visible_band(a.standoff)
+            print(f"  from {a.standoff:.2f} m instead   {slo:.3f} - {shi:.3f} m  ({shi - slo:.2f} m tall)")
 
     print()
     if bad:
