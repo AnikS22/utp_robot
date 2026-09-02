@@ -134,7 +134,12 @@ python3 "$REPO/bringup/check_waypoint.py" call_button lift_door_reverse car_faci
 # touched nothing. Zero is the state this calibration was solved in; a NON-zero offset is the fault.
 say "0c PREFLIGHT -- arm tool geometry"
 if [ -z "$DRY" ]; then
-    "$REPO/.venv-arm/bin/python" "$REPO/bringup/arm_tool.py" 2>&1 | tee /tmp/utp_arm_tool.txt | sed 's/^/  /'
+    # `|| true` is load-bearing: this is a BARE PIPELINE under `set -euo pipefail`, so if
+    # arm_tool.py exits non-zero -- an unreachable arm, a latched error -- pipefail propagates it
+    # and set -e kills the route here with a naked exit 3 and no message, at a stage whose entire
+    # job is to WARN. Same shape as the nav() assignment bug: a non-zero exit terminating the
+    # script before the code that was supposed to interpret it can run.
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/arm_tool.py" 2>&1 | tee /tmp/utp_arm_tool.txt | sed 's/^/  /' || true
     if grep -qE 'tcp_offset.*[1-9]' /tmp/utp_arm_tool.txt; then
         echo "  WARNING: tcp_offset is NON-ZERO. calib/handeye.json was solved at zero, so every" >&2
         echo "           press may land ~172 mm short. Verify before trusting a 'successful' press." >&2
@@ -143,7 +148,11 @@ fi
 
 say "0d PREFLIGHT -- localization fit"
 if [ -z "$DRY" ]; then
-    fitline="$(timeout 60 python3 "$REPO/bringup/relocalise.py" --check 2>&1 | grep -oE 'fit [0-9.]+%' | tail -1)"
+    # `|| true` again: grep exits 1 when it matches nothing, pipefail propagates that out of the
+    # command substitution, and the assignment then dies under set -e -- so the "could not score the
+    # localization fit" message below could never actually print. relocalise.py legitimately emits
+    # no fit line when it has no map->base_link yet, which is exactly the case that message is for.
+    fitline="$(timeout 60 python3 "$REPO/bringup/relocalise.py" --check 2>&1 | grep -oE 'fit [0-9.]+%' | tail -1 || true)"
     fitpct="${fitline#fit }"; fitpct="${fitpct%\%}"
     if [ -z "$fitpct" ]; then
         die "could not score the localization fit. Is slam_toolbox up in LOCALIZATION mode on 'elevator'?"
