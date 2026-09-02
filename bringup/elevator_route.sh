@@ -31,6 +31,9 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO/bringup/env.sh"
+# Marks moments for the paper figures. A no-op unless UTP_RUN_DIR is set, so the route
+# behaves identically whether or not anyone is recording -- see bringup/run_event.sh.
+source "$REPO/bringup/run_event.sh"
 
 DRY=""; [ "${1:-}" = "--dry-run" ] && DRY="--dry-run"
 say() { echo; echo "=== $*"; }
@@ -58,6 +61,7 @@ trap _fold_on_exit EXIT
 nav() {
     local wp="$1" out status
     say "NAVIGATE to '$wp'"
+    event leg_start "$wp"
     if [ -n "$DRY" ]; then python3 "$REPO/bringup/nav2_goto.py" "$wp" || true; return 0; fi
     # `out="$(cmd)"` is itself a simple command, so under `set -e` a non-zero exit terminates the
     # script AT THIS LINE -- echo, the RESULT parse and the die message below never run. nav2_goto
@@ -70,6 +74,7 @@ nav() {
     echo "$out"
     status="$(printf '%s\n' "$out" | grep -o 'RESULT {.*}' | tail -1 \
               | python3 -c 'import sys,json; print(json.loads(sys.stdin.read()[7:]).get("status",""))' 2>/dev/null || true)"
+    event leg_end "$wp:${status:-unknown}"
     [ "$status" = "arrived" ] || die "leg to '$wp' ended as '${status:-unknown}' (nav2_goto exit $rc), not arrived."
 }
 
@@ -78,8 +83,10 @@ nav() {
 press() {
     local query="$1"
     say "PRESS  '$query'"
+    event press_start "$query"
     bash "$REPO/bringup/press_run.sh" $DRY --query "$query" || die "press chain failed on '$query'"
 
+    event press_done "$query"
     say "RETRACT and wait for the mux to SEE it"
     if [ -n "$DRY" ]; then "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" || true; return 0; fi
     "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go || die "arm would not retract"
@@ -173,4 +180,5 @@ press "the blue elevator button"
 
 nav   lift_door           # out
 
+event route_complete ""
 say "ROUTE COMPLETE"

@@ -112,3 +112,41 @@ so the metrics table and the figures come from the same record.
    nothing else running.
 3. **How many objects for the Fig 13 strip?** Minimum three to show adaptation. We
    have ADA plate and two elevator buttons; a third door type would help.
+
+---
+
+## How to actually record a run (built 2026-09-02)
+
+    # 1. start the recorder BEFORE the route, niced so it cannot starve the detector
+    nice -n 10 python3 bringup/run_recorder.py --scene elevator --method ours &
+    #    it prints the directory it chose; export it so the route can mark events
+    export UTP_RUN_DIR=runs/<the-dir-it-printed>
+
+    # 2. phone on the tripod, recording. This is the ONLY unrecoverable stream.
+
+    # 3. run the route as normal -- it emits events automatically
+    bash bringup/elevator_route.sh
+
+    # 4. stop the recorder (Ctrl-C or kill), then build the figure
+    python3 paper/make_figure.py runs/<the-dir>
+
+    # 5. drop the phone video in as runs/<the-dir>/thirdperson.mp4
+
+`bringup/run_event.sh` is a no-op when `UTP_RUN_DIR` is unset, so a recorded run and
+an unrecorded run are the same code path. Nothing about recording changes what the
+robot does.
+
+### What comes out
+
+* `figure_trajectory.png` — the map, the green path, numbered markers merged by PLACE
+  (arriving somewhere and pressing there is one marker, not two), leader lines where
+  markers would collide, a gold star at the goal, and a 1 m scale bar. No axes.
+* `keyframes/NN_*.jpg` — the ego-centric frame nearest each numbered marker, named so
+  the number matches. It warns when the nearest frame is more than 2 s from the event.
+* The console prints what each number means, which is what the right-hand column's
+  captions get written from.
+
+### Still to do by hand
+The VLM reasoning callouts (`VLM Reasoning: Push door`) are not captured yet — the
+route knows the query string but the reasoner's decision text is not written into the
+run. That is the next piece to wire.
