@@ -153,6 +153,30 @@ echo "  /scan ok (relay running)"
 say "3/6  safety"
 bg bash bringup/safety.sh; sleep 3
 echo "  mux + arm gate started"
+
+# THE ARM'S TOOL GEOMETRY, WHICH THE ARM FORGETS.
+# bringup/arm_tool.py has said "MUST RUN AT EVERY ARM BRING-UP" since it was written and had ZERO
+# callers -- the value was set by hand once and every bring-up since silently inherited whatever
+# survived. It does not survive a power cycle: the arm reported tcp_offset [0,0,172,0,0,0] on the
+# morning of 2026-09-01 and [0,0,0,0,0,0] the same afternoon, after the battery was recharged.
+# With it at zero every Cartesian command refers to the FLANGE, so the tool tip lands short by the
+# tool length -- 172 mm. That is the ~10 cm press miss in the log, and the arm is not the suspect:
+# hand-eye RMS is 2.96 mm and measured placement 4.3 mm. An arm accurate to 4 mm cannot produce a
+# 100 mm error; a 172 mm uncompensated tool can. calib/handeye.json's target offset was converged
+# WITH the tool set, so a zeroed TCP also invalidates that correction.
+# Runs under .venv-arm: arm_tool.py does `from xarm.wrapper import XArmAPI` with no sys.path
+# insertion, so system python3 fails with ImportError. Advisory, not fatal -- a mapping drive does
+# not need the arm, and dying here would block bring-up over a tool that is only used to press.
+if [ -x "$ROOT/.venv-arm/bin/python" ]; then
+  if "$ROOT/.venv-arm/bin/python" "$ROOT/bringup/arm_tool.py" --set; then
+    echo "  arm tool geometry set (172 mm / 0.82 kg)"
+  else
+    echo "  WARNING: could not set the arm's TCP offset. If you press, the tip will land SHORT by"
+    echo "           the tool length (~172 mm) and it will look like a calibration error."
+  fi
+else
+  echo "  WARNING: no .venv-arm -- arm TCP offset NOT set; presses will land ~172 mm short"
+fi
 # ASK FOR THE DEADMAN ONLY IF SOMETHING IS ACTUALLY GATED ON IT.
 # This block used to demand /safety/enable unconditionally. That is wrong once the operator has set
 # requires_enable: false on nav and servo -- the mux then never consults /safety/enable, so waiting
@@ -224,7 +248,15 @@ fi
 # waypoint on disk carried map_name 'atrium', and atrium2d is grid-only (no .posegraph/.data), so
 # the default could not be relocalized into AND disagreed with every waypoint. Nothing compared
 # them until nav2_goto gained its map-match check on 2026-09-01.
-MAP_NAME=${MAP_NAME:-atrium}
+# DEFAULT TO THE MAP THE WAYPOINTS WERE ACTUALLY RECORDED IN. This said `atrium` while all five
+# elevator waypoints carry map_name: elevator and maps/.loaded_map reads elevator. A bare
+# `session.sh nav` therefore loaded atrium, rewrote .loaded_map, and nav2_goto.py then refused
+# every leg -- "recorded in map 'elevator' but the map currently loaded is 'atrium'". Loud, but it
+# costs a morning. atrium cannot even be localized into any more: its .posegraph and .data were
+# destroyed by a test fixture and only the grid came back from git.
+# tests/test_stack_wiring.py asserts this equals the waypoints' map_name; it was failing on the
+# shipped value, which is exactly what it exists to catch.
+MAP_NAME=${MAP_NAME:-elevator}
 start_nav() {
   say "5/6  localization + Nav2 on the SAVED map '$MAP_NAME'"
   [ -f "maps/$MAP_NAME.yaml" ] || die "maps/$MAP_NAME.yaml not found. Make one: bash bringup/session.sh map"

@@ -1,5 +1,16 @@
 # The lab session — what to do when you sit down
 
+> **NUMBERS CORRECTED 2026-09-02.** This file was written at 14:05 on 2026-09-01 and every sensor
+> constant in it had since been superseded on the robot. It said `range_min: 0.70` (it is **0.45** --
+> 0.70 hid a real door at 0.72 m, 0.30 exposed the packed arm at 0.31-0.36 m), `MASK_MAX_DEG 155`
+> (it is **180**), and `MASK_MAX_M 1.00` (it is **0.90**). That last one matters most: the lift car's
+> side walls sit at 1.00-1.15 m, so a 1.00 m mask was **deleting the walls the scan matcher needs**,
+> which is why localization held in the atrium and broke on a turn by the lift. It also said
+> `MAP_NAME=atrium`, which now refuses every elevator waypoint. Tune from `config/ouster.yaml` and
+> `bringup/scan_relay.py`, never from a doc.
+
+
+
 This is the runbook. It replaces the dated status notes that used to live here and in
 `TOMORROW.md` (both now in `archive/`), because a status note goes stale in a day and a runbook
 does not.
@@ -41,8 +52,8 @@ Once up, do not restart the ranger driver. It re-zeroes odom, and every odom-fra
 silently becomes wrong.
 
 **What the 2D scan chain does to the cloud, and why.** `pointcloud_to_laserscan` slices the OS0
-cloud at `range_min: 0.70` (was 0.50), and `bringup/scan_relay.py` then applies a **self-occlusion
-sector mask** — `MASK_MIN_DEG 74`, `MASK_MAX_DEG 155`, `MASK_MAX_M 1.00` — before republishing as
+cloud at `range_min: 0.45` (was 0.70, then 0.30), and `bringup/scan_relay.py` then applies a **self-occlusion
+sector mask** — `MASK_MIN_DEG 74`, `MASK_MAX_DEG 180`, `MASK_MAX_M 0.90` — before republishing as
 RELIABLE `/scan`. Both exist because the stowed arm and the mast sit inside the 0.20–1.20 m height
 band the slice keeps, so the robot sees itself: measured 2026-09-01 over ten stationary scans on
 open floor, minimum range **0.70–0.79 m in both rear quarters** — worst and most tightly pinned at
@@ -110,7 +121,9 @@ and the robot drives there), plus `/map`, `/scan`, `/plan`, `/local_plan` and th
 
 ```bash
 bash bringup/session.sh down                 # FIRST, if you have been mapping. See below.
-MAP_NAME=atrium bash bringup/session.sh nav
+MAP_NAME=elevator bash bringup/session.sh nav   # atrium can no longer be localized into:
+                                               # its .posegraph/.data were destroyed and only
+                                               # the grid came back from git
 python3 bringup/nav2_goto.py door            # DRY RUN: prints the goal, moves nothing
 python3 bringup/nav2_goto.py door --go       # THE ROBOT MOVES
 ```
