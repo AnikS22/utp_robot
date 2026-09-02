@@ -1,107 +1,122 @@
 #!/usr/bin/env bash
-# THE ELEVATOR SEQUENCE. Separate from press_route.sh on purpose: different scene, different
-# queries, different failure modes.
+# The elevator route. This is press_route.sh -- the chain that pressed the ADA plate -- with the
+# navigate/press pair run twice instead of once, because that is all the elevator actually is:
 #
-#     bash bringup/elevator_route.sh              # from the top
-#     bash bringup/elevator_route.sh --from 5     # resume at a stage
-#     bash bringup/elevator_route.sh --dry-run
+#     drive to the call button -> press it -> drive into the car -> press the floor -> drive out
 #
-#   1  navigate to 'call_button'
-#   2  press the OUTSIDE call button
-#   3  navigate to 'lift_door_reverse'
-#   4  reverse into the car        <- ON THE RC. Not autonomous, and should not be.
-#   5  navigate to 'car_panel'
-#   6  press the FLOOR button
-#   7  navigate to 'car_facing_out'
+# Nothing here is new. Same nav2_goto.py, same press_run.sh, same stow-and-confirm. The only things
+# that differ from the door are the waypoint names and the two query strings. There is deliberately
+# NO state machine, no --from ladder, no step counter and no fork of the press chain: the door
+# proved a linear script works, and the elevator is the same script with more rungs.
 #
-# TWO THINGS THIS GETS RIGHT THAT THE FIRST DRAFT DID NOT, both found on hardware 2026-09-01:
+# The waypoints live on the 'elevator' map (maps/elevator.{pgm,yaml,posegraph,data}) and were
+# recorded by the operator on 2026-09-01:
+#     call_button        outside the lift, facing the call plate
+#     lift_door_reverse  outside, BACK to the doors -- we reverse in, because rotating inside a
+#                        2 m car is what confused Nav2 the first time
+#     car_facing_out     inside the car, facing the doors
+#     car_panel          inside, square to the button panel
+#     lift_door          back outside the doors -- the exit
 #
-# ARRIVAL IS NOT AN EXIT CODE. nav2_goto returns 0 for BOTH `arrived` and `blocked` -- that is its
-# documented contract, because both are real outcomes of the world. A `|| die` therefore treats a
-# blocked leg as success: the robot stayed 3.0 m from the call button, the script walked on, and
-# the press stage ground a target across the room. Every leg here parses the RESULT json and
-# demands status == arrived.
-#
-# THE QUERY IS PER STAGE. press_run.sh defaults to "the accessible door push button" -- the ADA
-# door. Run unqualified at the lift it grounded that plate 3.89 m away and correctly refused to
-# reach. The call button and the floor panel each get their own query, and the floor panel's is
-# the tape, because "elevator button" loses to four larger fire-service keyswitches above it.
-set -uo pipefail
-
+# Run it:   bash bringup/elevator_route.sh            (real)
+#           bash bringup/elevator_route.sh --dry-run  (plans and grounds, moves nothing)
+set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO/bringup/env.sh"
 
-# NOTE: this block MUST stay below `source env.sh`. It used to sit above it, where
-# ROS_DOMAIN_ID=9 had not been exported and /opt/ros/jazzy/setup.bash had not been sourced,
-# so the arm_stowed query ran on domain 0 (or with no `ros2` on PATH at all), always came
-# back empty, and the script always refused to start with '<no publisher>'.
-# ---- PREFLIGHT -------------------------------------------------------------------------------
-# This route runs on its OWN Nav2 params. nav2_params_os0_map.yaml (the door trial) leaves the MPPI
-# cost critic checking the full rectangle against an inflation radius smaller than the circumscribed
-# radius; on 2026-09-01 that starved the control loop to 1.2 Hz and aborted the leg to 'call_button'
-# after 3.0 s with "Failed to make progress" -- while the goal cell itself read cost 0.
+DRY=""; [ "${1:-}" = "--dry-run" ] && DRY="--dry-run"
+say() { echo; echo "=== $*"; }
+die() { echo "STOP: $*" >&2; exit 1; }
 
-# The base is gated on MEASURED joint angles. If the arm is out, the mux DISCARDS every Nav2
-# command and the failure surfaces as a navigation abort several minutes later, nowhere near its
-# cause. Check it before the first goal, not after the first mystery.
-stowed="$(timeout 6 ros2 topic echo /safety/arm_stowed std_msgs/msg/Bool --once 2>/dev/null | grep -o 'data: .*' | head -1 | awk '{print $2}')"
-if [ "$stowed" != "true" ]; then
-    echo "STOP: /safety/arm_stowed is '${stowed:-<no publisher>}'. The base will not move." >&2
-    echo "      Fold with:  .venv-arm/bin/python bringup/stow_arm.py --go" >&2
-    exit 1
-fi
-echo "  preflight: arm stowed, nav2 params = elevator fork"
-# ----------------------------------------------------------------------------------------------
+# ALWAYS FOLD THE ARM ON THE WAY OUT, INCLUDING A FAILED RUN. The base is gated on MEASURED joint
+# angles, so an arm left extended makes the mux silently discard every Nav2 command and the next
+# leg reads as a navigation failure a long way from its cause. press_run.sh is not modified for
+# this -- it is the ADA chain and it works; the cleanup belongs to the route that called it.
+_fold_on_exit() {
+    rc=$?
+    if [ "$rc" -ne 0 ] && [ -z "$DRY" ]; then
+        echo >&2; echo "[elevator_route] rc=$rc -- folding the arm so the base is not left gated" >&2
+        "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go >&2 \
+            || echo "[elevator_route] ARM DID NOT FOLD. The base will refuse to move." >&2
+    fi
+    exit $rc
+}
+trap _fold_on_exit EXIT
 
-CALL_QUERY="${UTP_CALL_QUERY:-the elevator call button on the wall}"
-FLOOR_QUERY="${UTP_FLOOR_QUERY:-the blue elevator button}"
-DRY=""; FROM=1
-while [ $# -gt 0 ]; do
-  case "$1" in --dry-run) DRY="--dry-run";; --from) FROM="$2"; shift;; esac; shift
-done
-
-say(){ echo; echo "=============================================================="; echo " $*"; \
-       echo "=============================================================="; }
-die(){ echo; echo "STOP: $*" >&2; exit 1; }
-
-# Demand ARRIVED. Anything else -- blocked, timeout, rejected, refused -- stops the sequence,
-# because every later stage assumes the robot is where the waypoint says.
-nav(){
-  local wp="$1" out status
-  if [ -n "$DRY" ]; then python3 "$REPO/bringup/nav2_goto.py" "$wp" || true; return 0; fi
-  out="$(python3 "$REPO/bringup/nav2_goto.py" "$wp" --go 2>&1)"; echo "$out"
-  status="$(printf '%s\n' "$out" | grep -o 'RESULT {.*}' | tail -1 \
-            | python3 -c 'import json,sys
-s=sys.stdin.read().strip()
-print(json.loads(s[7:])["status"] if s.startswith("RESULT ") else "unparsed")' 2>/dev/null)"
-  [ "$status" = "arrived" ] || die "leg to '$wp' ended as '${status:-unknown}', not arrived.
-        Later stages assume the robot is AT that waypoint, so continuing would press from the
-        wrong place -- which is exactly what happened on 2026-09-01."
-  echo "  arrived at '$wp'"
+# ARRIVAL IS NOT AN EXIT CODE. nav2_goto.py exits 0 for BOTH "arrived" and "blocked", so `|| die`
+# cannot catch a blocked leg -- on 2026-09-01 the robot stopped 3 m short and press_route.sh
+# pressed anyway. Parse the status it prints. (press_route.sh still has the `|| die` form; it is
+# left alone on purpose, being the known-good door script.)
+nav() {
+    local wp="$1" out status
+    say "NAVIGATE to '$wp'"
+    if [ -n "$DRY" ]; then python3 "$REPO/bringup/nav2_goto.py" "$wp" || true; return 0; fi
+    out="$(python3 "$REPO/bringup/nav2_goto.py" "$wp" --go 2>&1)"; echo "$out"
+    status="$(printf '%s\n' "$out" | grep -o 'RESULT {.*}' | tail -1 \
+              | python3 -c 'import sys,json; print(json.loads(sys.stdin.read()[7:]).get("status",""))' 2>/dev/null || true)"
+    [ "$status" = "arrived" ] || die "leg to '$wp' ended as '${status:-unknown}', not arrived."
 }
 
-press(){
-  local what="$1" query="$2"
-  say "PRESS  $what"
-  echo "  query: '$query'"
-  bash "$REPO/bringup/elevator_press.sh" $DRY --query "$query" || die "$what press failed"
+# press_run.sh UNMODIFIED, with --query. It already takes one; the default is the ADA plate, which
+# is why an early elevator run grounded a fire-alarm cover 3.9 m away. Always pass the query here.
+press() {
+    local query="$1"
+    say "PRESS  '$query'"
+    bash "$REPO/bringup/press_run.sh" $DRY --query "$query" || die "press chain failed on '$query'"
+
+    say "RETRACT and wait for the mux to SEE it"
+    if [ -n "$DRY" ]; then "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" || true; return 0; fi
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go || die "arm would not retract"
+    python3 - <<'PY' || die "arm_stowed never went true; the base will not be allowed to move"
+import rclpy, json, time, sys
+from rclpy.node import Node
+from std_msgs.msg import String
+rclpy.init(); n = Node("elev_stow"); got = []
+n.create_subscription(String, "/safety/status", lambda m: got.append(m.data), 10)
+t0 = time.time()
+while time.time() - t0 < 10:
+    rclpy.spin_once(n, timeout_sec=0.3)
+    if got and json.loads(got[-1])["gates"]["arm_stowed"]:
+        print("  arm_stowed confirmed by the mux"); sys.exit(0)
+print("  arm_stowed still false"); sys.exit(1)
+PY
 }
 
-[ "$FROM" -le 1 ] && { say "1  NAVIGATE to 'call_button'"; nav call_button; }
-[ "$FROM" -le 2 ] && press "the OUTSIDE call button" "$CALL_QUERY"
-[ "$FROM" -le 3 ] && { say "3  NAVIGATE to 'lift_door_reverse'"; nav lift_door_reverse; }
-[ "$FROM" -le 4 ] && {
-    say "4  REVERSE INTO THE CAR -- DRIVE THIS ON THE RC"
-    echo "  The self-occlusion mask blanks |bearing| 74-180 deg within 0.90 m, so the robot cannot"
-    echo "  see close behind it -- and that is where you stand holding the doors. Reversing beats"
-    echo "  turning inside a ~1.5 m car (rotation is where the matcher loses lock at 4.6 Hz), but"
-    echo "  it means a human who can see drives the entry."
-    echo
-    echo "  Back it in to roughly 'car_facing_out', then:  bash bringup/elevator_route.sh --from 5"
-    exit 0; }
-[ "$FROM" -le 5 ] && { say "5  NAVIGATE to 'car_panel'"; nav car_panel; }
-[ "$FROM" -le 6 ] && press "the FLOOR button" "$FLOOR_QUERY"
-[ "$FROM" -le 7 ] && { say "7  NAVIGATE to 'car_facing_out'"; nav car_facing_out; }
+# ---------------------------------------------------------------------------------- preflight
+say "0  PREFLIGHT"
+python3 - <<'PY' || die "safety gates are not open"
+import rclpy, json, time, sys
+from rclpy.node import Node
+from std_msgs.msg import String
+rclpy.init(); n = Node("elev_pre"); got = []
+n.create_subscription(String, "/safety/status", lambda m: got.append(m.data), 10)
+t0 = time.time()
+while not got and time.time() - t0 < 12:
+    rclpy.spin_once(n, timeout_sec=0.3)
+if not got:
+    print("  no /safety/status -- the mux is down"); sys.exit(1)
+g = json.loads(got[-1])["gates"]
+print("  gates:", json.dumps(g))
+sys.exit(0 if (g["arm_stowed"] and not g["estop_latched"]) else 1)
+PY
 
-say "SEQUENCE COMPLETE -- confirm the doors, then drive straight out"
+# ---------------------------------------------------------------------------------- the route
+nav   call_button
+press "the elevator call button on the wall"
+
+# The doors. Deliberately a human hold, not a detector: bringup/doors_open.py exists and works, but
+# the operator stands at the door holding it open for every run, so a poller here would only be a
+# second thing that can be wrong. Wire doors_open.py in when the run is unattended.
+say "DOORS -- hold them open, then press RETURN"
+[ -n "$DRY" ] || read -r _
+
+nav   lift_door_reverse   # back to the doors, so we reverse in rather than turn around inside
+nav   car_facing_out      # in the car
+nav   car_panel           # square to the panel
+
+press "the blue elevator button"
+
+nav   lift_door           # out
+
+say "ROUTE COMPLETE"

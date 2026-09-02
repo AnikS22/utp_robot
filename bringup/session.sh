@@ -68,6 +68,45 @@ for a in 192.168.1.119 192.168.1.221 192.168.1.1; do
 done
 echo "  link ok ($IFACE)"
 
+# THE USB PHYSICAL LAYER. Added 2026-09-01 after an evening lost to it.
+#
+# Both of these dropped off the bus within one hour and EVERY downstream symptom looked like a
+# software fault: Nav2 "aborted" a goal it had planned perfectly 25 times over ten minutes, the
+# camera published 0.0 Hz while its node sat there looking healthy, and the gate ladder failed on
+# checks that were fine. ranger_base_node logged 21,766 consecutive "Failed to send CAN frame" and
+# then died with "Resource deadlock avoided", while /odom kept streaming at 45.8 Hz with every
+# velocity sample identically zero. Hours went into the planner. The planner was never wrong.
+#
+# These two checks cost 20 ms and are the difference between "reseat the adapter" and a night.
+if ! ip link show can0 >/dev/null 2>&1; then
+  die "can0 DOES NOT EXIST -- the USB-CAN adapter is not enumerated.
+        The chassis cannot receive a single command. Nav2 will plan perfectly and the robot will
+        not move, /odom will stream at full rate with all-zero velocity, and every failure will
+        present as a navigation or costmap problem. It is none of those. Plug the adapter in:
+          lsusb
+          sudo ip link set can0 up type can bitrate 500000
+          python3 bringup/claim_can.py"
+fi
+
+# The D435 must be on USB 3. config/camera.yaml asks for 1280x720x30 colour + 848x480x30 depth;
+# a USB 2 link (480 Mbps) cannot carry that, so librealsense opens NOTHING, camera_info reads
+# 0.0 Hz, and the driver loops forever on xioctl(VIDIOC_S_FMT) errno=5. Restarting camera.sh does
+# not help, and health.py used to advise exactly that.
+_cam_speed=""
+for _d in /sys/bus/usb/devices/*/idVendor; do
+  [ "$(cat "$_d" 2>/dev/null)" = "8086" ] || continue
+  _p="$(dirname "$_d")"
+  case "$(cat "$_p/product" 2>/dev/null)" in *RealSense*) _cam_speed="$(cat "$_p/speed" 2>/dev/null)";; esac
+done
+if [ -z "$_cam_speed" ]; then
+  die "the RealSense D435 is NOT ENUMERATED on USB. Reseat it in a blue USB 3 port."
+elif [ "$_cam_speed" != "5000" ] && [ "$_cam_speed" != "10000" ]; then
+  die "the RealSense D435 negotiated ${_cam_speed} Mbps -- that is USB 2, not USB 3.
+        It cannot open the profiles in config/camera.yaml and will publish nothing at all while
+        looking perfectly alive in ros2 node list. Move it to a blue USB 3 port."
+fi
+echo "  usb ok (can0 present, D435 at ${_cam_speed} Mbps)"
+
 # ------------------------------------------------------------------------------ 1. chassis
 say "1/6  chassis"
 if ! ip link show can0 2>/dev/null | grep -q "state UP"; then
