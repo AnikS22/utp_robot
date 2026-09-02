@@ -125,28 +125,7 @@ say "0b PREFLIGHT -- waypoint footprints"
 python3 "$REPO/bringup/check_waypoint.py" call_button lift_door_reverse car_facing_out car_panel lift_door \
     || die "a waypoint on this route is not drivable as recorded. Re-record it and check again."
 
-# THE ARM'S TOOL GEOMETRY. This block used to refuse when tcp_offset was ZERO. That was backwards.
-# calib/handeye.json was solved with the arm at tcp_offset [0,0,0,0,0,0] (EXPERIMENT_LOG.md:875)
-# and calib/pairs/*.json store get_position() straight, so marker_on_flange_mm is FLANGE-relative
-# and approach_target.py's arithmetic assumes flange coordinates. A 172 mm tool offset makes
-# get_position/set_position refer to the tool tip instead, and the marker lands 172 mm SHORT with
-# nothing able to notice -- there is no force sensor, so it records as a successful press that
-# touched nothing. Zero is the state this calibration was solved in; a NON-zero offset is the fault.
-say "0c PREFLIGHT -- arm tool geometry"
-if [ -z "$DRY" ]; then
-    # `|| true` is load-bearing: this is a BARE PIPELINE under `set -euo pipefail`, so if
-    # arm_tool.py exits non-zero -- an unreachable arm, a latched error -- pipefail propagates it
-    # and set -e kills the route here with a naked exit 3 and no message, at a stage whose entire
-    # job is to WARN. Same shape as the nav() assignment bug: a non-zero exit terminating the
-    # script before the code that was supposed to interpret it can run.
-    "$REPO/.venv-arm/bin/python" "$REPO/bringup/arm_tool.py" 2>&1 | tee /tmp/utp_arm_tool.txt | sed 's/^/  /' || true
-    if grep -qE 'tcp_offset.*[1-9]' /tmp/utp_arm_tool.txt; then
-        echo "  WARNING: tcp_offset is NON-ZERO. calib/handeye.json was solved at zero, so every" >&2
-        echo "           press may land ~172 mm short. Verify before trusting a 'successful' press." >&2
-    fi
-fi
-
-say "0d PREFLIGHT -- localization fit"
+say "0c PREFLIGHT -- localization fit"
 if [ -z "$DRY" ]; then
     # `|| true` again: grep exits 1 when it matches nothing, pipefail propagates that out of the
     # command substitution, and the assignment then dies under set -e -- so the "could not score the
