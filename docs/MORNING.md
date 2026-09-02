@@ -169,6 +169,10 @@ bash bringup/lab_gates.sh 5 6 7      # grounding + depth, arm, pipeline config +
 
 Also on this visit, and not software:
 
+- **F6 — SHOOT THE PAPER FIGURE.** Annotated robot photo in trial configuration (Ranger Mini 3.0,
+  xArm6, OS0-128, RealSense, riser), the floor-2 elevator lobby with the goal starred `(on floor 1)`,
+  and the blocked ADA door with the plate marked. Five minutes on the day; a re-shoot later means
+  re-rigging the robot. See `paper/FIGURE_PLAN.md` F6.
 - **S0 — are the ADA doors motion-activated?** If they are, `passive` succeeds and the whole
   comparison measures nothing. One walk-through settles it. This is the project's top risk.
 - **S1 — glass doors.** 2D lidar sees *through* glass; it will not appear in the map and the robot
