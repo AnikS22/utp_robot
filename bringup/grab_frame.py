@@ -156,6 +156,16 @@ def main() -> int:
         node.destroy_node(); rclpy.shutdown()
         return 1
 
+    # STAMP THE PAIR WE ARE ACTUALLY SAVING, HERE. The skew check below used to read node.rgb and
+    # node.depth, but ~15 more spin_once calls happen between this point and there, and every one of
+    # them can replace those fields with newer messages. So it certified a pair that was never
+    # written to disk: an unsynchronised pair could be saved and a synchronised pair arrive during
+    # the spins, and exit 0 would prove nothing about rgb.png and depth.npy. Capture the stamps of
+    # the exact messages being decoded.
+    _st_rgb = node.rgb.header.stamp
+    _st_depth = node.depth.header.stamp
+    _saved_skew = abs((_st_rgb.sec - _st_depth.sec)
+                      + (_st_rgb.nanosec - _st_depth.nanosec) * 1e-9)
     rgb = _decode(node.rgb).copy()
     depth_raw = _decode(node.depth)
     if depth_raw.dtype == np.float32:
@@ -264,8 +274,7 @@ def main() -> int:
     # crisp, the depth is valid, the veto passes, the reach check passes. The arm then goes to a
     # point that never existed. Generous threshold -- this is meant to catch a stalled stream, not
     # to police normal jitter between two USB streams.
-    _skew = abs((node.rgb.header.stamp.sec - node.depth.header.stamp.sec)
-                + (node.rgb.header.stamp.nanosec - node.depth.header.stamp.nanosec) * 1e-9)
+    _skew = _saved_skew
     if _skew > 0.20:
         print(f"FATAL: rgb and depth are {_skew*1000:.0f} ms apart. They are not the same moment, so "
               f"a box grounded in the colour frame would be ranged against a different one. "

@@ -156,10 +156,27 @@ alive /scan || { bg python3 bringup/scan_relay.py; waitfor 20 /scan || die "no /
 # Guarded on camera_info, not on the node: a leaked realsense node holds the USB device while
 # publishing nothing, which is the state that produced 0.0 Hz with a healthy-looking node list.
 if ! alive /mast_cam/color/camera_info; then
-  bash "$ROOT/bringup/camera.sh" || die "camera.sh failed -- check the USB link speed first: on a
-        USB 2 port the D435 cannot open the profiles in config/camera.yaml and loops on
-        xioctl(VIDIOC_S_FMT) errno=5. Restarting it again will not help."
-  waitfor 30 /mast_cam/color/camera_info || die "no camera_info 30 s after camera.sh"
+  # camera.sh DOES NOT RETURN. It ends in `wait "$NODE_PID"` so it can own the driver's lifetime and
+  # clean up its process group on Ctrl-C. Calling it synchronously here hung bring-up forever at
+  # this line -- no camera, no safety stage, no gates, no error. It has to be backgrounded like
+  # every other long-lived process this script starts.
+  #
+  # And check for a WEDGED driver before starting another. camera.sh has no already-running guard,
+  # so a second invocation adds a second static TF publisher for base_link->mast_cam_link and a
+  # second realsense node fighting for the same USB device -- which is exactly what happened at
+  # 19:21 yesterday, when two nodes raced and the loser reported "No RealSense devices were found".
+  # A node that exists while camera_info is silent is the wedged state, and stacking another on top
+  # of it makes the situation worse, so say so instead.
+  if ros2 node list 2>/dev/null | grep -q mast_cam; then
+    die "a /mast_cam node is running but /mast_cam/color/camera_info is silent. That is a WEDGED
+        driver, not a missing one, and starting a second would leave two nodes fighting for the USB
+        device. Kill the existing one first, then check the link speed: on a USB 2 port the D435
+        cannot open the profiles in config/camera.yaml and loops on xioctl(VIDIOC_S_FMT) errno=5."
+  fi
+  bg bash "$ROOT/bringup/camera.sh"
+  waitfor 40 /mast_cam/color/camera_info || die "no camera_info 40 s after starting camera.sh.
+        Check the USB link speed FIRST: on a USB 2 port the D435 cannot open the configured
+        profiles at all and retries forever. Restarting will not help."
 fi
 echo "  camera ok"
 echo "  /scan ok (relay running)"

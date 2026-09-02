@@ -1,5 +1,31 @@
 #!/usr/bin/env python3
-"""Set the xArm's tool geometry and payload. MUST RUN AT EVERY ARM BRING-UP.
+"""Report the xArm's tool geometry and payload. READ THE CONFLICT BELOW BEFORE USING --set.
+
+*** 2026-09-02: DO NOT RUN --set WITHOUT RESOLVING THIS. ***
+This file argues that tcp_offset should be [0,0,172,0,0,0] and treats zero as a fault. That
+conflicts with the calibration the robot actually aims with, and the conflict is unresolved:
+
+  calib/handeye.json was solved on 2026-08-21 with the arm at tcp_offset [0,0,0,0,0,0]
+  (EXPERIMENT_LOG.md:875), and calib/pairs/*.json store arm_xyz_m straight from get_position().
+  So marker_on_flange_mm is FLANGE-relative, and approach_target.py:254-291 reads get_position()
+  and commands set_position() on that basis. Installing a 172 mm tool offset makes both calls
+  refer to the TOOL TIP: the commanded flange retreats by the tool length and the marker lands
+  172 mm SHORT. There is no force sensor to catch it -- get_ft_sensor_data answers zeros and
+  collision_sensitivity is 0 -- so approach_target returns 0, press_run prints done, and the route
+  reports success over a press that touched nothing.
+
+So for the CURRENT calibration, zero is the correct state and this file's "DOES NOT match" verdict
+is backwards. bringup/session.sh therefore runs this WITHOUT --set, for reporting only.
+
+Which state is truly right cannot be settled from software: EXPERIMENT_LOG.md:2149 records that
+SDK 1.18.4 has no live TCP getter, so the property read back below is a local cache and proves
+nothing either way. It needs the physical measurement in docs/CALIBRATION.md item 2 -- touch one
+fixed point from two arm configurations. Until that is done, either set the tool AND re-solve
+hand-eye with it set, or leave both at zero. Do not mix them.
+
+Original rationale follows, and is still correct about VOLATILITY -- the setting does not survive
+a power cycle, whichever value it holds.
+
 
     python3 bringup/arm_tool.py            # report what the arm currently believes
     python3 bringup/arm_tool.py --set      # write the tool offset and load, then verify
