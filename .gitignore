@@ -39,3 +39,12 @@ maps/*/frames/
 maps/*.mm
 maps/*.simplemap
 maps/.loaded_map
+
+# Trial recordings. poses/events/decisions are small and worth keeping, but frames/
+# and thirdperson.mp4 are not -- captures/ is already 396 MB and this is a PUBLIC repo.
+# Keep the record, not the pixels: commit meta.json/poses.jsonl/events.jsonl by hand
+# when a run is worth citing.
+runs/*/frames/
+runs/*/thirdperson.mp4
+paper/exemplar_graphs/reference/*.png
+paper/exemplar_graphs/reference/*.jpg
