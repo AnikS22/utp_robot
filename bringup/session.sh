@@ -169,28 +169,27 @@ say "3/6  safety"
 bg bash bringup/safety.sh; sleep 3
 echo "  mux + arm gate started"
 
-# THE ARM'S TOOL GEOMETRY, WHICH THE ARM FORGETS.
-# bringup/arm_tool.py has said "MUST RUN AT EVERY ARM BRING-UP" since it was written and had ZERO
-# callers -- the value was set by hand once and every bring-up since silently inherited whatever
-# survived. It does not survive a power cycle: the arm reported tcp_offset [0,0,172,0,0,0] on the
-# morning of 2026-09-01 and [0,0,0,0,0,0] the same afternoon, after the battery was recharged.
-# With it at zero every Cartesian command refers to the FLANGE, so the tool tip lands short by the
-# tool length -- 172 mm. That is the ~10 cm press miss in the log, and the arm is not the suspect:
-# hand-eye RMS is 2.96 mm and measured placement 4.3 mm. An arm accurate to 4 mm cannot produce a
-# 100 mm error; a 172 mm uncompensated tool can. calib/handeye.json's target offset was converged
-# WITH the tool set, so a zeroed TCP also invalidates that correction.
-# Runs under .venv-arm: arm_tool.py does `from xarm.wrapper import XArmAPI` with no sys.path
-# insertion, so system python3 fails with ImportError. Advisory, not fatal -- a mapping drive does
-# not need the arm, and dying here would block bring-up over a tool that is only used to press.
+# THE ARM'S TOOL GEOMETRY -- REPORT IT, DO NOT SET IT.
+#
+# An earlier version of this block ran `arm_tool.py --set`, writing tcp_offset [0,0,172,0,0,0].
+# That was WRONG and would have broken the press chain that works. The hand-eye calibration this
+# stack aims with was captured on 2026-08-21 with the arm at tcp_offset [0,0,0,0,0,0]
+# (EXPERIMENT_LOG.md:875), and calib/pairs/*.json store arm_xyz_m straight from get_position(), so
+# calib/handeye.json's marker_on_flange_mm is FLANGE-relative. approach_target.py:254-291 reads
+# get_position() and commands set_position() on that basis. Install a 172 mm tool offset and both
+# calls start referring to the TOOL TIP instead: the commanded flange retreats by the tool length
+# and the marker lands 172 mm SHORT -- with no contact sensor to notice (get_ft_sensor_data answers
+# zeros, collision_sensitivity is 0), so approach_target returns 0, press_run prints done, and the
+# route reports ROUTE COMPLETE over a press that touched nothing.
+#
+# So the correct state for the CURRENT calibration is tcp_offset ZERO, and this reports rather than
+# writes. Note arm_tool.py's readback cannot settle this either way: EXPERIMENT_LOG.md:2149 --
+# "there is NO live getter for the TCP in SDK 1.18.4, the tcp_offset property is a local cache".
+# Resolving it properly needs a physical measurement (touch one fixed point from two arm
+# configurations), which is docs/CALIBRATION.md item 2 and is still open.
 if [ -x "$ROOT/.venv-arm/bin/python" ]; then
-  if "$ROOT/.venv-arm/bin/python" "$ROOT/bringup/arm_tool.py" --set; then
-    echo "  arm tool geometry set (172 mm / 0.82 kg)"
-  else
-    echo "  WARNING: could not set the arm's TCP offset. If you press, the tip will land SHORT by"
-    echo "           the tool length (~172 mm) and it will look like a calibration error."
-  fi
-else
-  echo "  WARNING: no .venv-arm -- arm TCP offset NOT set; presses will land ~172 mm short"
+  "$ROOT/.venv-arm/bin/python" "$ROOT/bringup/arm_tool.py" 2>&1 | sed 's/^/  /' || true
+  echo "  (reported, not set -- the hand-eye calibration assumes tcp_offset ZERO)"
 fi
 # ASK FOR THE DEADMAN ONLY IF SOMETHING IS ACTUALLY GATED ON IT.
 # This block used to demand /safety/enable unconditionally. That is wrong once the operator has set

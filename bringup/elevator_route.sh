@@ -19,7 +19,14 @@
 #     lift_door          back outside the doors -- the exit
 #
 # Run it:   bash bringup/elevator_route.sh            (real)
-#           bash bringup/elevator_route.sh --dry-run  (plans and grounds, moves nothing)
+#           bash bringup/elevator_route.sh --dry-run  (plans and grounds; SEE THE CAVEAT)
+#
+# --dry-run CAVEAT, stated plainly because the previous wording here ("moves nothing") was false:
+# it does not drive the base and does not reach for anything, but press_run.sh's final STOW stage
+# runs `stow_arm.py --go` unconditionally -- it consults --hold, never MODE -- so if the arm is not
+# already folded, a dry run folds it. That is press_run.sh's behaviour and press_run.sh is the
+# ADA-proven chain, so it is documented here rather than edited there. Preflight verifies the arm
+# is stowed before either mode starts, which makes the stow a no-op in practice.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -52,10 +59,18 @@ nav() {
     local wp="$1" out status
     say "NAVIGATE to '$wp'"
     if [ -n "$DRY" ]; then python3 "$REPO/bringup/nav2_goto.py" "$wp" || true; return 0; fi
-    out="$(python3 "$REPO/bringup/nav2_goto.py" "$wp" --go 2>&1)"; echo "$out"
+    # `out="$(cmd)"` is itself a simple command, so under `set -e` a non-zero exit terminates the
+    # script AT THIS LINE -- echo, the RESULT parse and the die message below never run. nav2_goto
+    # exits non-zero for timeout(6), rejected(5), refused(2/3), no_server(4) and cancelled(4/130),
+    # i.e. every failure except `blocked`. So the whole "arrival is not an exit code" apparatus only
+    # ever ran on success, and an operator saw one bare line: "rc=6 -- folding the arm". Capture the
+    # code instead of dying on it; we want the RESULT line precisely when the command failed.
+    local rc=0
+    out="$(python3 "$REPO/bringup/nav2_goto.py" "$wp" --go 2>&1)" || rc=$?
+    echo "$out"
     status="$(printf '%s\n' "$out" | grep -o 'RESULT {.*}' | tail -1 \
               | python3 -c 'import sys,json; print(json.loads(sys.stdin.read()[7:]).get("status",""))' 2>/dev/null || true)"
-    [ "$status" = "arrived" ] || die "leg to '$wp' ended as '${status:-unknown}', not arrived."
+    [ "$status" = "arrived" ] || die "leg to '$wp' ended as '${status:-unknown}' (nav2_goto exit $rc), not arrived."
 }
 
 # press_run.sh UNMODIFIED, with --query. It already takes one; the default is the ADA plate, which
@@ -110,25 +125,22 @@ say "0b PREFLIGHT -- waypoint footprints"
 python3 "$REPO/bringup/check_waypoint.py" call_button lift_door_reverse car_facing_out car_panel lift_door \
     || die "a waypoint on this route is not drivable as recorded. Re-record it and check again."
 
-# THE ARM'S TOOL GEOMETRY. session.sh sets this but treats failure as a warning, on purpose -- a
-# mapping drive does not need the arm. The press does: with tcp_offset at zero every Cartesian
-# command refers to the flange and the tip lands ~172 mm short, which reads as a calibration error
-# rather than a missing setting. So the route, which exists only to press things, refuses.
+# THE ARM'S TOOL GEOMETRY. This block used to refuse when tcp_offset was ZERO. That was backwards.
+# calib/handeye.json was solved with the arm at tcp_offset [0,0,0,0,0,0] (EXPERIMENT_LOG.md:875)
+# and calib/pairs/*.json store get_position() straight, so marker_on_flange_mm is FLANGE-relative
+# and approach_target.py's arithmetic assumes flange coordinates. A 172 mm tool offset makes
+# get_position/set_position refer to the tool tip instead, and the marker lands 172 mm SHORT with
+# nothing able to notice -- there is no force sensor, so it records as a successful press that
+# touched nothing. Zero is the state this calibration was solved in; a NON-zero offset is the fault.
 say "0c PREFLIGHT -- arm tool geometry"
 if [ -z "$DRY" ]; then
-    "$REPO/.venv-arm/bin/python" "$REPO/bringup/arm_tool.py" 2>&1 | tee /tmp/utp_arm_tool_report.txt
-    grep -qiE 'tcp_offset.*\[?\s*0(\.0+)?\s*,\s*0(\.0+)?\s*,\s*0(\.0+)?' /tmp/utp_arm_tool_report.txt \
-        && die "the arm's tcp_offset is ZERO. Every press will land ~172 mm short.
-        Fix:  $REPO/.venv-arm/bin/python bringup/arm_tool.py --set"
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/arm_tool.py" 2>&1 | tee /tmp/utp_arm_tool.txt | sed 's/^/  /'
+    if grep -qE 'tcp_offset.*[1-9]' /tmp/utp_arm_tool.txt; then
+        echo "  WARNING: tcp_offset is NON-ZERO. calib/handeye.json was solved at zero, so every" >&2
+        echo "           press may land ~172 mm short. Verify before trusting a 'successful' press." >&2
+    fi
 fi
 
-# IS THE ROBOT WHERE IT THINKS IT IS? session.sh's nav stage accepts ANY map->odom transform --
-# which proves slam_toolbox published a transform, not that the scan matched the elevator map at
-# the right pose. config/slam_os0.yaml's map_start_pose is still the ATRIUM parking spot, and a
-# seed metres wrong converges confidently into the wrong corridor while every named check passes.
-# Measured 2026-09-01: a robot 4.6 m from where it believed it was, still publishing a confident TF.
-# Recorded fits at waypoint time were 77.9-88.5%. Thresholds here are deliberately forgiving --
-# a person standing behind the robot drags the number down without the pose being wrong.
 say "0d PREFLIGHT -- localization fit"
 if [ -z "$DRY" ]; then
     fitline="$(timeout 60 python3 "$REPO/bringup/relocalise.py" --check 2>&1 | grep -oE 'fit [0-9.]+%' | tail -1)"
@@ -153,7 +165,17 @@ press "the elevator call button on the wall"
 # the operator stands at the door holding it open for every run, so a poller here would only be a
 # second thing that can be wrong. Wire doors_open.py in when the run is unattended.
 say "DOORS -- hold them open, then press RETURN"
-[ -n "$DRY" ] || read -r _
+# `read` returns 1 at EOF, and as the last command of an OR-list that trips `set -e` -- so running
+# this route with stdin not a terminal (nohup, ssh -n, a wrapper) aborted it here, mid-route, and
+# the trap folded the arm. Only wait when there is a terminal to wait on.
+if [ -z "$DRY" ]; then
+    if [ -t 0 ]; then
+        read -r _ || true
+    else
+        echo "  stdin is not a terminal -- not waiting. Hold the doors NOW; continuing in 20 s." >&2
+        sleep 20
+    fi
+fi
 
 nav   lift_door_reverse   # back to the doors, so we reverse in rather than turn around inside
 nav   car_facing_out      # in the car
