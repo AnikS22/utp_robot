@@ -126,9 +126,19 @@ def main() -> int:
             # push along the local path NORMAL, so the label steps off the line, not along it
             j0, j1 = max(i - 3, 0), min(i + 3, len(xs) - 1)
             dx, dy = xs[j1] - xs[j0], ys[j1] - ys[j0]
-            nrm = np.hypot(dx, dy) or 1.0
-            px += -dy / nrm * NUDGE * 0.8
-            py += dx / nrm * NUDGE * 0.8
+            nrm = float(np.hypot(dx, dy))
+            if nrm < 1e-9:
+                # The robot was stationary here (or the run has a single pose), so there is
+                # no path direction to step away from. Falling back to nrm = 1.0 with a zero
+                # dx,dy added ZERO displacement on every iteration, so the marker never
+                # moved and stayed buried under whatever it collided with. Walk around a
+                # circle instead -- any direction is as good as another when there is no path.
+                ang = 0.9 * len(placed)
+                px += np.cos(ang) * NUDGE * 0.9
+                py += np.sin(ang) * NUDGE * 0.9
+            else:
+                px += -dy / nrm * NUDGE * 0.8
+                py += dx / nrm * NUDGE * 0.8
         placed.append((px, py))
         if np.hypot(px - xs[i], py - ys[i]) > 1e-9:
             ax.plot([xs[i], px], [ys[i], py], "-", color="#17a54a", lw=1.0, zorder=5)

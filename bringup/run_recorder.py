@@ -75,7 +75,12 @@ def main() -> int:
     ap.add_argument("--method", default="ours", help="method name; matches trials.jsonl method_name")
     ap.add_argument("--dir", default=None, help="explicit output dir (default runs/<utc>_<method>_<scene>)")
     ap.add_argument("--ns", default="mast_cam", help="camera namespace")
-    ap.add_argument("--fps", type=float, default=2.0, help="frames per second to SAVE (default 2)")
+    ap.add_argument("--fps", type=float, default=2.0, help="frames per second to SAVE while capturing")
+    ap.add_argument("--frames", choices=("on-event", "continuous"), default="on-event",
+                    help="on-event (default): subscribe only in a window around each event. "
+                         "continuous: hold the subscription for the whole run")
+    ap.add_argument("--window", type=float, default=2.5,
+                    help="seconds to keep capturing after an event, in on-event mode")
     ap.add_argument("--width", type=int, default=640, help="downscale frames to this width (0 = full)")
     ap.add_argument("--quality", type=int, default=85, help="JPEG quality")
     ap.add_argument("--pose-hz", type=float, default=10.0, help="trajectory sample rate")
@@ -142,7 +147,53 @@ def main() -> int:
         cv2.imwrite(str(name), rgb[:, :, ::-1], [int(cv2.IMWRITE_JPEG_QUALITY), a.quality])
         state["n_frames"] += 1
 
-    node.create_subscription(Image, f"/{a.ns}/color/image_raw", on_img, qos)
+    # SUBSCRIBE ONLY WHEN WE NEED A FRAME.
+    #
+    # An always-on subscriber is NOT free, and claiming otherwise was wrong. BEST_EFFORT
+    # with depth 1 bounds THIS reader's queue; it does not stop the publisher and the DDS
+    # middleware from serialising and transporting every sample to an extra process. The
+    # D435 runs 1280x720 rgb8 at 30 Hz (config/camera.yaml:31-35) -- about 83 MB/s before
+    # overhead -- and that work happens for every frame even though the callback throws
+    # most of them away. The subscriber that matters here is the GROUNDER's, in
+    # grab_frame.py, and adding transport load beside it is exactly the kind of
+    # "shouldn't matter" that has already cost this project a night.
+    #
+    # The figure needs frames AT THE MARKERS, not a continuous stream. So the reader only
+    # exists inside a short window after an event; the rest of the run there is no second
+    # reader at all. Poses stay continuous -- TF is small and it is the trajectory.
+    img_sub = {"h": None}
+
+    def _sub_on():
+        if img_sub["h"] is None:
+            img_sub["h"] = node.create_subscription(
+                Image, f"/{a.ns}/color/image_raw", on_img, qos)
+
+    def _sub_off():
+        if img_sub["h"] is not None:
+            node.destroy_subscription(img_sub["h"])
+            img_sub["h"] = None
+
+    if a.frames == "continuous":
+        _sub_on()
+    else:
+        # Watch events.jsonl -- the route appends to it (bringup/run_event.sh). A new line
+        # means something happened worth a picture. Polling a file size is far cheaper than
+        # holding a 30 Hz image reader open, and it needs no connection to the route.
+        ev_state = {"size": 0, "until": 0.0}
+
+        def poll_events():
+            try:
+                sz = (out / "events.jsonl").stat().st_size
+            except OSError:
+                return
+            if sz > ev_state["size"]:
+                ev_state["size"] = sz
+                ev_state["until"] = time.time() + a.window
+                _sub_on()
+            elif img_sub["h"] is not None and time.time() > ev_state["until"]:
+                _sub_off()
+
+        node.create_timer(0.2, poll_events)
 
     posef = (out / "poses.jsonl").open("a", buffering=1)
 
@@ -167,8 +218,12 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _sig)
 
     print(f"[recorder] {out}", flush=True)
-    print(f"[recorder] frames {a.fps} Hz @ {a.width or 'full'} px, poses {a.pose_hz} Hz, no GPU, "
-          f"no /ouster/points", flush=True)
+    print(f"[recorder] frames: {a.frames} ({a.fps} Hz @ {a.width or 'full'} px"
+          + (f", {a.window}s window)" if a.frames == "on-event" else ")")
+          + f", poses {a.pose_hz} Hz, no GPU, no /ouster/points", flush=True)
+    if a.frames == "on-event":
+        print("[recorder] the image reader exists ONLY around events, so the grounder does not "
+              "share the topic with a second full-rate subscriber", flush=True)
     try:
         while rclpy.ok() and not stop["now"]:
             rclpy.spin_once(node, timeout_sec=0.1)
