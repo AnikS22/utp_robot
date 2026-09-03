@@ -146,7 +146,7 @@ def main() -> int:
     bar = 1.0
     bx, by = x0 + 0.10 * (x1 - x0), y0 + 0.07 * (y1 - y0)
     ax.plot([bx, bx + bar], [by, by], "-", color="k", lw=2.5)
-    ax.text(bx + bar / 2, by + 0.02 * (y1 - y0), "1m", ha="center", va="bottom", fontsize=9)
+    ax.text(bx + bar / 2, by + 0.030 * (y1 - y0), "1m", ha="center", va="bottom", fontsize=9)
 
     ax.set_xlim(x0, x1); ax.set_ylim(y0, y1)
     ax.set_aspect("equal"); ax.axis("off")
