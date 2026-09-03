@@ -203,7 +203,9 @@ n.destroy_node(); rclpy.shutdown()
 
     rep.add("/scan", scan > 3.0, f"{scan:.1f} Hz (expect ~6.5)"
             + ("" if scan > 3.0 else "  <- lidar node alive but silent? restart bringup/lidar3d.sh"))
-    rep.add("camera", cam > 20.0, f"{cam:.1f} Hz on camera_info (expect ~30)"
+    # A camera we deliberately did not start (navigation-only bring-up) is INFO, not CRITICAL.
+    _cam_crit = not (os.environ.get("UTP_NO_CAMERA") == "1")
+    rep.add("camera", cam > 20.0 or not _cam_crit, f"{cam:.1f} Hz on camera_info (expect ~30)"
             + ("" if cam > 20.0 else "  <- check the USB LINK SPEED first: a D435 on a USB 2 port cannot open the configured 1280x720x30 + 848x480x30 profiles and loops on xioctl errno=5. Restarting will not help."))
     rep.add("/odom", odom > 20.0, f"{odom:.1f} Hz"
             + ("" if odom > 20.0 else "  <- ranger driver not publishing"))
@@ -359,8 +361,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--watch", action="store_true")
+    ap.add_argument("--skip-camera", action="store_true",
+                    help="the camera was deliberately not started; report INFO, not CRITICAL")
     ap.add_argument("--skip-arm", action="store_true")
     a = ap.parse_args()
+    if getattr(a, "skip_camera", False):
+        os.environ["UTP_NO_CAMERA"] = "1"
 
     while True:
         rep = Report()

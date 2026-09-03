@@ -75,7 +75,16 @@ def _stow_from_config() -> list[float]:
 
 STOW_DEG = _stow_from_config()
 TOL_DEG = 5.0
-SPEED_DEG_S = 20.0                                # a crawl; there is no benefit to going faster
+# RETRACT SPEED. Raised 20 -> 45 deg/s on 2026-09-03: there IS now a benefit to going faster.
+# The lift task presses a call button and then has to be inside the car before the doors close, so
+# the fold is on the critical path. The largest fold seen is J5 by ~106 deg, which at 20 deg/s took
+# 5.3 s and now takes ~2.4 s.
+# Why 45 and not more: this is a JOINT-space move with no load and no contact expected, so the
+# limit is smoothness rather than torque -- but the arm carries a gripper at ~0.82 kg on a 0.74 m
+# riser, and the faster the wrist slews the more the whole mast rings. 45 is roughly a quarter of
+# the xArm6's rated joint speed and stays well inside it. If a fold ever faults, this is the first
+# number to put back, not the last.
+SPEED_DEG_S = 45.0
 
 
 def main() -> int:

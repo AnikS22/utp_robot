@@ -50,6 +50,26 @@ sources:
     requires_enable: false
     allows_arm_override: false
 
+# ARM-STOWED INTERLOCK: OFF. Set by the operator 2026-09-03, deliberately, for the elevator task.
+#
+# WHY. The lift task requires the base to move while the arm is still coming back: press the call
+# button, then get into the car before the doors close. Waiting for a full fold between the press
+# and the drive does not fit in that window, and the built-in alternative does not either --
+# allows_arm_override needs /safety/override held at >5 Hz AND clamps to override_speed_factor
+# (0.25), i.e. a crawl, which is the opposite of what "get in before the doors shut" needs.
+#
+# WHAT IT COSTS, stated plainly. The arm reaches ~0.88 m from link_base and the chassis coasts
+# ~1.26 s / ~18 cm after commands stop (measured 2026-08-21). With this false, a leg driven with
+# the arm out can put the tool into a door frame or a wall and nothing in software will stop it:
+# there is no force sensor on this arm (get_ft_sensor_data answers zeros, collision_sensitivity
+# is 0). The operator's judgement, stated 2026-09-01: "worse case the arm pushes ranger back a lil".
+# The physical e-stop is the protection, which is how this robot is run.
+#
+# WHAT IS UNAFFECTED. estop still hard-blocks every source and is latching. The arm monitor still
+# publishes /safety/arm_stowed and /safety/status still reports it, so the gate remains VISIBLE --
+# it just no longer blocks. Set this back to true for anything unattended.
+require_arm_stowed: false
+
 # Gate topics (all std_msgs/Bool). Every one is FAIL-CLOSED: never-seen and stale both mean
 # "not permitted". A stale gate is indistinguishable from a crashed publisher, and the crash is
 # what we are defending against.

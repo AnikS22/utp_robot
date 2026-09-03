@@ -25,12 +25,12 @@ car_facing_out:
   yaw: 1.0194
 car_panel:
   frame: map
+  mola_session: 010fcecd2b28489c
+  odom_epoch: 1788472681
+  x: -1.6309
+  y: 0.3003
+  yaw: 0.0859
   map_name: elevator
-  mola_session: 010fa575d3f63065
-  odom_epoch: 1788302060
-  x: -1.4313
-  y: 0.1325
-  yaw: 0.9387
 lift_door:
   frame: map
   map_name: elevator

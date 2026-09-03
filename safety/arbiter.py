@@ -183,6 +183,7 @@ class SafetyArbiter:
         input_timeout_s: float = 0.3,
         gate_timeout_s: float = 0.2,
         nominal_dt_s: float = 0.05,
+        require_arm_stowed: bool = True,
     ) -> None:
         if not sources:
             raise ValueError("SafetyArbiter needs at least one SourceSpec")
@@ -192,6 +193,20 @@ class SafetyArbiter:
         # Highest priority first, so selection is a linear scan.
         self.sources = sorted(sources, key=lambda s: -s.priority)
         self.limits = limits
+        # POLICY, NOT A DEFAULT TO TWEAK LIGHTLY. When False, an extended arm no longer blocks
+        # base motion for any source. Set by the operator 2026-09-03 for the elevator task: the
+        # robot must press a call button and then move into the car before the doors close, and
+        # waiting for a full fold between the press and the drive does not fit in that window.
+        #
+        # WHAT IT COSTS. The interlock exists because the arm reaches ~0.88 m from link_base and
+        # the chassis coasts ~1.26 s / ~18 cm after commands stop (measured 2026-08-21). With this
+        # False, a leg driven with the arm out can put the tool into a door frame or a wall, and
+        # nothing in software will stop it -- there is no force sensor on this arm
+        # (get_ft_sensor_data answers zeros, collision_sensitivity is 0). The e-stop is the only
+        # protection, which is exactly how the operator runs this robot.
+        #
+        # estop is UNAFFECTED and still hard-blocks. This flag touches only arm_stowed.
+        self.require_arm_stowed = bool(require_arm_stowed)
         self.override_limits = limits.scaled(override_speed_factor)
         self.input_timeout_s = input_timeout_s
         self.gate_timeout_s = gate_timeout_s
@@ -279,7 +294,7 @@ class SafetyArbiter:
             return blocked("deadman", hard=False)
 
         limits = self.limits
-        if not arm_stowed:
+        if not arm_stowed and self.require_arm_stowed:
             if not (chosen.allows_arm_override and override):
                 # THE interlock. Fail-closed: a stale arm monitor lands here too.
                 return blocked("arm_not_stowed", hard=False)

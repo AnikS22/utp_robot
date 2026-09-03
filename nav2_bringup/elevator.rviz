@@ -1,0 +1,143 @@
+# RViz for the elevator scene: the SAVED map, where the robot thinks it is, and the waypoints.
+#
+# WHY A NEW CONFIG. os0_nav.rviz shows /global_costmap/costmap and /local_costmap/costmap, which
+# only exist while Nav2 is running -- so before Nav2 starts it displays an empty world and looks
+# broken. It also has no display for /map at all, none for /waypoint_markers, and its LaserScan
+# points at /scan_filtered, the RAW slice that still contains the robot's own arm and mast. That
+# last one is the display-side twin of the bug that made both Nav2 costmaps see the arm as a wall.
+#
+# This config shows, in order of what you actually need to judge:
+#   Map            /map              the saved elevator grid (transient_local: it is LATCHED)
+#   LaserScan      /scan             the MASKED scan -- what SLAM and Nav2 really consume
+#   MarkerArray    /waypoint_markers the five recorded elevator poses
+#   TF                               map -> odom -> base_link, to see if localization is sane
+#   Path           /plan             appears once Nav2 is up
+#   Costmaps                         present but DISABLED, so they cost nothing until Nav2 runs
+#
+# NO PointCloud2. RViz displaying the full 131k-point OS0 cloud held 14.3 GB of GPU and starved
+# the grounder into CUDA OOM on 2026-09-01. Add it by hand if you are inspecting sensor mounting,
+# and set Decay Time to 0 when you do.
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+    Tree Height: 700
+  - Class: rviz_common/Tool Properties
+    Name: Tool Properties
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 15
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+      Cell Size: 1
+      Color: 100; 100; 100
+      Plane: XY
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/Map
+      Enabled: true
+      Name: SavedMap
+      Color Scheme: map
+      Draw Behind: true
+      Topic:
+        Value: /map
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/LaserScan
+      Enabled: true
+      Name: Scan (masked)
+      # Color Transformer MUST be FlatColor. RViz defaults a LaserScan to Intensity, which
+      # overrides the flat Color and renders everything white -- so the colour set here was
+      # being ignored and the scan was indistinguishable from the TF axes and the grid.
+      Color Transformer: FlatColor
+      Color: 255; 40; 40
+      Size (m): 0.05
+      Style: Points
+      Decay Time: 0
+      Alpha: 1
+      Topic:
+        Value: /scan
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Waypoints
+      Topic:
+        Value: /waypoint_markers
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Name: TF
+      Show Names: true
+      Show Axes: true
+      Show Arrows: false
+      Marker Scale: 0.6
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: Nav2 plan
+      Color: 255; 170; 0
+      Line Width: 0.05
+      Topic:
+        Value: /plan
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/Polygon
+      Enabled: true
+      Name: Footprint
+      Color: 0; 200; 255
+      Topic:
+        Value: /local_costmap/published_footprint
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/Map
+      Enabled: false
+      Name: LocalCostmap (Nav2 only)
+      Color Scheme: costmap
+      Topic:
+        Value: /local_costmap/costmap
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Value: /initialpose
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /goal_pose
+    - Class: rviz_default_plugins/PublishPoint
+      Topic:
+        Value: /clicked_point
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: TopDown
+      Angle: 0
+      Scale: 60
+      Target Frame: <Fixed Frame>
+      X: 0
+      Y: 0
+Window Geometry:
+  Height: 900
+  Width: 1500
+  Displays:
+    collapsed: false

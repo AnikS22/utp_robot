@@ -93,7 +93,11 @@ tf() {
 }
 tf odom base_link      # needs ranger launched with publish_odom_tf:=true (NOT the default)
 tf base_link os_sensor
-tf base_link mast_cam_link
+if [ "${UTP_NO_CAMERA:-0}" = "1" ]; then
+  note "TF base_link -> mast_cam_link SKIPPED (UTP_NO_CAMERA=1) -- pressing will not work"
+else
+  tf base_link mast_cam_link
+fi
 # GUARDS: two publishers of odom->base_link is the 2026-08-21b two-publishers-on-/map bug again.
 N=$(timeout 8 ros2 topic info /tf 2>/dev/null | awk '/Publisher count/{print $3}')
 note "/tf publisher count: ${N:-?} (each extra one is a candidate duplicate — check if TF flickers)"

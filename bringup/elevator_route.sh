@@ -75,6 +75,14 @@ nav() {
     status="$(printf '%s\n' "$out" | grep -o 'RESULT {.*}' | tail -1 \
               | python3 -c 'import sys,json; print(json.loads(sys.stdin.read()[7:]).get("status",""))' 2>/dev/null || true)"
     event leg_end "$wp:${status:-unknown}"
+
+    # BRAKES, NOT A SPEED CAP. A fast turn outruns the scan matcher (coarse_angle_resolution is
+    # 2.0 deg and /scan is ~2 Hz), the pose slides mid-rotation, and the controller then drives
+    # against a stale estimate -- which on 2026-09-03 read as stuttering and a light wall contact
+    # while reversing into the car, with the robot never actually in a wall. Capping wz_max would
+    # slow the straight legs too, to fix something that only happens while turning. Standing still
+    # afterwards costs nothing and lets the matcher converge before the next goal goes out.
+    [ -n "$DRY" ] || python3 "$REPO/bringup/settle.py" "$wp" "${UTP_SETTLE_MAX_S:-6}" || true
     [ "$status" = "arrived" ] || die "leg to '$wp' ended as '${status:-unknown}' (nav2_goto exit $rc), not arrived."
 }
 

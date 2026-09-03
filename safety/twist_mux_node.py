@@ -95,7 +95,13 @@ class TwistMuxNode(Node):
             input_timeout_s=float(timeouts.get("input_s", 0.3)),
             gate_timeout_s=float(timeouts.get("gate_s", 0.2)),
             nominal_dt_s=1.0 / rate,
+            # Defaults TRUE, so omitting it from safety.yaml keeps the interlock.
+            require_arm_stowed=bool(cfg.get("require_arm_stowed", True)),
         )
+        if not bool(cfg.get("require_arm_stowed", True)):
+            self.get_logger().warn(
+                "require_arm_stowed: false -- the base WILL move with the arm extended. "
+                "There is no force sensor on this arm; the e-stop is the only protection.")
 
         # --- command sources ---
         for spec in specs:

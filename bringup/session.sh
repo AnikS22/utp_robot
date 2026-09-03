@@ -92,20 +92,30 @@ fi
 # a USB 2 link (480 Mbps) cannot carry that, so librealsense opens NOTHING, camera_info reads
 # 0.0 Hz, and the driver loops forever on xioctl(VIDIOC_S_FMT) errno=5. Restarting camera.sh does
 # not help, and health.py used to advise exactly that.
-_cam_speed=""
-for _d in /sys/bus/usb/devices/*/idVendor; do
-  [ "$(cat "$_d" 2>/dev/null)" = "8086" ] || continue
-  _p="$(dirname "$_d")"
-  case "$(cat "$_p/product" 2>/dev/null)" in *RealSense*) _cam_speed="$(cat "$_p/speed" 2>/dev/null)";; esac
-done
-if [ -z "$_cam_speed" ]; then
-  die "the RealSense D435 is NOT ENUMERATED on USB. Reseat it in a blue USB 3 port."
-elif [ "$_cam_speed" != "5000" ] && [ "$_cam_speed" != "10000" ]; then
-  die "the RealSense D435 negotiated ${_cam_speed} Mbps -- that is USB 2, not USB 3.
-        It cannot open the profiles in config/camera.yaml and will publish nothing at all while
-        looking perfectly alive in ros2 node list. Move it to a blue USB 3 port."
+# NAVIGATION-ONLY MODE. Nav2, SLAM and the base need no camera; only the press chain does.
+# When the camera is out of action -- sitting on a USB 2 link where it cannot open the configured
+# profiles at all, say -- there is no reason to be blocked from working on navigation.
+# UTP_NO_CAMERA=1 skips the camera checks and says loudly what that costs. It is NOT a way to
+# turn a red check green: with it set, grounding and pressing do not work, and the banner says so.
+if [ "${UTP_NO_CAMERA:-0}" = "1" ]; then
+  echo "  camera checks SKIPPED (UTP_NO_CAMERA=1)"
+  echo "  >>> NAVIGATION ONLY -- grounding and pressing will NOT work in this session"
+else
+  _cam_speed=""
+  for _d in /sys/bus/usb/devices/*/idVendor; do
+    [ "$(cat "$_d" 2>/dev/null)" = "8086" ] || continue
+    _p="$(dirname "$_d")"
+    case "$(cat "$_p/product" 2>/dev/null)" in *RealSense*) _cam_speed="$(cat "$_p/speed" 2>/dev/null)";; esac
+  done
+  if [ -z "$_cam_speed" ]; then
+    die "the RealSense D435 is NOT ENUMERATED on USB. Reseat it in a blue USB 3 port."
+  elif [ "$_cam_speed" != "5000" ] && [ "$_cam_speed" != "10000" ]; then
+    die "the RealSense D435 negotiated ${_cam_speed} Mbps -- that is USB 2, not USB 3.
+          It cannot open the profiles in config/camera.yaml and will publish nothing at all while
+          looking perfectly alive in ros2 node list. Move it to a blue USB 3 port."
+  fi
+  echo "  usb ok (can0 present, D435 at ${_cam_speed} Mbps)"
 fi
-echo "  usb ok (can0 present, D435 at ${_cam_speed} Mbps)"
 
 # ------------------------------------------------------------------------------ 1. chassis
 say "1/6  chassis"
@@ -155,7 +165,9 @@ alive /scan || { bg python3 bringup/scan_relay.py; waitfor 20 /scan || die "no /
 # was the step the script should have taken itself.
 # Guarded on camera_info, not on the node: a leaked realsense node holds the USB device while
 # publishing nothing, which is the state that produced 0.0 Hz with a healthy-looking node list.
-if ! alive /mast_cam/color/camera_info; then
+if [ "${UTP_NO_CAMERA:-0}" = "1" ]; then
+  echo "  camera NOT started (UTP_NO_CAMERA=1)"
+elif ! alive /mast_cam/color/camera_info; then
   # camera.sh DOES NOT RETURN. It ends in `wait "$NODE_PID"` so it can own the driver's lifetime and
   # clean up its process group on Ctrl-C. Calling it synchronously here hung bring-up forever at
   # this line -- no camera, no safety stage, no gates, no error. It has to be backgrounded like
@@ -178,7 +190,7 @@ if ! alive /mast_cam/color/camera_info; then
         Check the USB link speed FIRST: on a USB 2 port the D435 cannot open the configured
         profiles at all and retries forever. Restarting will not help."
 fi
-echo "  camera ok"
+[ "${UTP_NO_CAMERA:-0}" = "1" ] || echo "  camera ok"
 echo "  /scan ok (relay running)"
 
 # ------------------------------------------------------------------------------ 3. safety
@@ -231,8 +243,10 @@ else
 fi
 
 # ------------------------------------------------------------------------------ 4. health
+HEALTH_FLAGS=""
+[ "${UTP_NO_CAMERA:-0}" = "1" ] && HEALTH_FLAGS="--skip-camera"
 say "4/6  health + gates"
-python3 bringup/health.py || die "health.py reported a critical failure"
+python3 bringup/health.py ${HEALTH_FLAGS:-} || die "health.py reported a critical failure"
 bash bringup/lab_gates.sh 0 2 || die "gates 0-2 failed — fix before anything moves"
 
 # ------------------------------------------------------------------------------ 5. map (optional)
