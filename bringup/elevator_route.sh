@@ -162,7 +162,14 @@ fi
 
 # ---------------------------------------------------------------------------------- the route
 nav   call_button
-press "the elevator call button on the wall"
+# ANCHOR ON THE TAPE, NOT ON THE WORD "BUTTON". Measured 2026-09-03: this query as
+# "the elevator call button on the wall" grounded the SILVER PANEL at score 0.3859 -- inside the
+# band where every known-bad grounding in this project sits (fire-alarm cover 0.397, arm-in-frame
+# 0.381), and the operator saw the arm aiming at the panel. The blue tape is the only saturated
+# colour in an all-grey lift lobby, and naming it is what worked on the car panel:
+# "the blue elevator button" 0.443 vs "the elevator button marked with blue tape" 0.267 -- so name
+# the colour, not the tape.
+press "the blue elevator call button"
 
 # The doors. Deliberately a human hold, not a detector: bringup/doors_open.py exists and works, but
 # the operator stands at the door holding it open for every run, so a poller here would only be a

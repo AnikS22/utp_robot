@@ -1,5 +1,81 @@
 # Real-robot experiment log
 
+## 2026-09-03 — the call button, pressed and confirmed
+
+First working nav-then-press on the lift call button: the rover drove to
+`call_button` under Nav2 and the arm reached the button, twice in a row, with the
+operator confirming the lift was actually called.
+
+### The query was the whole difference
+
+    "the elevator call button on the wall"   score 0.3859   -> aimed at the SILVER PANEL
+    "the blue elevator call button"          score 0.4940   -> the taped button
+                                             score 0.5080   (repeat)
+
+0.3859 sits inside the band where every known-bad grounding in this project lives
+(fire-alarm cover 0.397, arm-in-frame 0.381); 0.49-0.51 is in the band the
+successful presses live in (0.421-0.581). Naming the COLOUR rather than the object
+is what moved it, which is the same lesson the car panel taught: "the blue elevator
+button" 0.443 against "the elevator button marked with blue tape" 0.267. Name the
+colour, not the tape.
+
+Two consecutive groundings landed within 0.014 of each other at identical depth
+(0.87 m). That matters because on the car panel consecutive captures with the same
+query chose DIFFERENT buttons ~0.02 apart, which is what makes floor selection a
+coin toss. The call button is not behaving that way.
+
+### Two things that cost us a collision first
+
+**`lift_door_reverse` was mathematically unplannable, and the arithmetic says so.**
+The lift doorway is a 1.08 m corridor (measured off maps/elevator.pgm). The robot's
+inscribed half-width plus footprint_padding is 0.28 m, so at inflation_radius 0.30
+a corridor must exceed 2*(0.28+0.30) = 1.16 m to contain ANY cell the robot can
+occupy below cost 99. 1.08 < 1.16, so every such cell was 99 = INSCRIBED_INFLATED,
+which NavFn treats as an obstacle. The planner failed to plan 0.55 m
+("GridBased plugin failed to plan from (-1.18, 2.07) to (-1.09, 1.53)"), retried
+three times clearing the entire costmap, and aborted. Not transient: the cost
+survived a full clear. `lift_door` planned fine because it stands in 2.75 m.
+
+**Lowering inflation to 0.20 to fix that was the wrong call and produced a wall
+contact.** The operator had just asked for a BIGGER safety barrier; inflation is
+exactly the margin that keeps planned paths off walls, and cutting it by a third to
+unblock a leg that was not the failing one traded away the wrong thing. Reverted to
+0.30, byte-exact. The doorway still needs a different answer -- reduce
+footprint_padding, or drive that one leg by hand.
+
+**The pose was 1.85 m wrong and Nav2 still said "arrived".** It reported arriving at
+`lift_door` (-0.996, 1.653) while sitting at (0.854, 1.664), then drove east on the
+`call_button` leg when call_button is west, and hit a wall it did not know about.
+Nav2 was not lying: it reached the goal in its own estimate. The estimate was wrong.
+
+### /scan is the root cause of the drift, and it moved
+
+    during the failures      1.95 Hz   (counting subscriber, not `ros2 topic hz`)
+    during the good presses  8.0 Hz
+    localization fit         56-64%  ->  76.1%
+
+At 1.95 Hz and wz_max 0.8 rad/s the robot turns 46 deg/s, putting ~23 deg between
+consecutive scans while slam_toolbox searches with coarse_angle_resolution 2.0 deg.
+The pose slides mid-turn and the controller drives against a stale estimate. That
+single number explains the 66 s reverse leg, the 82 s abort, and the collision. At
+8 Hz the fit jumped 20 points and the presses worked.
+
+Capping wz_max was rejected by the operator, correctly: it slows every leg to fix
+something that only happens while turning. Instead `bringup/settle.py` now holds
+after each leg until the pose stops moving (1 cm / 1 deg between samples, held 1 s).
+That catches drift while STOPPED; it cannot stop drift accumulating during a leg.
+
+### Still open
+
+* Depth to the call button reads 0.87 m against the enforced 0.88 m arm envelope --
+  1 cm of margin, on both runs. A few centimetres further out and
+  `check_before_reach` refuses before the press starts. Nudge `call_button` closer.
+* No contact sensing exists (`get_ft_sensor_data` answers zeros,
+  `collision_sensitivity` 0), so `exit=0` means the IK converged and the motion was
+  commanded -- never that the button was pushed. Confirmation is the operator's eyes.
+* `car_panel` was re-recorded and all five waypoints now pass check_waypoint.py, but
+  the full five-leg route has still never completed.
+
 Running log for the physical Ranger Mini 3.0 + xArm6 benchmark. Append-only, newest entry at the
 bottom. Deadline **2026-08-25**.
 
