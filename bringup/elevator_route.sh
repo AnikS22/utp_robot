@@ -93,24 +93,41 @@ press() {
     say "PRESS  '$query'"
     event press_start "$query"
     bash "$REPO/bringup/press_run.sh" $DRY --query "$query" || die "press chain failed on '$query'"
-
     event press_done "$query"
-    say "RETRACT and wait for the mux to SEE it"
+
+    # RETRACT WHILE DRIVING, instead of standing still until the arm is home.
+    #
+    # This used to fold the arm and then BLOCK until /safety/status reported arm_stowed, because
+    # the mux refused base motion with the arm out. That interlock is off now
+    # (config/safety.yaml require_arm_stowed: false, set deliberately for this task), so the wait
+    # buys nothing and costs the whole fold -- ~2.4 s at the current 45 deg/s, on a task whose
+    # entire problem is being inside the car before the doors close.
+    #
+    # So the fold is launched in the BACKGROUND and the caller drives on. wait_stow() below joins
+    # it when we actually need the arm home. Nothing is skipped: the fold still happens, still
+    # reports, and a failure is still surfaced -- just not in the critical path.
+    #
+    # WHAT THIS GIVES UP: with the arm swinging during a drive, nothing in software stops it
+    # meeting a door frame. There is no force sensor on this arm (get_ft_sensor_data answers zeros,
+    # collision_sensitivity is 0), so the e-stop is the protection. That is the operator's call and
+    # it is the same trade the interlock removal already made.
     if [ -n "$DRY" ]; then "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" || true; return 0; fi
-    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go || die "arm would not retract"
-    python3 - <<'PY' || die "arm_stowed never went true; the base will not be allowed to move"
-import rclpy, json, time, sys
-from rclpy.node import Node
-from std_msgs.msg import String
-rclpy.init(); n = Node("elev_stow"); got = []
-n.create_subscription(String, "/safety/status", lambda m: got.append(m.data), 10)
-t0 = time.time()
-while time.time() - t0 < 10:
-    rclpy.spin_once(n, timeout_sec=0.3)
-    if got and json.loads(got[-1])["gates"]["arm_stowed"]:
-        print("  arm_stowed confirmed by the mux"); sys.exit(0)
-print("  arm_stowed still false"); sys.exit(1)
-PY
+    say "RETRACT (in the background -- the next leg starts now)"
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go > /tmp/utp_stow_$$.log 2>&1 &
+    STOW_PID=$!
+}
+
+# Join the background fold. Call before anything that genuinely needs the arm home -- another
+# press, or the end of the route.
+wait_stow() {
+    [ -n "${STOW_PID:-}" ] || return 0
+    if wait "$STOW_PID"; then
+        echo "  arm folded (overlapped with the drive)"
+    else
+        echo "  WARNING: the background fold FAILED. Arm may still be extended." >&2
+        tail -3 /tmp/utp_stow_$$.log 2>/dev/null | sed 's/^/    /' >&2
+    fi
+    STOW_PID=""
 }
 
 # ---------------------------------------------------------------------------------- preflight
@@ -191,9 +208,11 @@ nav   lift_door_reverse   # back to the doors, so we reverse in rather than turn
 nav   car_facing_out      # in the car
 nav   car_panel           # square to the panel
 
+wait_stow
 press "the blue elevator button"
 
 nav   lift_door           # out
 
+wait_stow
 event route_complete ""
 say "ROUTE COMPLETE"

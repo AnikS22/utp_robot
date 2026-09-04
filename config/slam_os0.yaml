@@ -31,6 +31,29 @@ slam_toolbox:
     # by pointcloud_to_laserscan with min_height/max_height. The chassis is removed geometrically
     # by that height band plus min_laser_range below, so the old A1M8-era rear-sector filter and
     # Ackermann gate (/scan_mapping) are gone -- see archive/README.md.
+    # /scan_slam, not /scan. Measured 2026-09-04:
+    #     /ouster/scan    9.97 Hz   the driver's native LaserScan, a few kB
+    #     /ouster/points  2.66 Hz   3.1 MB per message, losing ~73% in DDS transport
+    #     /scan_filtered  4.39 Hz   what survives the cloud + pointcloud_to_laserscan
+    #     /scan_slam      8.40 Hz   /ouster/scan relayed to RELIABLE for this node
+    # The 3.1 MB cloud exists only to be flattened into a 2D scan, and it is the bottleneck. SLAM
+    # needs RATE above all: at ~2 Hz the matcher cannot follow a turn, the pose slides mid-rotation,
+    # and on 2026-09-03 that put the robot 1.85 m from where Nav2 reported it had arrived -- then it
+    # drove the wrong way and touched a wall. Nav2's costmaps stay on /scan, which is the 0.20-1.20 m
+    # HEIGHT BAND: the native ring is a single elevation and would miss a low obstacle, so the
+    # planner keeps the safer input while the matcher gets the faster one. Different inputs, on
+    # purpose.
+    # The relay is still required for QoS: the driver publishes BEST_EFFORT, this node subscribes
+    # RELIABLE, and incompatible QoS delivers zero messages with no error anywhere.
+    #   UTP_SCAN_IN=/ouster/scan UTP_SCAN_OUT=/scan_slam python3 bringup/scan_relay.py
+    # REVERTED to /scan on 2026-09-04, same day it was changed. /scan_slam carries the driver's
+    # native single-ring LaserScan at 8.4 Hz, which is far better RATE than the 3.5 Hz height-band
+    # scan -- but maps/elevator.* was BUILT from the height band, and a single ring at one elevation
+    # sees different geometry than a min-over-0.20-1.20 m projection. Matching a ring scan against a
+    # height-band map is comparing two different slices of the room. The rate was never the only
+    # thing that mattered; the scan has to be the same KIND the map was made from.
+    # The fast path is still worth having -- see the note below -- but it needs a map built from
+    # /ouster/scan to localize against, not this one.
     scan_topic: /scan
     use_map_saver: true
     mode: mapping #localization

@@ -19,7 +19,21 @@ ouster/os_driver:
     # a fixed layout regardless of the wire profile, and point_step went 16 -> 48 bytes, message
     # 1.05 -> 3.15 MB, /scan 6.4 -> 4.0 Hz. The UDP profile governs sensor->driver, not
     # driver->ROS. Do not retry this to save bandwidth; the throughput fix is composition.
-    udp_profile_lidar: 'RNG19_RFL8_SIG16_NIR16'
+    # RNG19_RFL8_SIG16_NIR16 -> RNG15_RFL8_NIR8 on 2026-09-04. THE CLOUD IS THE BOTTLENECK.
+    # 48 B/point x 512 x 128 = 3072 KB per message. Measured the same day: /ouster/points arrives
+    # at 2.66 Hz against the sensor's 10, and /scan -- the height-band projection that Nav2 and the
+    # saved map both depend on -- falls to 1.79-4.4 Hz. That is ~73% of messages lost in DDS
+    # transport, and it is the root cause of the 2026-09-03 failures: at ~2 Hz the scan matcher
+    # cannot follow a turn, so the pose slid mid-rotation, the robot ended up 1.85 m from where
+    # Nav2 reported it had arrived, and it drove into a wall.
+    # RNG15_RFL8_NIR8 is 16 B/point -> 1024 KB, one third the bytes, and it drops data this stack
+    # never reads: nothing here uses SIGNAL, and the 2D projection needs only range.
+    # Why not simply use the driver's native /ouster/scan, which already runs at 9.9 Hz: because
+    # maps/elevator.* was BUILT from the height band (min range over 0.20-1.20 m), and a single
+    # ring at one elevation sees a different slice of the room. Matching a ring scan against a
+    # height-band map put the robot in the wrong place. Fixing the transport keeps the map, keeps
+    # the obstacle semantics, and gets the rate.
+    udp_profile_lidar: 'RNG15_RFL8_NIR8'
     # The driver publishes base_link->os_sensor itself if these are left default, which would
     # place the sensor at the origin. bringup/lidar3d.sh publishes the real CAD mount pose
     # instead, so the driver is told to hang its own frames off os_sensor only.

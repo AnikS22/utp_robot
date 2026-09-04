@@ -28,6 +28,7 @@ requires ROS, and main() says so with the command that fixes it.
 from __future__ import annotations
 
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -37,8 +38,18 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "bringup"))
 
-IN_TOPIC = "/scan_filtered"
-OUT_TOPIC = "/scan"
+# Overridable so a SECOND relay can carry the driver's native /ouster/scan to SLAM without
+# disturbing the costmap chain. Measured 2026-09-04:
+#     /ouster/scan     9.97 Hz   native LaserScan, a few kB
+#     /ouster/points   2.66 Hz   3.1 MB per message (512 x 128 x 48 B), losing ~73% in DDS
+#     /scan_filtered   4.39 Hz   what survives the cloud + pointcloud_to_laserscan
+# The cloud is the bottleneck and it exists only to be flattened into a 2D scan. SLAM wants rate
+# above all -- at 2 Hz the matcher cannot follow a turn and the pose slides, which is what put the
+# robot 1.85 m from where Nav2 said it had arrived on 2026-09-03. The costmap wants the height
+# band, because the native ring is a single elevation and would miss a low obstacle. So they get
+# different inputs on purpose: SLAM the fast one, Nav2 the safe one.
+IN_TOPIC = os.environ.get("UTP_SCAN_IN", "/scan_filtered")
+OUT_TOPIC = os.environ.get("UTP_SCAN_OUT", "/scan")
 
 # ---------------------------------------------------------------------------------------------
 # SELF-OCCLUSION MASK -- the robot seeing its own arm, mast and chassis.

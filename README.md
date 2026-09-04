@@ -168,7 +168,58 @@ Tests need nothing but Python:
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/ -q     # 243 passed
 ```
 
-With hardware, four terminals, left running:
+### Bring-up: one command
+
+```bash
+bash bringup/stack.sh            # brings everything up, restarts what is wedged
+bash bringup/stack.sh --status   # check only, starts nothing
+bash bringup/stack.sh --no-nav   # sensors + safety + slam only
+```
+
+`session.sh` brings the layers up in order and **stops at the first gate that fails**, so a morning
+with four stale components is four serial fix-and-re-run cycles. `stack.sh` starts everything it can
+in one pass, and probes each piece by **measured topic rate** with a counting subscriber rather than
+by whether a node exists — which is the check that missed both of 2026-09-04's faults. Anything
+publishing nothing is killed by verified PID and restarted.
+
+It ends with a table of every component and, underneath it, a `WHY` block that names the actual
+cause rather than the layer the symptom appeared in — "there is no `odom->base_link`, so slam cannot
+publish `map->odom`", not "localization is wrong".
+
+`MAP_NAME=elevator` (the default) selects the map to localize into.
+
+### Nine things that stop a bring-up
+
+Every one of these cost real time on 2026-09-04 because nothing checked for it. The right-hand
+column is what `stack.sh` now does about it.
+
+| | what goes wrong | how it presents | `stack.sh` |
+|---|---|---|---|
+| 1 | **Stale Ouster driver** holding the UDP socket across a robot power cycle | `ros2 node list` shows `/ouster/os_driver`; `/ouster/points` is 0.00 Hz | detects by rate, kills, restarts `lidar3d.sh` |
+| 2 | **The scan chain is not restarted with the lidar** — `lidar3d.sh` starts only the driver + static TF | lidar healthy, `/scan_filtered` and `/scan` still dead | probes both separately, restarts `pointcloud_to_laserscan` and `scan_relay.py` |
+| 3 | **Chassis driver absent**, so there is no `/odom` at all | "localization is wrong in RViz" — three layers from the cause: no `/odom` → no `odom->base_link` → slam_toolbox cannot publish `map->odom` | probes `/odom` + the TF, restarts, and the `WHY` block names the chassis |
+| 4 | **`ranger_bringup` not found** when launched from a bare `source /opt/ros/jazzy/setup.bash` — the overlay lives in `ros2_ws/install` | a misleading "package not found", one wasted launch cycle | sources `bringup/env.sh` itself; **always** do the same |
+| 5 | **slam_toolbox comes up UNCONFIGURED** — it is a lifecycle node | `/map` never publishes and everything downstream looks broken | runs `ros2 lifecycle set /slam_toolbox configure`, then `activate` |
+| 6 | **Two Nav2 stacks, neither activated.** Repeated `ros2 launch` calls leave two `lifecycle_manager` instances contending for the same nodes, and the activation never completes | every goal comes back **"rejected in 0.0s"** and RViz shows an empty world. Silent three ways at once: `ros2 node list` shows a healthy-looking Nav2; `ros2 action list` **does** show `/navigate_to_pose`, because the action server is advertised *before* activation; and the empty RViz reads as an RViz config problem. `ros2 lifecycle get /bt_navigator` → `inactive [2]` is the only check that sees it | counts `bt_navigator`/`planner_server` processes and tears **all** of them down before starting one, then requires `bt_navigator`, `planner_server` and `controller_server` to report **active** — not merely present |
+| 7 | **No initial pose.** `config/slam_os0.yaml` `map_start_pose` is an *atrium* coordinate | map loads, no `map->odom`, robot is nowhere | detects and says so — **you** set it: RViz 2D Pose Estimate (localization mode only) or `python3 bringup/relocalise.py` |
+| 8 | **CAN authority.** `can0` can be UP while the chassis is still in RC mode, discarding every computer command *silently* | odom and the mux both look perfectly healthy; the robot does not move | detects via `chassis_mode.py` and says so — **you** flip SWB up and run `python3 bringup/claim_can.py` |
+| 9 | **RViz shows nothing.** `os0_nav.rviz` displays only the Nav2 costmaps — no `/map`, no `/waypoint_markers` — so before Nav2 starts it renders an empty world | "the map did not load" | not touched. Use `nav2_bringup/elevator.rviz`, and set **Color Transformer: FlatColor** on the LaserScan — RViz defaults to colour-by-intensity and draws everything white |
+
+**Read the goal status word — the three are not synonyms.** `rejected` means the action server would
+not accept the goal at all, which is almost always lifecycle or config (row 6), not the world;
+`aborted` means it tried and failed; `blocked` in `bringup/nav2_goto.py` means Nav2 `STATUS_ABORTED`
+specifically, and is the verdict that starts reason → ground → press.
+
+**When a component looks wrong, check for duplicates before starting another one.** Row 6 is one of
+three instances of the same shape on 2026-09-04: two Nav2 stacks, two RealSense drivers racing for
+the USB device (the loser logs "No RealSense devices were found"), and two `waypoint_markers`
+publishers on one topic. A second `ros2 launch` is not a harmless retry.
+
+Two more that read as errors and are not: `sudo ip link set can0 up` returning **"device busy"** means
+can0 is *already* up; and touching the RC transmitter sticks reclaims RC authority at any moment,
+including mid-run.
+
+The same four layers by hand, if you want each driver's output in its own terminal:
 
 ```bash
 ros2 launch ranger_bringup ranger_mini_v3.launch.py   # 1  chassis

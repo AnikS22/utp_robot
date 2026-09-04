@@ -141,8 +141,17 @@ echo
 echo "=============================================================="
 echo " 5/6  REACH     $STANDOFF mm marker standoff, then retreat"
 echo "=============================================================="
+# UTP_STEP_MM: one motion instead of several. approach_target.py splits the reach into segments of
+# STEP_MM (60 mm), which is why a press visibly walks in. The stepping buys diagnosability -- a
+# fault stops at a known pose, each segment stays near-straight in tool space instead of letting
+# the IK route the elbow, and joint headroom is re-checked before every commit. On a target that is
+# not yet proven that is worth having. On the lift call button, which has now been pressed
+# repeatedly, it is just slow, and the lift task is on a clock: press, then be inside the car
+# before the doors close.
+# UNSET, THIS IS BYTE-IDENTICAL TO THE ADA CHAIN. Set UTP_STEP_MM=1000 for a single move.
+STEP_ARG=""; [ -n "${UTP_STEP_MM:-}" ] && STEP_ARG="--step-mm $UTP_STEP_MM"
 python3 "$REPO/bringup/approach_target.py" --capture "$CAP" $MODE \
-        --min-standoff "$STANDOFF" $EXTRA
+        --min-standoff "$STANDOFF" $STEP_ARG $EXTRA
 
 if [ -z "$EXTRA" ]; then
     echo
