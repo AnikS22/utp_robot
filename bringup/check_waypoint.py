@@ -179,7 +179,7 @@ def main() -> int:
 
     for n in names:
         w = wps[n]
-        mp = str(w.get("map_name", "elevator"))
+        mp = str(w.get("map_name", "floor1"))
         if mp not in cache:
             try:
                 cache[mp] = load_map(mp)

@@ -25,12 +25,16 @@ floors:
 
   # -------------------------------------------------------------------------------------------
   "1":
-    description: >
-      Ground floor lift lobby AND the ADA door area, in ONE map: maps/floor1.*, recorded
-      2026-09-05 as a single continuous drive. NOT YET RECORDED AT THE TIME OF THIS EDIT -- this
-      entry is written ahead of the drive, so floor_swap.py --check FAILS until the map is saved
-      and the five f1_ waypoints below are recorded. That failure is correct fail-closed
-      behaviour and must NOT be "fixed" by pointing this floor back at the old map.
+      description: >
+        Ground floor lift lobby AND the ADA door area, in ONE map: maps/floor1.* -- 836x829 at
+        0.05 m, 9918 occupied cells, saved 2026-09-05 from a SINGLE CONTINUOUS DRIVE, with a full
+        27 MB posegraph and 9.5 MB .data. It is a MAP, not a picture.
+
+        NOTHING FROM THE OLD FLOOR 1 IS USED ANY MORE. The five old unsuffixed waypoints have been
+        DELETED from maps/waypoints.yaml, and every script default -- session.sh, stack.sh,
+        check_waypoint.py, elevator_route.sh -- now names floor1 and the f1_ waypoints. The f1_
+        poses below are NOT YET RECORDED, so floor_swap.py --check fails until they are. That
+        failure is correct fail-closed behaviour, not something to work around.
 
     # WHY FLOOR 1 IS BEING RE-MAPPED, AND WHY IT HAD TO BE ONE CONTINUOUS DRIVE.
     #

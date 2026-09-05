@@ -56,11 +56,36 @@ IN_TOPIC = os.environ.get("UTP_ART_IN", "/ouster/points")
 OUT_TOPIC = os.environ.get("UTP_ART_OUT", "/ouster/points_clean")
 MAX_RANGE = float(os.environ.get("UTP_ART_MAX_RANGE", 1.4))
 MAX_REFL = int(os.environ.get("UTP_ART_MAX_REFL", 1))
+
+# OPTIONAL HEIGHT-BAND CROP, off unless UTP_ART_ZMIN/ZMAX are both set.
+#
+# WHY IT BELONGS HERE AND NOT ONLY IN pointcloud_to_laserscan. The OS0 sends 512 x 128 = 65,536
+# points at 48 B each: a 3.1 MB message, ten times a second. Measured 2026-09-05, the filter's own
+# log showed it processing and PUBLISHING every cloud while a subscriber a process away received
+# 0.12 Hz of them -- the clouds were being produced and then lost in transport, and every stage
+# downstream sat at exactly 0.00 Hz looking broken. Nothing was broken; the messages were too big.
+#
+# p2l already discards everything outside the 0.20-1.20 m band, so cropping here throws away
+# nothing it would have kept -- it just does it BEFORE the bytes cross a DDS boundary instead of
+# after. A 1 m band out of a 128-beam sensor is roughly a fifth of the points.
+#
+# Z IS IN THE CLOUD'S OWN FRAME (os_lidar), not base_link. UTP_ART_Z_OFFSET is added to each z
+# before comparing, so the bounds can be written in base_link terms. That substitution is only
+# valid because base_link->os_sensor is a PURE TRANSLATION on this robot (config/ouster.yaml mount
+# rpy is 0,0,0). If the sensor is ever tilted, this crop becomes wrong and must move back into a
+# proper TF transform -- which is exactly why it is opt-in rather than the default.
+_zmin = os.environ.get("UTP_ART_ZMIN")
+_zmax = os.environ.get("UTP_ART_ZMAX")
+Z_MIN = float(_zmin) if _zmin else None
+Z_MAX = float(_zmax) if _zmax else None
+Z_OFFSET = float(os.environ.get("UTP_ART_Z_OFFSET", 0.0))
 LOG_PERIOD_S = 5.0
 
 
 def filter_cloud(data: bytes, point_step: int, n_points: int, off_x: int, off_refl: int,
-                 max_range: float, max_refl: int) -> tuple[bytearray, int]:
+                 max_range: float, max_refl: int, off_z: int | None = None,
+                 z_min: float | None = None, z_max: float | None = None,
+                 z_offset: float = 0.0) -> tuple[bytearray, int]:
     """Return (kept_bytes, n_dropped). Pure bytes in, pure bytes out -- testable without ROS.
 
     VECTORISED ON PURPOSE. The first version looped in Python over every point. The OS0 sends
@@ -81,6 +106,12 @@ def filter_cloud(data: bytes, point_step: int, n_points: int, off_x: int, off_re
         near = (xy[:, 0] * xy[:, 0] + xy[:, 1] * xy[:, 1]) < (max_range * max_range)
     finite = xy[:, 0] == xy[:, 0]          # NaN x means no return; leave those to the projection
     drop = near & finite & (refl <= max_refl)
+    if off_z is not None and z_min is not None and z_max is not None:
+        z = np.ascontiguousarray(buf[:, off_z:off_z + 4]).view(np.float32).reshape(n) + z_offset
+        # Drop only points we can actually place: a NaN z is no return, and is left to the
+        # projection to handle exactly as it did before this crop existed.
+        z_ok = (z == z) & (z >= z_min) & (z <= z_max)
+        drop = drop | ~z_ok
     if not drop.any():
         return bytearray(data[:n * point_step]), 0
     kept = buf[~drop]
@@ -111,7 +142,8 @@ def main() -> int:
             return
         n_pts = msg.width * msg.height
         kept, dropped = filter_cloud(bytes(msg.data), msg.point_step, n_pts,
-                                     off["x"], off["reflectivity"], MAX_RANGE, MAX_REFL)
+                                     off["x"], off["reflectivity"], MAX_RANGE, MAX_REFL,
+                                     off.get("z"), Z_MIN, Z_MAX, Z_OFFSET)
         out = PointCloud2()
         out.header = msg.header
         out.fields = msg.fields
@@ -136,7 +168,8 @@ def main() -> int:
                 f"({state['dropped']} total) with range < {MAX_RANGE} m and reflectivity <= {MAX_REFL}")
 
     node.create_subscription(PointCloud2, IN_TOPIC, on_cloud, qos_profile_sensor_data)
-    print(f"  {IN_TOPIC} -> {OUT_TOPIC}: dropping range < {MAX_RANGE} m AND reflectivity <= {MAX_REFL}",
+    print(f"  {IN_TOPIC} -> {OUT_TOPIC}: dropping range < {MAX_RANGE} m AND reflectivity <= {MAX_REFL}"
+          + (f"; keeping z+{Z_OFFSET} in [{Z_MIN}, {Z_MAX}]" if Z_MIN is not None else ""),
           flush=True)
     try:
         rclpy.spin(node)

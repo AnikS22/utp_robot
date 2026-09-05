@@ -99,11 +99,29 @@ def check_can(rep):
             + ("" if rate > 100 else "  <- chassis silent: powered off, or CAN cable adrift"))
 
 
-def check_arm(rep, ip="192.168.1.221"):
+def check_arm(rep, ip="192.168.1.221", required=True):
+    """Is the arm there, and does it have to be?
+
+    NOT EVERY SESSION USES THE ARM. Mapping and nav-only work run with it stowed and POWERED OFF,
+    which is the normal state -- and reporting that as a CRITICAL failure blocks a bring-up on a
+    device the session never touches. (That is exactly what session.sh's step-0 gate did for every
+    session type.) So an unreachable arm is a WARNING unless the caller says the arm is needed.
+
+    What it costs, said out loud rather than hidden: nothing can press anything, and the
+    arm_stowed gate has no MEASURED evidence, so it fail-closes and the base refuses autonomous
+    twists. That last one is the expensive half -- it presents as "Nav2 planned and the robot
+    did not move".
+    """
     ok = subprocess.run(["ping", "-c1", "-W1", ip],
                         capture_output=True).returncode == 0
     if not ok:
-        rep.add("xArm6", False, f"{ip} unreachable")
+        rep.add("xArm6", False,
+                f"{ip} unreachable" + ("" if required else
+                                       "  <- not needed for this session (mapping/nav). Nothing "
+                                       "can press, and arm_stowed has no measured evidence: if no "
+                                       "arm is fitted or powered, start the safety layer with "
+                                       "UTP_ARM_BACKEND=absent and record that against any trial."),
+                CRITICAL if required else WARN)
         return
     try:
         sys.path.insert(0, os.path.expanduser(
@@ -161,18 +179,24 @@ def check_topics(rep):
     script = r'''
 import sys, rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import LaserScan, CameraInfo
+from rclpy.qos import qos_profile_sensor_data, QoSProfile, ReliabilityPolicy, HistoryPolicy
+from sensor_msgs.msg import LaserScan, CameraInfo, PointCloud2
 from nav_msgs.msg import Odometry
 from tf2_msgs.msg import TFMessage
+_REL = QoSProfile(depth=5, reliability=ReliabilityPolicy.RELIABLE, history=HistoryPolicy.KEEP_LAST)
 rclpy.init(); n = Node("utp_health")
-c = {"scan":0,"cam":0,"odom":0}; edges=set(); moving=0
+c = {"scan":0,"cam":0,"odom":0,"points":0,"scan_nav":0}; edges=set(); moving=0
 def od(m):
     global moving
     c["odom"] += 1
     v = m.twist.twist
     if abs(v.linear.x)+abs(v.linear.y)+abs(v.angular.z) > 1e-6: moving += 1
-n.create_subscription(LaserScan,"/scan",lambda m:c.__setitem__("scan",c["scan"]+1),qos_profile_sensor_data)
+# /scan and /scan_nav are subscribed RELIABLE, exactly as slam_toolbox and Nav2's costmaps do.
+# A BEST_EFFORT probe reads them green even when the RELIABLE consumers are getting nothing --
+# and a QoS mismatch delivers zero messages with no error anywhere.
+n.create_subscription(LaserScan,"/scan",lambda m:c.__setitem__("scan",c["scan"]+1),_REL)
+n.create_subscription(LaserScan,"/scan_nav",lambda m:c.__setitem__("scan_nav",c["scan_nav"]+1),_REL)
+n.create_subscription(PointCloud2,"/ouster/points",lambda m:c.__setitem__("points",c["points"]+1),qos_profile_sensor_data)
 n.create_subscription(CameraInfo,"/mast_cam/color/camera_info",lambda m:c.__setitem__("cam",c["cam"]+1),qos_profile_sensor_data)
 n.create_subscription(Odometry,"/odom",od,10)
 n.create_subscription(TFMessage,"/tf",lambda m:[edges.add((t.header.frame_id,t.child_frame_id)) for t in m.transforms],10)
@@ -184,25 +208,54 @@ n.create_subscription(TFMessage,"/tf",lambda m:[edges.add((t.header.frame_id,t.c
 from rclpy.qos import QoSProfile, DurabilityPolicy, HistoryPolicy
 _qs = QoSProfile(depth=100, durability=DurabilityPolicy.TRANSIENT_LOCAL, history=HistoryPolicy.KEEP_LAST)
 n.create_subscription(TFMessage,"/tf_static",lambda m:[edges.add((t.header.frame_id,t.child_frame_id)) for t in m.transforms],_qs)
+# DISCOVERY FIRST, THEN COUNT. A just-created node has not yet discovered the publishers, so the
+# opening seconds of any window are empty by construction: counting from t=0 measures DDS
+# discovery, not rate, and that is what produced 0.00 Hz readings for demonstrably healthy topics
+# twice on 2026-09-05. Spin 3 s, RESET, then measure. The latched /tf_static edges collected
+# during discovery are deliberately kept -- they arrive exactly once, at discovery.
 t0=n.get_clock().now().nanoseconds
-while n.get_clock().now().nanoseconds-t0 < 5e9: rclpy.spin_once(n,timeout_sec=0.2)
+while n.get_clock().now().nanoseconds-t0 < 3e9: rclpy.spin_once(n,timeout_sec=0.05)
+for _k in c: c[_k]=0
+moving=0
+t0=n.get_clock().now().nanoseconds
+while n.get_clock().now().nanoseconds-t0 < 5e9: rclpy.spin_once(n,timeout_sec=0.05)
 d=(n.get_clock().now().nanoseconds-t0)/1e9
-print(f"{c['scan']/d:.1f} {c['cam']/d:.1f} {c['odom']/d:.1f} {moving} " +
+print(f"{c['scan']/d:.1f} {c['cam']/d:.1f} {c['odom']/d:.1f} {moving} "
+      f"{c['points']/d:.1f} {c['scan_nav']/d:.1f} " +
       ",".join(f"{p}>{ch}" for p,ch in sorted(edges)))
 n.destroy_node(); rclpy.shutdown()
 '''
     try:
         r = subprocess.run([sys.executable, "-c", script], capture_output=True,
                            text=True, timeout=60)
-        parts = r.stdout.strip().split(None, 4)
+        parts = r.stdout.strip().split(None, 6)
         scan, cam, odom, moving = float(parts[0]), float(parts[1]), float(parts[2]), int(parts[3])
-        edges = parts[4] if len(parts) > 4 else ""
+        points, scan_nav = float(parts[4]), float(parts[5])
+        edges = parts[6] if len(parts) > 6 else ""
     except Exception as e:
         rep.add("ros topics", False, f"could not sample: {e}")
         return
 
+    # The chain, in order, so the FIRST red row is the cause and not a symptom three layers down:
+    #   /ouster/points -> (cloud_artifact_filter) -> /scan_filtered -> /scan and /scan_nav
+    rep.add("/ouster/points", points > 1.0, f"{points:.1f} Hz (expect ~6.5)"
+            + ("" if points > 1.0 else "  <- no cloud. Driver down, a stale process holding the "
+                                       "UDP socket across a power cycle, or the udp_dest trap "
+                                       "(the sensor answers HTTP 'RUNNING' while streaming to "
+                                       "another host). bash bringup/lidar3d.sh"))
     rep.add("/scan", scan > 3.0, f"{scan:.1f} Hz (expect ~6.5)"
-            + ("" if scan > 3.0 else "  <- lidar node alive but silent? restart bringup/lidar3d.sh"))
+            + ("" if scan > 3.0 else "  <- if /ouster/points above is healthy, look at the TF row "
+                                     "base_link>os_lidar: without it pointcloud_to_laserscan "
+                                     "cannot transform into base_link and DROPS EVERY CLOUD in "
+                                     "silence, leaving /scan at exactly 0.0 Hz with every node "
+                                     "reporting fine. Otherwise: bash bringup/lidar3d.sh"))
+    # Nav2's costmaps read /scan_nav, not /scan. WARN, not CRITICAL: an odom-frame session that
+    # never starts Nav2 is legitimately without it.
+    rep.add("/scan_nav", scan_nav > 1.0, f"{scan_nav:.1f} Hz"
+            + ("" if scan_nav > 1.0 else "  <- Nav2's global AND local costmaps read this topic. "
+                                         "Without it Nav2 comes up, plans over the static map, "
+                                         "and cannot see a single obstacle it did not already "
+                                         "know about."), WARN)
     # A camera we deliberately did not start (navigation-only bring-up) is INFO, not CRITICAL.
     _cam_crit = not (os.environ.get("UTP_NO_CAMERA") == "1")
     rep.add("camera", cam > 20.0 or not _cam_crit, f"{cam:.1f} Hz on camera_info (expect ~30)"
@@ -216,9 +269,18 @@ n.destroy_node(); rclpy.shutdown()
                 f"{moving} of {int(odom*5)} samples non-zero"
                 + ("" if moving else "  <- all zeros. Correct if the robot is stationary; if it "
                                      "is MOVING, the CAN link is dead"), INFO)
-    for want in ("odom>base_link", "map>odom", "base_link>os_sensor",
+    for want in ("odom>base_link", "map>odom", "base_link>os_sensor", "os_sensor>os_lidar",
                  "base_link>mast_cam_link"):
         detail = "present" if want in edges else "MISSING"
+        if want == "base_link>os_sensor" and want not in edges:
+            # THE SILENT KILLER. This edge comes from bringup/lidar3d.sh reading the `mount` block
+            # in config/ouster.yaml, and from NOTHING ELSE -- not from the Ouster driver. Launch
+            # ouster_ros/driver.launch.py directly and the cloud flows while this never appears;
+            # pointcloud_to_laserscan then cannot transform into target_frame base_link and drops
+            # every cloud without a word. /scan reads exactly 0.0 Hz and nothing is logged.
+            detail += "  <- p2l will DROP EVERY CLOUD (target_frame base_link). It is published " \
+                      "by bringup/lidar3d.sh from config/ouster.yaml's mount block, never by " \
+                      "the driver. Start the lidar with: bash bringup/lidar3d.sh"
         if want == "odom>base_link" and want not in edges:
             # ranger_mini_v3.launch.py sets publish_odom_tf: 0, so this edge is absent BY
             # CONFIGURATION. Nothing in the odometry-driven stack needs it -- route_run,
@@ -363,10 +425,16 @@ def main() -> int:
     ap.add_argument("--watch", action="store_true")
     ap.add_argument("--skip-camera", action="store_true",
                     help="the camera was deliberately not started; report INFO, not CRITICAL")
-    ap.add_argument("--skip-arm", action="store_true")
+    ap.add_argument("--skip-arm", action="store_true",
+                    help="do not talk to the arm at all")
+    ap.add_argument("--arm-optional", action="store_true",
+                    help="the arm is not part of this session (mapping / nav-only): report an "
+                         "unreachable arm as a WARNING, not a CRITICAL failure. Implied by "
+                         "UTP_NO_ARM=1.")
     a = ap.parse_args()
     if getattr(a, "skip_camera", False):
         os.environ["UTP_NO_CAMERA"] = "1"
+    arm_required = not (a.arm_optional or os.environ.get("UTP_NO_ARM") == "1")
 
     while True:
         rep = Report()
@@ -375,7 +443,7 @@ def main() -> int:
         check_usb(rep)
         check_can(rep)
         if not a.skip_arm:
-            check_arm(rep)
+            check_arm(rep, required=arm_required)
         check_chassis_mode(rep)
         check_topics(rep)
         check_gates(rep)

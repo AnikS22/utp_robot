@@ -11,12 +11,12 @@
 #
 # The waypoints live on the 'elevator' map (maps/elevator.{pgm,yaml,posegraph,data}) and were
 # recorded by the operator on 2026-09-01:
-#     call_button        outside the lift, facing the call plate
-#     lift_door_reverse  outside, BACK to the doors -- we reverse in, because rotating inside a
+#     f1_call_button        outside the lift, facing the call plate
+#     f1_lift_door_reverse  outside, BACK to the doors -- we reverse in, because rotating inside a
 #                        2 m car is what confused Nav2 the first time
-#     car_facing_out     inside the car, facing the doors
-#     car_panel          inside, square to the button panel
-#     lift_door          back outside the doors -- the exit
+#     f1_car_facing_out     inside the car, facing the doors
+#     f1_car_panel          inside, square to the button panel
+#     f1_lift_door          back outside the doors -- the exit
 #
 # Run it:   bash bringup/elevator_route.sh            (real)
 #           bash bringup/elevator_route.sh --dry-run  (plans and grounds; SEE THE CAVEAT)
@@ -184,12 +184,12 @@ sys.exit(0 if (g["arm_stowed"] and not g["estop_latched"]) else 1)
 PY
 
 # THE WAYPOINTS THIS ROUTE WILL ACTUALLY DRIVE TO. A checker that nothing calls is not a check.
-# check_waypoint.py samples the padded 0.72 x 0.50 m footprint against the map; car_panel was
+# check_waypoint.py samples the padded 0.72 x 0.50 m footprint against the map; f1_car_panel was
 # recorded with 18 lethal cells under the robot while its centre cell read free, and MPPI
 # (consider_footprint: true, collision_cost 1e6) can never terminate a trajectory there. That is a
 # thirty-second refusal here instead of an unexplained abort at the lift.
 say "0b PREFLIGHT -- waypoint footprints"
-python3 "$REPO/bringup/check_waypoint.py" call_button lift_door_reverse car_facing_out car_panel lift_door \
+python3 "$REPO/bringup/check_waypoint.py" f1_call_button f1_lift_door_reverse f1_car_facing_out f1_car_panel f1_lift_door \
     || die "a waypoint on this route is not drivable as recorded. Re-record it and check again."
 
 say "0c PREFLIGHT -- localization fit"
@@ -201,7 +201,7 @@ if [ -z "$DRY" ]; then
     fitline="$(timeout 60 python3 "$REPO/bringup/relocalise.py" --check 2>&1 | grep -oE 'fit [0-9.]+%' | tail -1 || true)"
     fitpct="${fitline#fit }"; fitpct="${fitpct%\%}"
     if [ -z "$fitpct" ]; then
-        die "could not score the localization fit. Is slam_toolbox up in LOCALIZATION mode on 'elevator'?"
+        die "could not score the localization fit. Is slam_toolbox up in LOCALIZATION mode on 'floor1'?"
     fi
     awk -v f="$fitpct" 'BEGIN{exit !(f < 60)}' && die "localization fit is ${fitpct}% -- the robot does
         not know where it is, and every waypoint below is in a frame it is not actually in.
@@ -213,7 +213,7 @@ if [ -z "$DRY" ]; then
 fi
 
 # ---------------------------------------------------------------------------------- the route
-nav   call_button
+nav   f1_call_button
 # ANCHOR ON THE TAPE, NOT ON THE WORD "BUTTON". Measured 2026-09-03: this query as
 # "the elevator call button on the wall" grounded the SILVER PANEL at score 0.3859 -- inside the
 # band where every known-bad grounding in this project sits (fire-alarm cover 0.397, arm-in-frame
@@ -239,22 +239,22 @@ if [ -z "$DRY" ]; then
     fi
 fi
 
-nav   lift_door_reverse   # back to the doors, so we reverse in rather than turn around inside
+nav   f1_lift_door_reverse   # back to the doors, so we reverse in rather than turn around inside
 # STRAIGHT TO THE PANEL, NO STAGING POSE INSIDE THE CAR.
-# car_facing_out faces the doors (+58 deg) while any panel pose faces the panel (~0 deg), so the
-# leg between them is a PURE SIDESTEP -- measured lateral/distance 1.00 for the old car_panel and
+# f1_car_facing_out faces the doors (+58 deg) while any panel pose faces the panel (~0 deg), so the
+# leg between them is a PURE SIDESTEP -- measured lateral/distance 1.00 for the old f1_car_panel and
 # 0.97 for the re-recorded one. nav2_params motion_model is DiffDrive, so MPPI never emits
 # linear.y: to move 0.26 m sideways it must spin ~90 deg, creep, and spin back, inside a 2 m box.
 # That is what "trying to position itself in front of the button is rough" was, and no retry or
-# tuning fixes it. car_facing_out was only ever a staging pose, and Nav2 has now been shown to
+# tuning fixes it. f1_car_facing_out was only ever a staging pose, and Nav2 has now been shown to
 # drive into the car in a single leg -- so we go straight to the pose we actually want and the
 # strafe leg stops existing.
-nav   car_panel           # into the car and square to the panel, one leg
+nav   f1_car_panel           # into the car and square to the panel, one leg
 
 wait_stow
 press "the blue elevator button"
 
-nav   lift_door           # out
+nav   f1_lift_door           # out
 
 wait_stow
 event route_complete ""

@@ -32,7 +32,7 @@ set -uo pipefail            # NOT -e: this script's whole job is to continue pas
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO/bringup/env.sh" >/dev/null 2>&1 || { echo "env.sh failed"; exit 1; }
-MAP_NAME="${MAP_NAME:-elevator}"
+MAP_NAME="${MAP_NAME:-floor1}"
 
 # OPTIONAL SEED for localization, as "x,y,yaw_radians". Empty by default, which keeps the previous
 # behaviour byte for byte: slam_toolbox comes up with no pose and relocalise.py does a global search.

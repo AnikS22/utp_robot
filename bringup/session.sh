@@ -63,9 +63,22 @@ IFACE=$(ip -brief link show | awk '/^enx/{print $1; exit}')
 [ -n "$IFACE" ] || die "no enx* USB-ethernet interface"
 ip -brief link show "$IFACE" | grep -q NO-CARRIER && \
   die "$IFACE NO-CARRIER. That one cable carries the lidar (.119), the xArm (.221) AND the router. Reseat, then strain-relieve it."
-for a in 192.168.1.119 192.168.1.221 192.168.1.1; do
+# THE LIDAR AND THE ROUTER ARE FATAL. THE ARM IS NOT.
+#
+# This loop used to `die` on all three, so a nav-only or mapping-only session was blocked outright
+# whenever the xArm was powered off -- which is the NORMAL state for that work. On 2026-09-05 it
+# stopped a floor-1 mapping drive dead at step 0/6 with "192.168.1.221 unreachable", on a session
+# that never touches the arm. Gating work on a device it does not use is how a safety check turns
+# into an obstacle and gets bypassed wholesale.
+#
+# Set UTP_NEED_ARM=1 for a session that presses buttons; then the arm is fatal again.
+for a in 192.168.1.119 192.168.1.1; do
   ping -c1 -W1 "$a" >/dev/null 2>&1 || die "$a unreachable"
 done
+if ! ping -c1 -W1 192.168.1.221 >/dev/null 2>&1; then
+  [ "${UTP_NEED_ARM:-0}" = "1" ] && die "192.168.1.221 (xArm) unreachable and UTP_NEED_ARM=1"
+  echo "  NOTE: xArm (192.168.1.221) unreachable -- continuing, this session does not need it."
+fi
 echo "  link ok ($IFACE)"
 
 # THE USB PHYSICAL LAYER. Added 2026-09-01 after an evening lost to it.
@@ -305,7 +318,7 @@ fi
 # destroyed by a test fixture and only the grid came back from git.
 # tests/test_stack_wiring.py asserts this equals the waypoints' map_name; it was failing on the
 # shipped value, which is exactly what it exists to catch.
-MAP_NAME=${MAP_NAME:-elevator}
+MAP_NAME=${MAP_NAME:-floor1}
 start_nav() {
   say "5/6  localization + Nav2 on the SAVED map '$MAP_NAME'"
   [ -f "maps/$MAP_NAME.yaml" ] || die "maps/$MAP_NAME.yaml not found. Make one: bash bringup/session.sh map"
