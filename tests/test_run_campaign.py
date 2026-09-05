@@ -44,14 +44,24 @@ class FakeRec(dict):
     """TrialRecord stand-in: the campaign treats a dict as its __dict__."""
 
 
-def _install_fakes(monkeypatch, *, world, trial_results, goto_rc=0, calls=None):
+def _install_fakes(monkeypatch, *, world, trial_results, tmp_path, goto_rc=0, calls=None,
+                    start_frame="odom"):
     calls = calls if calls is not None else {}
     calls.setdefault("goto", [])
     calls.setdefault("trials", 0)
 
     mod_wp = types.ModuleType("waypoints")
-    mod_wp.load = lambda: {"start": {"x": 0, "y": 0, "yaw": 0}}
+    mod_wp.load = lambda: {"start": {"x": 0, "y": 0, "yaw": 0, "frame": start_frame}}
     monkeypatch.setitem(sys.modules, "waypoints", mod_wp)
+
+    # run_campaign.py's return-to-start leg re-reads the waypoints FILE directly (rather than
+    # going through waypoints.load(), the seam faked above) to learn `start`'s frame -- see
+    # run_campaign.py's "NAV2 FOR A MAP-FRAME START, waypoints.py only for an odom one" comment.
+    # Point that direct read at an isolated file instead of the live maps/waypoints.yaml, whose
+    # own `start` entry (if any) belongs to the operator's current session, not this test.
+    store = tmp_path / "test_waypoints.yaml"
+    store.write_text(f"start:\n  frame: {start_frame}\n  x: 0\n  y: 0\n  yaw: 0\n")
+    monkeypatch.setenv("UTP_WAYPOINTS", str(store))
 
     mod_rw = types.ModuleType("ros_world")
     mod_rw.RosWorld = lambda *a, **k: world
@@ -131,7 +141,7 @@ def _records(p: Path):
 # --------------------------------------------------------------------------- tests
 def test_happy_path_writes_one_record_per_trial(monkeypatch, tmp_path):
     w = FakeWorld()
-    rc, calls = _install_fakes(monkeypatch, world=w,
+    rc, calls = _install_fakes(monkeypatch, world=w, tmp_path=tmp_path,
                                trial_results=[{"success": True, "failure_category": None}])
     monkeypatch.setattr(sys, "argv", _argv(tmp_path))
     assert rc.main() == 0
@@ -146,7 +156,7 @@ def test_each_trial_gets_its_own_capture_prefix(monkeypatch, tmp_path):
     """Frames are named {prefix}_{n:03d} and n resets per trial; a shared prefix silently
     overwrites earlier trials' evidence while every record still points at a real path."""
     w = FakeWorld()
-    rc, _ = _install_fakes(monkeypatch, world=w,
+    rc, _ = _install_fakes(monkeypatch, world=w, tmp_path=tmp_path,
                            trial_results=[{"success": True, "failure_category": None}])
     monkeypatch.setattr(sys, "argv", _argv(tmp_path))
     rc.main()
@@ -157,7 +167,7 @@ def test_return_to_start_is_not_a_dry_run(monkeypatch, tmp_path):
     """`waypoints.py goto` prints what it WOULD do unless --go is passed. Without it the robot
     never returns, and every drift residual is measured against a robot that did not move."""
     w = FakeWorld()
-    rc, calls = _install_fakes(monkeypatch, world=w,
+    rc, calls = _install_fakes(monkeypatch, world=w, tmp_path=tmp_path,
                               trial_results=[{"success": True, "failure_category": None}])
     monkeypatch.setattr(sys, "argv", _argv(tmp_path))
     rc.main()
@@ -170,7 +180,7 @@ def test_return_to_start_uses_deadman_gated_mux_source(monkeypatch, tmp_path):
     """Campaign return is autonomous motion and must not use waypoints.py's manual teleop
     default, which deliberately remains available without the software deadman."""
     w = FakeWorld()
-    rc, calls = _install_fakes(monkeypatch, world=w,
+    rc, calls = _install_fakes(monkeypatch, world=w, tmp_path=tmp_path,
                               trial_results=[{"success": True, "failure_category": None}])
     monkeypatch.setattr(sys, "argv", _argv(tmp_path))
     rc.main()
@@ -187,7 +197,7 @@ def test_drift_is_measured_against_the_anchor_not_the_previous_trial(monkeypatch
     w.poses = [FakePose(0, 0, 0), FakePose(0.05, 0, 0),
                FakePose(0, 0, 0), FakePose(0.10, 0, 0),
                FakePose(0, 0, 0), FakePose(0.15, 0, 0)]
-    rc, _ = _install_fakes(monkeypatch, world=w,
+    rc, _ = _install_fakes(monkeypatch, world=w, tmp_path=tmp_path,
                            trial_results=[{"success": True, "failure_category": None}])
     monkeypatch.setattr(sys, "argv", _argv(tmp_path))
     rc.main()
@@ -200,7 +210,7 @@ def test_campaign_stops_when_drift_exceeds_budget(monkeypatch, tmp_path):
     w = FakeWorld()
     w.poses = [FakePose(0, 0, 0), FakePose(0.05, 0, 0),     # trial 1: fine
                FakePose(0, 0, 0), FakePose(0.90, 0, 0)]     # trial 2: way past budget
-    rc, _ = _install_fakes(monkeypatch, world=w,
+    rc, _ = _install_fakes(monkeypatch, world=w, tmp_path=tmp_path,
                            trial_results=[{"success": True, "failure_category": None}])
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, **{"--trials": "5", "--max-drift": "0.30"}))
     rc.main()
@@ -210,7 +220,7 @@ def test_campaign_stops_when_drift_exceeds_budget(monkeypatch, tmp_path):
 
 def test_campaign_stops_on_collision(monkeypatch, tmp_path):
     w = FakeWorld()
-    rc, _ = _install_fakes(monkeypatch, world=w, trial_results=[
+    rc, _ = _install_fakes(monkeypatch, world=w, tmp_path=tmp_path, trial_results=[
         {"success": True, "failure_category": None},
         {"success": False, "failure_category": "execution", "collided": True},
         {"success": True, "failure_category": None}])
@@ -222,7 +232,7 @@ def test_campaign_stops_on_collision(monkeypatch, tmp_path):
 def test_a_failed_trial_is_data_and_does_not_stop_the_campaign(monkeypatch, tmp_path):
     """The experiment is allowed to fail. Only things that make LATER trials unmeasurable stop it."""
     w = FakeWorld()
-    rc, _ = _install_fakes(monkeypatch, world=w, trial_results=[
+    rc, _ = _install_fakes(monkeypatch, world=w, tmp_path=tmp_path, trial_results=[
         {"success": False, "failure_category": "reasoning"}])
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, **{"--trials": "4"}))
     rc.main()
@@ -233,13 +243,13 @@ def test_a_failed_trial_is_data_and_does_not_stop_the_campaign(monkeypatch, tmp_
 def test_resume_continues_and_does_not_duplicate(monkeypatch, tmp_path):
     out = tmp_path / "campaign.jsonl"
     w = FakeWorld()
-    rc, _ = _install_fakes(monkeypatch, world=w,
+    rc, _ = _install_fakes(monkeypatch, world=w, tmp_path=tmp_path,
                            trial_results=[{"success": True, "failure_category": None}])
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, **{"--trials": "2"}))
     rc.main()
     assert len(_records(out)) == 2
     w2 = FakeWorld()
-    rc2, _ = _install_fakes(monkeypatch, world=w2,
+    rc2, _ = _install_fakes(monkeypatch, world=w2, tmp_path=tmp_path,
                             trial_results=[{"success": True, "failure_category": None}])
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, **{"--trials": "5"}) + ["--resume"])
     rc2.main()
@@ -251,7 +261,7 @@ def test_resume_continues_and_does_not_duplicate(monkeypatch, tmp_path):
 def test_dry_run_neither_returns_nor_measures_drift(monkeypatch, tmp_path):
     """--dry-run must not claim a drift number it did not measure."""
     w = FakeWorld()
-    rc, calls = _install_fakes(monkeypatch, world=w,
+    rc, calls = _install_fakes(monkeypatch, world=w, tmp_path=tmp_path,
                                trial_results=[{"success": True, "failure_category": None}])
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, **{"--trials": "2"}) + ["--dry-run"])
     rc.main()
@@ -261,7 +271,7 @@ def test_dry_run_neither_returns_nor_measures_drift(monkeypatch, tmp_path):
 
 def test_missing_start_waypoint_fails_before_moving(monkeypatch, tmp_path):
     w = FakeWorld()
-    rc, calls = _install_fakes(monkeypatch, world=w,
+    rc, calls = _install_fakes(monkeypatch, world=w, tmp_path=tmp_path,
                                trial_results=[{"success": True, "failure_category": None}])
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, **{"--start": "nonexistent"}))
     assert rc.main() == 2

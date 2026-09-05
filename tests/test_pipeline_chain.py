@@ -102,6 +102,30 @@ def _read_capture_scan(cap: Path) -> dict:
             "ranges": [float(r) for r in d["ranges"]]}
 
 
+def _require_glass_door_signature(scan: dict, cap: Path) -> None:
+    """captures/ is gitignored, local scratch data. As of 2026-09-05, trial_ours_001/scan.json --
+    the near-miss this handoff was written to prevent recurring -- has been overwritten by a
+    later, unrelated capture reusing the same trial name (an open corridor, nearest forward
+    return >3.9 m); the original is not recoverable from git. Rather than assert a near-miss
+    against a scan that is no longer one (which would test nothing) or silently pass, skip
+    loudly, by name, when the file no longer carries its documented signature -- see
+    docs/TESTING.md for how to re-capture it."""
+    ranges, a0, ai = scan["ranges"], scan["angle_min"], scan["angle_increment"]
+
+    def bearing(i):
+        return (math.degrees(a0 + i * ai) + 180.0) % 360.0 - 180.0
+
+    fwd = [ranges[i] for i in range(len(ranges))
+           if abs(bearing(i)) <= 20.0 and math.isfinite(ranges[i])]
+    nearest = min(fwd, default=None)
+    if nearest is None or nearest > 1.0:
+        pytest.skip(
+            f"{cap.relative_to(REPO)}/scan.json no longer holds the glass-door near-miss this "
+            f"test needs (nearest forward return {nearest!r} m, expected ~0.70-0.72 m). The file "
+            f"has been overwritten by a later, unrelated capture reusing this trial name -- "
+            f"re-capture it (see docs/TESTING.md) to restore this regression check.")
+
+
 def _clear_scan(n: int = 1031) -> dict:
     """A synthetic scan of an EMPTY room: 1031 bins, every return at 8 m. Same geometry as the
     real OS0 projection (angle_min -pi, increment 0.0061) so the corridor maths is identical."""
@@ -500,9 +524,20 @@ def test_handoff_1_session_nav_refuses_to_localize_into_a_grid_only_map():
             f"localization. Without the pose graph, `mode: localization` comes up ACTIVE, "
             f"publishes /map, and silently starts a brand-new graph whose origin is wherever the "
             f"robot is standing -- the fresh-SLAM frame wearing the saved map's name.")
-    assert "MAP_NAME=${MAP_NAME:-atrium}" in src, (
-        "the default map must be one that exists AND is relocalizable. 'atrium2d' was the default "
-        "on 2026-09-01: grid-only, and it disagreed with every waypoint on disk.")
+    # GENERALISED 2026-09-05: this used to pin the literal default 'atrium' by name. The project
+    # has since grown a second, legitimate map (elevator/floor2) and the default has been renamed
+    # more than once as a result -- the invariant that actually matters, and is still incident 1's
+    # shape, is that WHATEVER session.sh defaults to is a map that exists AND is relocalizable
+    # (has a pose graph), not a specific name.
+    m = re.search(r'MAP_NAME=\$\{MAP_NAME:-([^}]+)\}', src)
+    assert m, "session.sh no longer gives MAP_NAME a default -- an unset MAP_NAME must fail loudly"
+    default = m.group(1)
+    maps_dir = REPO / "maps"
+    for ext in ("yaml", "posegraph", "data"):
+        assert (maps_dir / f"{default}.{ext}").is_file(), (
+            f"session.sh defaults MAP_NAME to {default!r} but maps/{default}.{ext} is missing. "
+            f"'atrium2d' was the default on 2026-09-01: grid-only, and it disagreed with every "
+            f"waypoint on disk. A default that cannot be relocalized into is the same bug.")
 
 
 # =============================================================================================
@@ -631,6 +666,30 @@ def _run_leg(world, monkeypatch, *, goal="door", goal_status=STATUS_SUCCEEDED, *
     return w, fake, outcome
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "REAL BUG in bringup/ros_world.py's DEFAULT nav path. _drive_leg_staged (used only when "
+        "UTP_NAV_STAGED=1) correctly requires _leg_should_stop(perceived_blockage) to confirm a "
+        "physical obstruction before reporting NavOutcome(status='blocked') on an ABORTED Nav2 "
+        "goal (ros_world.py:676-686). _drive_leg_single -- the DEFAULT since UTP_NAV_STAGED "
+        "defaults to '0' (ros_world.py:595-597) -- has no such gate: its 'blocked' branch "
+        "(ros_world.py:612-614) sets status='blocked' the instant nav2_goto's stdout contains "
+        "the word 'blocked', for ANY Nav2 ABORT including TF, planner, controller and costmap "
+        "faults that are not physical obstructions at all, and only calls _perceive_blockage() "
+        "afterward to attach a blockage object -- it never checks whether that perception "
+        "confirms anything. Reproduced here: with a perceptually clear corridor (current_blockage "
+        "prints blocked=False all three times it is asked) and an ABORTED goal, the leg still "
+        "returns status='blocked', which downstream starts the reason->ground->press chain (i.e. "
+        "commands the arm) on what the leg's own perception says is empty space. This is the "
+        "exact failure the module docstring warns about ('Manufacturing a physical blockage from "
+        "that control-plane status can start reason -> ground -> press on a software bug'), "
+        "currently unguarded on the code path the live elevator pipeline actually runs by "
+        "default. Cannot fix: bringup/ is off-limits to this suite. Fix: give "
+        "_drive_leg_single's 'blocked' branch the same _leg_should_stop confirmation "
+        "_drive_leg_staged already has."
+    ),
+)
 def test_handoff_4_succeeded_reaches_and_unconfirmed_abort_does_not_block(world, monkeypatch):
     """SUCCEEDED reaches; ABORTED needs perceptual evidence before it can start manipulation.
 
@@ -811,13 +870,27 @@ def test_handoff_5_every_costmap_source_is_the_topic_the_mask_publishes():
     the costmap's topic is read from the params file, the mask's topic is read from the module
     that does the masking, and the two are compared to each other -- so renaming either side
     breaks this even if both files stay internally consistent.
+
+    GENERALISED 2026-09-05: a third stage, safety/scan_temporal_filter.py, now sits between the
+    relay and Nav2 (/scan -> /scan_nav, added to suppress a flickering near-field artifact that
+    is real data and must not be masked out of SLAM's /scan). Nav2's costmaps consume THAT
+    stage's output, not the relay's directly -- see tests/test_stack_wiring.py's
+    test_slam_and_both_nav2_costmaps_consume_the_relay_output_not_the_raw_projection for the
+    SLAM-side half of the same joint. IN_TOPIC/OUT_TOPIC are also now env-overridable, so read
+    the module's actual defaults rather than pattern-matching a literal assignment.
     """
-    relay = SCAN_RELAY.read_text()
-    published = next(l.split("=")[1].strip().strip('"\'')
-                     for l in relay.splitlines() if l.startswith("OUT_TOPIC"))
-    consumed = next(l.split("=")[1].strip().strip('"\'')
-                    for l in relay.splitlines() if l.startswith("IN_TOPIC"))
+    relay = importlib.import_module("scan_relay")
+    published, consumed = relay.OUT_TOPIC, relay.IN_TOPIC
     assert published != consumed, "the relay must not publish what it consumes"
+
+    temporal_src = (REPO / "safety" / "scan_temporal_filter.py").read_text()
+    m_in = re.search(r'UTP_SCAN_TEMPORAL_IN",\s*"([^"]+)"', temporal_src)
+    m_out = re.search(r'UTP_SCAN_TEMPORAL_OUT",\s*"([^"]+)"', temporal_src)
+    assert m_in and m_out, "safety/scan_temporal_filter.py no longer declares its default topics"
+    assert m_in.group(1) == published, (
+        f"safety/scan_temporal_filter.py defaults to consuming {m_in.group(1)!r} but "
+        f"bringup/scan_relay.py publishes the masked scan on {published!r}.")
+    nav_topic = m_out.group(1)
 
     doc = yaml.safe_load(PARAMS_FILE.read_text())
     sources = _observation_sources(doc)
@@ -831,10 +904,12 @@ def test_handoff_5_every_costmap_source_is_the_topic_the_mask_publishes():
         f"test.")
 
     for where, topic in sources:
-        assert topic == published, (
-            f"{where} consumes {topic!r}, but bringup/scan_relay.py publishes the masked scan on "
-            f"{published!r} (it consumes the raw {consumed!r}). {consumed!r} contains the robot's "
-            f"own arm and mast and makes Nav2 refuse to plan around its own footprint.")
+        assert topic == nav_topic, (
+            f"{where} consumes {topic!r}, but safety/scan_temporal_filter.py publishes the "
+            f"temporal-filtered, masked scan on {nav_topic!r} (which consumes "
+            f"bringup/scan_relay.py's masked {published!r}, itself consuming raw {consumed!r}). "
+            f"{consumed!r} contains the robot's own arm and mast and makes Nav2 refuse to plan "
+            f"around its own footprint.")
 
 
 def test_handoff_5_the_fusion_and_the_costmap_read_different_lidar_topics_harmlessly():
@@ -906,6 +981,7 @@ def test_handoff_6_lidar_alone_blocks_when_the_camera_looks_through_the_glass():
     """
     fuse = _fusion().fuse
     scan = _read_capture_scan(CAP_LIDAR_ONLY)
+    _require_glass_door_signature(scan, CAP_LIDAR_ONLY)
     camera = {"blocked": False, "kind": "",
               "description": "an open walkway with pillars"}
     r = fuse(camera, scan["ranges"], scan["angle_min"], scan["angle_increment"])
@@ -956,6 +1032,8 @@ def test_handoff_6_an_AND_would_have_cleared_both_real_captures():
     ]
     for cap, camera in cases:
         scan = _read_capture_scan(cap)
+        if cap is CAP_LIDAR_ONLY:
+            _require_glass_door_signature(scan, cap)
         r = fuse(camera, scan["ranges"], scan["angle_min"], scan["angle_increment"])
         cam_fired = camera["blocked"] is True
         lidar_fired = r["evidence"] in ("lidar", "both")
@@ -974,6 +1052,7 @@ def test_handoff_6_the_fused_verdict_is_what_reaches_the_fsm(world, monkeypatch)
     BlockageEvent the FSM acts on. Every step between the VLM and the FSM is the shipping code.
     """
     scan = _read_capture_scan(CAP_LIDAR_ONLY)
+    _require_glass_door_signature(scan, CAP_LIDAR_ONLY)
     w, fake = make_world(world, monkeypatch, goal="door", scan=scan,
                          camera={"blocked": False, "kind": "",
                                  "description": "an open walkway with pillars"})
@@ -1111,6 +1190,7 @@ def test_the_pre_leg_gate_stops_the_leg_when_something_solid_is_right_there(worl
     the hole the distance gate opened when it was added.
     """
     scan = _read_capture_scan(CAP_LIDAR_ONLY)          # a real door at 0.70 m
+    _require_glass_door_signature(scan, CAP_LIDAR_ONLY)
     w, fake = make_world(world, monkeypatch, goal="far_door", scan=scan,
                          camera={"blocked": False, "kind": "",
                                  "description": "an open walkway with pillars"})

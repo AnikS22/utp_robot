@@ -266,22 +266,38 @@ def test_the_glass_door_capture_survives_the_mask():
     is an angular mask and not a global cutoff.
 
     Every one of those 85 must come through untouched. If this fails, the robot has just been made
-    blind to a door it is about to hit, and nothing else in the stack will notice."""
+    blind to a door it is about to hit, and nothing else in the stack will notice.
+
+    2026-09-05: captures/ is gitignored, local scratch data, and this exact path has since been
+    overwritten by an unrelated later capture (an open corridor, nearest return >3.9 m) -- almost
+    certainly a diagnostic run reusing the trial_ours_001 name. The original glass-door capture is
+    not recoverable from git. Rather than assert stale numbers against the wrong scene (which
+    would test nothing) or silently pass, this checks the file still holds ITS OWN documented
+    signature before trusting it, and skips loudly, by name, if it does not -- see
+    docs/TESTING.md for how to re-capture it."""
     if not CAPTURE.exists():
         pytest.skip(f"{CAPTURE.relative_to(REPO)} not on disk")
     d = json.loads(CAPTURE.read_text())
     assert d["frame"] == "base_link"
     r, a0, ai = d["ranges"], d["angle_min"], d["angle_increment"]
-    out, masked = mask_self_returns(r, a0, ai)
-    assert len(out) == len(r), "the mask changed the bin count of a real scan"
 
     def bearing(i):
         return (math.degrees(a0 + i * ai) + 180.0) % 360.0 - 180.0
 
     fwd = [i for i in range(len(r))
            if abs(bearing(i)) <= 20.0 and math.isfinite(r[i])]
-    assert len(fwd) == 85, f"the capture changed: {len(fwd)} forward returns, expected 85"
-    assert min(r[i] for i in fwd) == pytest.approx(0.7222, abs=1e-3)
+    min_fwd = min((r[i] for i in fwd), default=None)
+    if len(fwd) != 85 or min_fwd is None or abs(min_fwd - 0.7222) > 1e-3:
+        pytest.skip(
+            f"{CAPTURE.relative_to(REPO)} no longer holds the glass-door capture this test needs: "
+            f"expected 85 forward returns nearest 0.7222 m, found {len(fwd)} nearest "
+            f"{min_fwd if min_fwd is None else round(min_fwd, 4)} m. The file has been overwritten "
+            f"by a later, unrelated capture reusing this trial name -- re-capture a scan facing "
+            f"closed glass doors at this path (see docs/TESTING.md) to restore this regression "
+            f"check.")
+
+    out, masked = mask_self_returns(r, a0, ai)
+    assert len(out) == len(r), "the mask changed the bin count of a real scan"
     for i in fwd:
         assert out[i] == r[i], (
             f"the DOOR was masked: bin {i} at {bearing(i):.1f} deg, {r[i]:.3f} m. A global "
@@ -292,11 +308,23 @@ def test_the_mask_actually_does_work_on_the_real_scan():
     """The other half: the same capture must lose its self-returns, or the test above is passing
     vacuously. This scan was recorded while range_min was 0.70 -- its global minimum is 0.7002 --
     so the 0.39 m chassis returns are not in it; what is in it is the arm and mast at 0.70-0.99 m
-    astern, which is exactly the cluster Nav2 was marking lethal."""
+    astern, which is exactly the cluster Nav2 was marking lethal.
+
+    2026-09-05: same fixture-loss note as test_the_glass_door_capture_survives_the_mask above --
+    this skips loudly, by name, if the capture no longer contains a maskable self-return cluster,
+    instead of asserting against a scene that can no longer exercise the property."""
     if not CAPTURE.exists():
         pytest.skip(f"{CAPTURE.relative_to(REPO)} not on disk")
     d = json.loads(CAPTURE.read_text())
     r, a0, ai = d["ranges"], d["angle_min"], d["angle_increment"]
+    global_min = min((x for x in r if math.isfinite(x)), default=None)
+    if global_min is None or global_min > MASK_MAX_M:
+        pytest.skip(
+            f"{CAPTURE.relative_to(REPO)} no longer contains a self-occlusion cluster (nearest "
+            f"finite return is {global_min} m, MASK_MAX_M is {MASK_MAX_M} m). The file has been "
+            f"overwritten by a later, unrelated capture reusing this trial name -- re-capture a "
+            f"scan with the arm/mast self-returns present at this path (see docs/TESTING.md) to "
+            f"restore this regression check.")
     out, masked = mask_self_returns(r, a0, ai)
     assert masked > 100, f"only {masked} bins masked on a real scan -- the mask is not biting"
     changed = [i for i in range(len(r)) if out[i] != r[i]]

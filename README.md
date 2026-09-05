@@ -165,8 +165,12 @@ source bringup/env.sh
 Tests need nothing but Python:
 
 ```bash
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/ -q     # 243 passed
+python3 -m pytest tests/ -q -p no:launch_testing     # 478 passed, 29 skipped, 2 xfailed
 ```
+
+`-p no:launch_testing` disables a ROS-bundled pytest plugin that is incompatible with the pytest
+version this suite is written against and otherwise stops pytest from starting at all. See
+`docs/TESTING.md` for what each file guards and the triage rule for a failing test.
 
 ### Bring-up: one command
 

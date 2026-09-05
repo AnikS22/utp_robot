@@ -57,14 +57,23 @@ class FakeRec(dict):
     pass
 
 
-def _install_fakes(monkeypatch, *, world, trial_results, goto_rc=0, calls=None):
+def _install_fakes(monkeypatch, *, world, trial_results, tmp_path, goto_rc=0, calls=None,
+                    start_frame="odom"):
     calls = calls if calls is not None else {}
     calls.setdefault("goto", [])
     calls.setdefault("trials", 0)
 
     mod_wp = types.ModuleType("waypoints")
-    mod_wp.load = lambda: {"start": {"x": 0, "y": 0, "yaw": 0}}
+    mod_wp.load = lambda: {"start": {"x": 0, "y": 0, "yaw": 0, "frame": start_frame}}
     monkeypatch.setitem(sys.modules, "waypoints", mod_wp)
+
+    # run_campaign.py's return-to-start leg re-reads the waypoints FILE directly (rather than
+    # going through waypoints.load(), the seam faked above) to learn `start`'s frame -- see
+    # tests/test_run_campaign.py's _install_fakes for the same fix and full explanation. Point
+    # that direct read at an isolated file instead of the operator's live maps/waypoints.yaml.
+    store = tmp_path / "test_waypoints.yaml"
+    store.write_text(f"start:\n  frame: {start_frame}\n  x: 0\n  y: 0\n  yaw: 0\n")
+    monkeypatch.setenv("UTP_WAYPOINTS", str(store))
 
     mod_rw = types.ModuleType("ros_world")
     mod_rw.RosWorld = lambda *a, **k: world
@@ -172,7 +181,7 @@ def records(p: Path):
 
 def run(monkeypatch, tmp_path, safety: Path, *extra, **over):
     w = FakeWorld()
-    rc, calls = _install_fakes(monkeypatch, world=w,
+    rc, calls = _install_fakes(monkeypatch, world=w, tmp_path=tmp_path,
                               trial_results=[{"success": True, "failure_category": None}])
     monkeypatch.setattr(sys, "argv", argv(tmp_path, safety, **over) + list(extra))
     return rc.main(), calls

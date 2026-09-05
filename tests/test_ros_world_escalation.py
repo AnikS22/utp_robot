@@ -31,6 +31,7 @@ The scan used throughout is the REAL captures/trial_ours_001/scan.json off the r
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
 import types
@@ -49,6 +50,32 @@ from utp.pipeline.types import Detection, Plan              # noqa: E402
 # The measured scan from the failure this whole file is about. Loaded from disk rather than
 # synthesised: a hand-written array of ranges is a description of the bug, not evidence of it.
 TRIAL_SCAN = REPO / "captures" / "trial_ours_001" / "scan.json"
+
+
+def _load_trial_scan() -> dict:
+    """TRIAL_SCAN, loaded fresh and checked for the near-miss signature this file's escalation
+    tests depend on.
+
+    2026-09-05: captures/ is gitignored, local scratch data, and this exact path has since been
+    overwritten by an unrelated later capture (an open corridor, nearest finite return ~1.0 m) --
+    the same fixture loss hit tests/test_scan_mask.py and tests/test_blockage_fusion.py. The
+    original near-miss is not recoverable from git. Every escalation test below needs the door to
+    actually be close enough to trip current_blockage(); rather than let that silently degenerate
+    into asserting a reverse/look-ladder sequence against an empty corridor (which would pass or
+    fail for reasons that have nothing to do with the escalation logic itself), this checks the
+    signature first and skips loudly, by name, if it no longer holds -- see docs/TESTING.md for
+    how to re-capture it."""
+    d = json.loads(TRIAL_SCAN.read_text())
+    finite = [x for x in d["ranges"] if isinstance(x, (int, float)) and math.isfinite(x)]
+    nearest = min(finite) if finite else None
+    if nearest is None or nearest > 0.85:
+        pytest.skip(
+            f"{TRIAL_SCAN.relative_to(REPO)} no longer holds the glass-door near-miss this "
+            f"escalation test needs: expected a lidar return under ~0.85 m, nearest finite "
+            f"return is {nearest!r} m. The file has been overwritten by a later, unrelated "
+            f"capture reusing this trial name -- re-capture a scan facing closed glass doors at "
+            f"this path (see docs/TESTING.md) to restore this regression check.")
+    return d
 
 # What ask_blockage actually returned for that frame, verbatim from the brief / the reproduction
 # `bringup/ask_blockage.py captures/trial_ours_001`.
@@ -284,7 +311,7 @@ def test_camera_says_clear_but_lidar_sees_the_door_and_the_verdict_is_blocked(
     way.
     """
     waypoints({"outside": {"frame": "map", "x": 0.0, "y": 0.0}})
-    scan = json.loads(TRIAL_SCAN.read_text())
+    scan = _load_trial_scan()
     w, robot = world(scan=scan, camera=CAMERA_SAYS_CLEAR)
 
     b = w.current_blockage()
@@ -321,7 +348,7 @@ def test_the_fuser_is_given_the_scan_from_this_capture_not_a_fresh_subscription(
 
 def test_ros_world_does_not_import_or_repeat_fusion(world, fuse_absent, capsys):
     """RosWorld consumes ask_blockage's fused contract even if the fuser later disappears."""
-    scan = json.loads(TRIAL_SCAN.read_text())
+    scan = _load_trial_scan()
     w, robot = world(scan=scan, camera=CAMERA_SAYS_CLEAR)
 
     b = w.current_blockage()
@@ -370,7 +397,7 @@ def test_the_blocked_path_backs_up_before_it_looks_around(world, waypoints, fuse
     afterwards spends the FSM's recovery budget on viewpoints taken from the wrong place.
     """
     waypoints({"outside": {"frame": "map", "x": 0.0, "y": 0.0}})
-    w, robot = world(scan=json.loads(TRIAL_SCAN.read_text()), camera=CAMERA_SAYS_CLEAR)
+    w, robot = world(scan=_load_trial_scan(), camera=CAMERA_SAYS_CLEAR)
 
     nav = w.navigate_to_goal()
     assert nav.status == "blocked"
@@ -388,7 +415,7 @@ def test_the_reverse_is_bounded_and_aimed_at_the_survey_standoff(
         world, waypoints, fuse_installed):
     """0.72 m measured + 1.40 m survey standoff = 0.68 m of reverse, and never more than 1.00 m."""
     waypoints({"outside": {"frame": "map", "x": 0.0, "y": 0.0}})
-    w, robot = world(scan=json.loads(TRIAL_SCAN.read_text()), camera=CAMERA_SAYS_CLEAR)
+    w, robot = world(scan=_load_trial_scan(), camera=CAMERA_SAYS_CLEAR)
     w.current_blockage()
     assert w._back_off_from_blockage() is True
 
@@ -449,7 +476,7 @@ def test_a_reverse_that_moves_rearms_the_look_ladder(world, fuse_installed):
     viewpoint. An inert ladder reports "looked, saw nothing", which is a lie about a look that
     never happened.
     """
-    w, robot = world(scan=json.loads(TRIAL_SCAN.read_text()), camera=CAMERA_SAYS_DOOR)
+    w, robot = world(scan=_load_trial_scan(), camera=CAMERA_SAYS_DOOR)
     w.current_blockage()
     w._scan_i = len(w.SCAN_BEARINGS_DEG)         # ladder exhausted by an earlier blockage
     w._widened = True
@@ -468,7 +495,7 @@ def test_a_reverse_that_moves_rearms_the_look_ladder(world, fuse_installed):
 def test_the_reverse_happens_along_the_approach_heading(world, fuse_installed):
     """recentre_view() first: reversing down a +80 deg sweep bearing walks the robot sideways
     away from the door it is trying to get a wider view of."""
-    w, robot = world(scan=json.loads(TRIAL_SCAN.read_text()), camera=CAMERA_SAYS_DOOR)
+    w, robot = world(scan=_load_trial_scan(), camera=CAMERA_SAYS_DOOR)
     w.current_blockage()
     w._scan_offset = 80.0
     w._back_off_from_blockage()
@@ -482,7 +509,7 @@ def test_the_reverse_happens_along_the_approach_heading(world, fuse_installed):
 def test_backing_off_does_not_then_creep_forward_again(world, fuse_installed):
     """approach_blockage() must not reverse to 1.40 m and immediately re-approach 1.40 m.
     That oscillation is what fsm.py describes as the erratic stop/back/forward cycle."""
-    w, robot = world(scan=json.loads(TRIAL_SCAN.read_text()), camera=CAMERA_SAYS_DOOR)
+    w, robot = world(scan=_load_trial_scan(), camera=CAMERA_SAYS_DOOR)
     w.current_blockage()
     w.approach_blockage()
 
@@ -558,7 +585,7 @@ def test_a_door_found_mid_leg_stops_the_leg(world, waypoints, fuse_installed):
     w, robot = world(scan=_far_scan(), camera=CAMERA_SAYS_CLEAR,
                      nav2=[(6, ""), (6, "")])
     # After the first stage the world changes: the doors are now within lidar range.
-    real = json.loads(TRIAL_SCAN.read_text())
+    real = _load_trial_scan()
     original_grab = robot._grab
 
     def grab_then_change(args):
@@ -624,7 +651,7 @@ def test_the_goal_survives_blocked_reverse_look_press(world, waypoints, fuse_ins
     """press, THEN navigate back outside. The whole point of the mission is the leg AFTER the
     press, and it can only happen if self.goal is still there and at_goal() is honest."""
     waypoints({"outside": {"frame": "map", "x": 0.0, "y": 0.0}})
-    w, robot = world(scan=json.loads(TRIAL_SCAN.read_text()), camera=CAMERA_SAYS_CLEAR)
+    w, robot = world(scan=_load_trial_scan(), camera=CAMERA_SAYS_CLEAR)
 
     # detect_frame / check_press_safe go out through subprocess.run, not _ros.
     runs: list[list[str]] = []
@@ -666,7 +693,7 @@ def test_the_goal_survives_blocked_reverse_look_press(world, waypoints, fuse_ins
 def test_reset_clears_the_new_per_trial_state(world, fuse_installed):
     """run_campaign.py reuses ONE world across N trials. A 0.72 m standoff left over from trial 1
     would send trial 2 reversing before it had looked at anything."""
-    w, robot = world(scan=json.loads(TRIAL_SCAN.read_text()), camera=CAMERA_SAYS_DOOR)
+    w, robot = world(scan=_load_trial_scan(), camera=CAMERA_SAYS_DOOR)
     w.current_blockage()
     w._back_off_from_blockage()
     assert w._nearest_ahead_m is not None and w._backed_off is True
@@ -683,7 +710,7 @@ def test_a_dry_run_performs_no_motion_at_all(world, waypoints, fuse_installed, c
     or the arm. bringup's convention is that motion is the DEFAULT and --dry-run is what stops it,
     so a call that omits --dry-run is a call that drives."""
     waypoints({"outside": {"frame": "map", "x": 0.0, "y": 0.0}})
-    w, robot = world(scan=json.loads(TRIAL_SCAN.read_text()), camera=CAMERA_SAYS_CLEAR,
+    w, robot = world(scan=_load_trial_scan(), camera=CAMERA_SAYS_CLEAR,
                      dry_run=True)
 
     nav = w.navigate_to_goal()

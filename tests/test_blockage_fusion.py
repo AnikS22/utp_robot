@@ -73,9 +73,25 @@ def test_trial_ours_001_the_frame_that_nearly_put_the_robot_through_a_glass_door
 
     With the camera's real verdict of blocked=False, fuse() must STILL say blocked, on the
     lidar's word alone. If this test ever goes red the robot drives into the door again.
+
+    2026-09-05: captures/ is gitignored, local scratch data, and this exact path has since been
+    overwritten by an unrelated later capture (an open corridor, nearest forward return >3.9 m) --
+    almost certainly a diagnostic run reusing the trial_ours_001 name. The original near-miss
+    capture is not recoverable from git. Rather than assert "blocked" against a scene that is no
+    longer a near-miss (which would test nothing) or silently pass, this checks fuse()'s own
+    nearest_ahead_m against the door's documented range first, and skips loudly, by name, if the
+    file no longer holds that signature -- see docs/TESTING.md for how to re-capture it.
     """
     d = load_scan(CAP_GLASS_SEEN_BY_LIDAR_ONLY)
     out = fuse(CAM_CLEAR, d["ranges"], d["angle_min"], d["angle_increment"])
+
+    if out["nearest_ahead_m"] is None or not (0.65 <= out["nearest_ahead_m"] <= 0.80):
+        pytest.skip(
+            f"{CAP_GLASS_SEEN_BY_LIDAR_ONLY.relative_to(ROOT)} no longer holds the glass-door "
+            f"near-miss this test needs: expected a lidar return 0.65-0.80 m ahead, fuse() found "
+            f"nearest_ahead_m={out['nearest_ahead_m']!r}. The file has been overwritten by a "
+            f"later, unrelated capture reusing this trial name -- re-capture a scan facing closed "
+            f"glass doors at this path (see docs/TESTING.md) to restore this regression check.")
 
     assert out["blocked"] is True, "the camera saw through the glass; the lidar did not"
     assert out["evidence"] == "lidar"
