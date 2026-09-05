@@ -522,6 +522,10 @@ def main() -> int:
     g.add_argument("--check", action="store_true", help="validate config/floors.yaml, offline")
     g.add_argument("--plan", nargs="+", metavar="FLOOR", help="print the ride for an itinerary")
     g.add_argument("--to", metavar="FLOOR", help="swap localization onto this floor's map")
+    # Print a floor's seed as "x,y,yaw" and exit -- so stack.sh's SEED_POSE and floor_swap's own
+    # map_start_pose are computed by the SAME code from the SAME waypoint. Two places deriving one
+    # number independently is how they drift apart without anyone noticing.
+    g.add_argument("--seed", metavar="FLOOR", help="print this floor's seed pose and exit")
     g.add_argument("--verify", metavar="FLOOR", help="the gate: may the base move on this floor?")
     ap.add_argument("--go", action="store_true", help="with --to: actually do it")
     # WHERE THE ROBOT IS RIDING. The seed is only correct if it names the spot the robot actually
@@ -543,6 +547,12 @@ def main() -> int:
         return do_plan([str(f) for f in a.plan])
     if a.to:
         return do_swap(str(a.to), a.go, seed_role=a.seed_role)
+    if a.seed:
+        cfg = load_yaml(FLOORS_YAML)
+        wps = load_waypoints()
+        x, y, yaw = seed_pose(cfg, str(a.seed), wps, role=a.seed_role)
+        print(f"{x:.4f},{y:.4f},{yaw:.4f}")
+        return 0
     return do_verify(str(a.verify), a.doors_open, a.check_doors)
 
 

@@ -33,6 +33,34 @@ set -uo pipefail            # NOT -e: this script's whole job is to continue pas
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO/bringup/env.sh" >/dev/null 2>&1 || { echo "env.sh failed"; exit 1; }
 MAP_NAME="${MAP_NAME:-elevator}"
+
+# OPTIONAL SEED for localization, as "x,y,yaw_radians". Empty by default, which keeps the previous
+# behaviour byte for byte: slam_toolbox comes up with no pose and relocalise.py does a global search.
+#
+# WHEN YOU NEED IT. A global search scores the live scan over every free cell of the map, so it needs
+# a scan with information in it. Inside a lift car with the doors shut the scan is four blank walls
+# and the search has nothing to work with -- it will still return a confident answer, anchored on
+# whatever doorway-sized gap it liked best. That is the case this exists for: a COLD BOOT standing in
+# the car, where the pose is known because the robot has not moved relative to the car and that spot
+# is a recorded waypoint on the destination floor's map.
+#
+#   SEED_POSE="$(python3 bringup/floor_swap.py --seed 1 --seed-role car_panel)" \
+#   MAP_NAME=elevator bash bringup/stack.sh
+#
+# Take the number from floor_swap --seed, never by hand: that way this and floor_swap's own
+# map_start_pose come from one function reading one waypoint, and cannot drift apart.
+#
+# DO NOT seed from config/slam_os0.yaml's map_start_pose. That is an ATRIUM coordinate and seeding
+# from it converges into the wrong corridor -- that is what the slam WARN further down is about.
+SEED_POSE="${SEED_POSE:-}"
+if [ -n "$SEED_POSE" ]; then
+  case "$SEED_POSE" in
+    *,*,*) SEED_ARG="-p map_start_pose:=[${SEED_POSE}]" ;;
+    *) echo "SEED_POSE must be 'x,y,yaw_rad' (got '$SEED_POSE')" >&2; exit 2 ;;
+  esac
+else
+  SEED_ARG=""
+fi
 WANT_NAV=1; STATUS_ONLY=0
 for a in "$@"; do
   case "$a" in
@@ -363,7 +391,7 @@ if [ "$WANT_NAV" = 1 ]; then
         kill_matching slam_toolbox; sleep 4
         start_bg ros2 run slam_toolbox localization_slam_toolbox_node --ros-args \
           --params-file "$REPO/config/slam_os0.yaml" -p use_sim_time:=false -p mode:=localization \
-          -p map_file_name:="$REPO/maps/$MAP_NAME"
+          -p map_file_name:="$REPO/maps/$MAP_NAME" $SEED_ARG
         sleep 20
         # It is a LIFECYCLE node: it comes up unconfigured and publishes nothing until told.
         timeout 20 ros2 lifecycle set /slam_toolbox configure >/dev/null 2>&1
