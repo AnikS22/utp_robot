@@ -19,6 +19,8 @@ retired). Deadline **2026-08-25**.
 | What a "trial" is, methods, missions, metrics | `docs/PIPELINE.md` |
 | Mapping / Nav2 / recording a run | `docs/MAPPING.md`, `docs/NAV2.md`, `docs/RECORDING.md` |
 | Riding the lift between floors | `docs/MULTIFLOOR.md` |
+| Re-mapping floor 1 as one map (the current job) | `docs/FLOOR1_REMAP.md` |
+| Running the unit suite, and triaging a red test | `docs/TESTING.md` |
 | The reasoning VLM endpoint and its key | `docs/LLM_ENDPOINT.md` |
 | What has actually been done and observed | `EXPERIMENT_LOG.md` |
 
@@ -60,21 +62,23 @@ bash bringup/camera.sh                # D435
 bash bringup/safety.sh                # twist mux + arm gate
 python3 bringup/map_watch.py          # another terminal, while driving a map
 bash bringup/map_persist.sh save|resume|list <name>   # the ONE map script
+bash bringup/map_insurance.sh start|stop|rebuild <name>   # record a mapping drive so a crash
+                                      # costs seconds, not a walk. START IT BEFORE THE DRIVE.
 python3 bringup/check_scan_geometry.py --tf
 ```
 
 Tests (no ROS, no GPU, no hardware — the whole suite runs in ~25 s):
 
 ```bash
-PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/ -q
-PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/test_press_veto.py -q
-PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest \
-    tests/test_run_campaign.py::test_campaign_stops_on_collision -q
+python3 -m pytest tests/ -q -p no:launch_testing
+python3 -m pytest tests/test_press_veto.py -q -p no:launch_testing
+python3 -m pytest tests/test_run_campaign.py::test_campaign_stops_on_collision -q -p no:launch_testing
 ```
 
-`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` is required because ROS's `launch_testing` pytest plugin fails
-to import (missing `lark`). Unrelated to our code. `PYTHONPATH=.` is required because `safety/` and
-`bringup/` are imported as top-level packages with no install step.
+`-p no:launch_testing` is required: ROS's `launch_testing` pytest plugin auto-registers on any
+machine with a sourced ROS install, is incompatible with the pytest this suite is written against,
+and without the flag **collection dies and zero tests run** — which is not obviously distinguishable
+from a broken repo. Nothing under `tests/` uses it. See `docs/TESTING.md`.
 
 ## Bring-up goes through `bringup/stack.sh`
 
@@ -166,6 +170,107 @@ a 2D scan.
 - **F. Reused one `UTP_RUN_DIR` across several attempts**, so the figure generator merged 11 events
   into one marker and matched a keyframe 972 s from its event. **One run directory per attempt.**
 
+## Small changes that turn into big errors (2026-09-05)
+
+The 2026-09-04 list above is about edits with a wrong value. This list is about something worse:
+**things that report success while proving nothing.** A wrong value gets caught. A check that
+cannot fail gets believed.
+
+### A. Checks that pass while proving nothing
+
+- **`grep -q active` reports a dead Nav2 as healthy, because the string `inactive` contains
+  `active`.** Symptom: `stack.sh` printed a green Nav2 while every goal came back
+  `rejected in 0.0s`. **Match the whole field**, never a substring — `[ "$state" = "active" ]`, or
+  anchor the pattern.
+- **An existence probe is not a rate probe.** `ros2 node list` showing `/ouster/os_driver` proves
+  a process is alive, not that data is flowing. Symptom on 2026-09-04: the driver was up and
+  publishing **0.00 Hz** (a stale process holding the UDP socket across a power cycle), and the
+  fault surfaced three layers away as "localization is wrong in RViz". Every probe in `stack.sh`
+  counts messages over a window. And `ros2 topic hz` is not a substitute — it has reported 1.7 Hz
+  and 10.0 Hz for the same topic minutes apart against a repeatable 6.4 Hz.
+- **A zero-timeout `can_transform` was measuring DDS discovery, not availability.** Symptom: the
+  gate reported `base_link -> os_lidar` absent while `tf2_echo` resolved it instantly in the next
+  terminal — so the transform was read as broken and time went into the TF tree, which was fine.
+  A fresh node has not yet discovered the `/tf_static` publisher, and a latched static transform
+  arrives only after discovery completes. **Fixed by giving it a 12 s timeout.** Any probe made by
+  a just-started node needs one: with timeout 0 you are timing your own subscription setup.
+
+The shape underneath all three: **ask the question that can come back "no".** A check that cannot
+fail is not a check, and it is worse than no check because it ends the investigation.
+
+### B. `config/floors.yaml` named a map and waypoints that did not exist
+
+The floor-2 entry said map `elevator_f2` and waypoints `call_button_f2`, `car_panel_f2`. None of
+those were ever on disk: the map is `maps/floor2.*` and the waypoints are **`f2_`-prefixed**, not
+`_f2`-suffixed. The entry had been written from the naming convention in the file's own header
+instead of from what was actually recorded. Symptom, had it not been caught:
+`floor_swap.py --to 2 --go` failing to find its seed pose **with the robot already standing inside
+the lift car**, doors about to close, on an unverified map.
+
+`python3 bringup/floor_swap.py --check` caught it. It is pure offline Python — no ROS, no robot —
+so there is no excuse for not running it after touching that file. **A config file is code that
+nothing compiles; the only thing standing between it and the lift is a checker you actually run.**
+
+### C. Seeding a floor swap at the wrong in-car pose
+
+`floor_swap.py` seeded `map_start_pose` from `car_facing_out` unconditionally. On 2026-09-05 the
+robot rode down parked at `car_panel` — **0.48 m and 116° away**. Seeding at `car_facing_out`
+would have handed slam_toolbox a start pose the robot was not standing at.
+
+Why that is not self-correcting: a closed lift car's scan is **four blank walls about a metre
+away**. There is nothing in it to pull the estimate back. The matcher converges confidently onto
+the seed you gave it, and the error only becomes visible once the doors open and the robot drives.
+`--seed-role` now names where the robot physically is. **A seed is a claim about the world; in a
+featureless room it is the only claim there is.**
+
+### D. A `.pgm`/`.yaml` map with no `.posegraph` looks like a map
+
+`maps/atrium.*` is a grid and nothing else. `slam_toolbox` `mode: localization` relocalizes by
+deserializing the `.posegraph`; handed only a grid it does **not** error — it starts a new, empty
+graph at the robot's feet, publishes `/map`, and reports `active`. Symptom: a healthy-looking
+localization in which every stored waypoint is meaningless, because `map` is a fresh-SLAM frame
+wearing the saved map's name. This is why floor 1 is being re-mapped; see `docs/FLOOR1_REMAP.md`.
+
+Corollary that cost a second walk: **two such maps cannot be merged.** A pose graph is a chain of
+scan matches from one continuous drive, and there was never a drive linking the lift lobby to the
+ADA door. One continuous drive is the only fix.
+
+`map_persist.sh save` writes all four files or none, and its overwrite guard now checks all four
+extensions — guarding on `.pgm` alone let a name holding a good `.posegraph` be clobbered silently,
+which is the half that cannot be regenerated.
+
+### E. slam_toolbox keeps its LAUNCH-TIME parameters
+
+Editing `config/slam_os0.yaml` after the node is launched changes nothing. Symptom on 2026-09-04:
+the robot stayed mis-localized and it was reported as fixed. **Restart the node, then verify with
+`ros2 param get`.** The same is true of every ROS node in this stack.
+
+### F. A mapping drive lives only in RAM until it is serialized
+
+`slam_toolbox` holds the pose graph in memory and serializes **only on request**. On 2026-09-05 a
+floor-1 mapping drive died with its session: no partial map, nothing on disk, nothing to salvage,
+walk repeated from scratch. Nothing was recording, so there was never a second chance to have.
+
+`bringup/map_insurance.sh start <name>` records `/scan /scan_nav /tf /tf_static /odom` — what
+slam_toolbox actually consumes, ~1–2 MB per minute — so a drive can be replayed and rebuilt
+offline. Start it **before** the drive. (`ros2 bag record -a` is not an option: `/ouster/points` is
+3.1 MB per cloud and the one such bag in `runs/` is 3.4 GB.)
+
+### G. KNOWN TRAP — `session.sh`'s step-0 gate pings the xArm for EVERY session type
+
+`bringup/session.sh:66-68` pings `192.168.1.119` (lidar), **`192.168.1.221` (xArm)** and
+`192.168.1.1` (router), and `die`s on the first unreachable one. That gate runs before the command
+word is looked at, so a **nav-only or mapping-only** run is blocked outright whenever the arm is
+powered off — which is the normal state for a mapping drive, since the arm is stowed and unused.
+It presents as `192.168.1.221 unreachable` and reads like a cable fault on the one cable that also
+carries the lidar.
+
+**Proposed, NOT applied:** make the arm's ping non-fatal unless the session actually needs the arm
+— keep `.119` and `.1` fatal for every session, and demote `.221` to a warning for `map` and `nav`
+while leaving it fatal for `campaign` and anything that presses. It is not applied here because
+`session.sh` is live and the change belongs to whoever is next at the console, with the robot in
+front of them.
+
 ## Conventions that will bite you
 
 - **Nothing moves without `--go`.** Every motion script and node is dry-run by default and prints
@@ -227,7 +332,10 @@ over it. That is the whole reason the suite runs headless on a laptop with nothi
   lift car is geometrically identical on every floor, so a scan-match fit taken inside a closed car
   is high, confident, and says nothing about which floor you are on. The floor is only observable
   once the doors open, which is why the gate refuses a fit measured with them shut. Untested on
-  hardware; the destination floor's map does not exist yet. See `docs/MULTIFLOOR.md`.
+  hardware. `maps/floor2.*` exists and its five `f2_` waypoints have been driven; **floor 1 is
+  mid-re-map** — `config/floors.yaml` already names `floor1` and five `f1_` waypoints that are not
+  recorded yet, so `floor_swap.py --check` fails on purpose. See `docs/FLOOR1_REMAP.md`, then
+  `docs/MULTIFLOOR.md`.
 - **Recording a run**: `bringup/run_dataset.py` wraps any command in a low-interference recorder and
   writes `runs/<UTC>_<method>_<scene>/`. Routes mark moments with `event()` from `run_event.sh`,
   which is a silent no-op unless `UTP_RUN_DIR` is set — an instrumented run and a plain run must
@@ -271,9 +379,13 @@ not control. The fix (re-ground from the press pose with the arm raised) is impl
 `reach_control.sh` / `press_run.sh` and has never run on hardware. Elevator interaction has never
 run on any system. Do not read this repo as claiming a completed door-opening run.
 
-**The unit suite is not green.** Measured 2026-09-04: **407 passed, 38 failed, 10 skipped**. The
-failures pre-date the current working tree (33 fail at HEAD) and cluster in
-`tests/test_run_campaign.py` (the campaign loop runs one trial where the test expects N, and drift
-does not accumulate against the anchor), `tests/test_stack_wiring.py` (config/script drift, e.g.
-`stow_arm.py` no longer defines `STOW_DEG`), and `tests/test_scan_mask.py` (a capture changed).
-Fix or explicitly quarantine these before treating a green run as evidence of anything.
+**The unit suite is green, with two documented exceptions.** Measured 2026-09-05:
+**478 passed, 29 skipped, 2 xfailed, 0 failed** (`-p no:launch_testing`; the old
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` invocation did not start the suite at all). The two
+`xfail(strict)` cases are real bugs in directories the suite may not edit, each carrying its fix in
+the marker: `bringup/ros_world.py`'s **default** nav path reports `blocked` on any Nav2 abort
+without confirming it perceptually (the staged path already gates on it), and
+`config/slam_os0.yaml` / `config/ouster.yaml` both cite `range_min:=0.30` when 0.45 is what ships.
+Several skips are loud, by name: `captures/trial_ours_001/scan.json`, the glass-door near-miss four
+tests are built on, was overwritten by a later run reusing the name and is not recoverable from
+git. See `docs/TESTING.md` before treating a red or skipped test as either a regression or noise.

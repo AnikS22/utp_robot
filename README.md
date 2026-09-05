@@ -142,7 +142,10 @@ bringup/       the executable layer: ROS nodes, run scripts, one-shot diagnostic
 config/        routes.yaml (missions) · safety.yaml (gates, speed and slew ceilings) · slam_os0.yaml
 nav2_bringup/  Nav2 config, ported for real hardware (use_sim_time:=false, spin removed)
 docs/          runbooks — start with MORNING.md, then MAPPING.md and NAV2.md
-tests/         306 tests, all headless: no ROS, no GPU, no hardware
+               FLOOR1_REMAP.md  the current job, in the order it must happen
+               TESTING.md       what each test file guards, and how to triage a red one
+tests/         all headless: no ROS, no GPU, no hardware. 478 passed / 29 skipped / 2 xfailed
+               as of 2026-09-05; see docs/TESTING.md for what each file guards
 patches/       our diffs against upstream drivers, applied by setup_workspace.sh
 maps/          site maps (see maps/README.md) · archive/ retired scripts, see archive/README.md
 ros2_ws/       GITIGNORED — rebuilt from pinned upstream commits by setup_workspace.sh
@@ -190,7 +193,10 @@ It ends with a table of every component and, underneath it, a `WHY` block that n
 cause rather than the layer the symptom appeared in — "there is no `odom->base_link`, so slam cannot
 publish `map->odom`", not "localization is wrong".
 
-`MAP_NAME=elevator` (the default) selects the map to localize into.
+`MAP_NAME=elevator` (the default) selects the map to localize into. Floor 2 is `MAP_NAME=floor2`.
+Floor 1 is **mid-re-map** into a single `floor1` map covering both the lift lobby and the ADA
+door — `config/floors.yaml` already names it, so `floor_swap.py --check` fails on purpose until
+the drive is done. Procedure and order: **[docs/FLOOR1_REMAP.md](docs/FLOOR1_REMAP.md)**.
 
 ### Nine things that stop a bring-up
 
@@ -261,6 +267,90 @@ not cosmetic — it is what keeps a simulated route from ever reaching a real ch
 
 ---
 
+## Small changes that turn into big errors
+
+The bring-up table above is faults that announce themselves. These are worse: **things that report
+success while proving nothing.** A wrong value gets caught. A check that cannot fail gets believed.
+
+### Checks that pass while proving nothing
+
+| the check | why it proves nothing | what it produced |
+|---|---|---|
+| `grep -q active` on a lifecycle state | the string **`inactive` contains `active`** | a green Nav2 in the component table while every goal came back `rejected in 0.0s` |
+| **existence** probe (`ros2 node list`, `ros2 topic list`) | a process being alive is not data flowing | the Ouster driver up and publishing **0.00 Hz** — a stale process holding the UDP socket across a power cycle. Surfaced three layers away as "localization is wrong in RViz" |
+| `can_transform(..., timeout=0)` | a just-started node has not finished **DDS discovery**, and a latched `/tf_static` arrives only after it does — so timeout 0 times your own subscription setup, not the transform | `base_link -> os_lidar` reported absent while `tf2_echo` resolved it instantly in the next terminal. Hours into a TF tree that was fine. **Fixed by giving it 12 s** |
+
+`ros2 topic hz` is also not a rate probe: it has reported 1.7 Hz and 10.0 Hz for the same topic
+minutes apart against a repeatable 6.4 Hz. Measure with a counting subscriber — `stack.sh`'s
+`rate()` is the reference. The shape underneath all of it: **ask the question that can come back
+"no".** A check that cannot fail is worse than no check, because it ends the investigation.
+
+### A config file is code that nothing compiles
+
+`config/floors.yaml` named map `elevator_f2` and waypoints `call_button_f2` / `car_panel_f2`. None
+of those existed — the map on disk is `maps/floor2.*` and the waypoints are **`f2_`-prefixed**, not
+`_f2`-suffixed. The entry had been written from the naming convention in the file's own header
+rather than from what was actually recorded. Uncaught, it would have surfaced as
+`floor_swap.py --to 2 --go` failing to find its seed pose **with the robot already inside the lift
+car**, doors about to close.
+
+`python3 bringup/floor_swap.py --check` caught it, and is pure offline Python — no ROS, no robot.
+Run it after every edit to that file.
+
+### A seed pose is a claim about the world, and in a lift car it is the only one
+
+The floor swap seeded `map_start_pose` from `car_facing_out` unconditionally. The robot actually
+rides parked at `car_panel` — **0.48 m and 116° away**. That error is not self-correcting: a closed
+car's scan is four blank walls about a metre away, so there is nothing in it to pull the estimate
+back. The matcher converges confidently onto whatever seed it was given, and the mistake only
+becomes visible once the doors open and the robot drives. `--seed-role` now names where the robot
+physically is.
+
+### A `.pgm`/`.yaml` map with no `.posegraph` looks exactly like a map
+
+`slam_toolbox` `mode: localization` relocalizes by deserializing the `.posegraph`. Handed only a
+grid it does **not** error — it starts a new, empty graph at the robot's feet, publishes `/map`,
+and reports `active`. `maps/atrium.*` is such a map, and it is the one the ADA-button waypoints
+were recorded in, so those waypoints name coordinates in a frame that no longer exists.
+
+Two such maps also **cannot be merged**: a pose graph is a chain of scan matches from one
+continuous drive, and there was never a drive linking the lift lobby to the ADA door. One
+continuous drive is the only fix — that is `floor1`, and
+**[docs/FLOOR1_REMAP.md](docs/FLOOR1_REMAP.md)** is the procedure.
+
+### slam_toolbox keeps its LAUNCH-TIME parameters
+
+Editing `config/slam_os0.yaml` after the node is running changes nothing. The robot stayed
+mis-localized and it was reported as fixed. Restart the node, then verify with `ros2 param get`.
+
+### A mapping drive lives only in RAM until it is serialized
+
+`slam_toolbox` holds the pose graph in memory and serializes only on request. On 2026-09-05 a
+floor-1 mapping drive died with its session: no partial map, nothing on disk, nothing to salvage,
+the walk repeated from scratch. Nothing was recording, so there was never a second chance to have.
+
+```bash
+bash bringup/map_insurance.sh start floor1     # BEFORE the drive, in its own terminal
+```
+
+It records `/scan /scan_nav /tf /tf_static /odom` — what slam_toolbox actually consumes, ~1–2 MB
+per minute — so the drive can be replayed and rebuilt offline. `ros2 bag record -a` is not an
+option here: `/ouster/points` is 3.1 MB per cloud and the one such bag in `runs/` is 3.4 GB.
+
+### Known trap: `session.sh` step 0 pings the xArm for every session type
+
+`bringup/session.sh:66-68` pings `192.168.1.119` (lidar), **`192.168.1.221` (xArm)** and
+`192.168.1.1` (router) and dies on the first unreachable one — before it looks at the command word.
+So a **nav-only or mapping-only** run is blocked whenever the arm is powered off, which is the
+normal state for a mapping drive. It presents as `192.168.1.221 unreachable`, which reads as a
+fault on the one cable that also carries the lidar.
+
+**Proposed, not applied:** keep `.119` and `.1` fatal for every session, demote `.221` to a warning
+for `map` and `nav`, and leave it fatal for `campaign` and anything that presses. Not applied here
+because `session.sh` is live; it belongs to whoever is next at the console.
+
+---
+
 ## Known-open
 
 1. **The press.** Untested since the READY → LOOK → GROUND → REACH reorder. This is the one thing
@@ -274,7 +364,15 @@ not cosmetic — it is what keeps a simulated route from ever reaching a real ch
    sim can validate navigation and the state machine, but **cannot** validate grounding. This is why
    `safety/lidar_lift.py` exists — it lifts a 2D box to 3D from lidar when depth has nothing, which
    also covers glass doors, where depth genuinely fails on hardware too.
-4. **Elevator interaction.** Never run on any system.
+4. **Elevator interaction.** The lift has never been ridden. Floor 2's map (`maps/floor2.*`) and
+   its five `f2_` waypoints exist and all four nav legs have been driven; the in-car press has
+   been tuned by hand. The handover itself is untested.
+5. **Floor 1 is mid-re-map.** It was two maps — `elevator` (lift lobby, relocalizable) and
+   `atrium` (ADA door, `.pgm`/`.yaml` only, so not relocalizable and not mergeable). One
+   continuous drive covering both is being recorded as `floor1`. `config/floors.yaml` already
+   names it and its five `f1_` waypoints, so `floor_swap.py --check` fails until the drive is
+   done — deliberately. `bringup/elevator_route.sh` still drives the old unsuffixed names and
+   will need updating after. See [docs/FLOOR1_REMAP.md](docs/FLOOR1_REMAP.md).
 
 ---
 
