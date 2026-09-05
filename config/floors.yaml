@@ -46,43 +46,53 @@ floors:
     # The button INSIDE the car that sends it to THIS floor. See the warning under floor 2.
     select_query: "the blue elevator button"
 
+    # OPERATOR NOTE 2026-09-05, verbatim: "we are trying to hit the 1st floor button so #0.33 for
+    # the arm". Recorded here rather than acted on -- 0.33 has not been tied to a named parameter
+    # yet, and guessing which one it is (a z offset, a reach, a joint target) is how a wrong number
+    # ends up in a config that safety code reads. Confirm the unit against the panel at press time,
+    # then replace this comment with the actual field.
+
   # -------------------------------------------------------------------------------------------
   "2":
     description: >
-      Destination floor. Map recorded and saved 2026-09-04 18:28 (maps/elevator_f2.*, 719x444 at
-      0.05 m, 4213 occupied cells, lift lobby + car interior). Waypoints recorded the same evening
-      in that map's localization session. NOT YET DRIVEN -- no leg of this floor has been executed
-      by Nav2, and the lift has never been ridden.
-    map: elevator_f2
+      Destination floor. Map recorded and saved 2026-09-05 as maps/floor2.* (267 KB grid, 20.4 MB
+      posegraph, 2884 occupied cells). That is the CLEAN re-map, made after
+      safety/cloud_artifact_filter.py stopped the OS0 near-field crosstalk from stamping phantom
+      walls; the earlier contaminated run is kept as maps/floor2.contaminated.* at 3467 occupied
+      cells, and the 583-cell difference is the artifact. All five waypoints below were recorded
+      2026-09-05 in that map's own localization session, and every one of the four nav legs has
+      been driven successfully by Nav2. The in-car press has been tuned by hand at car_panel.
+      The lift has NOT yet been ridden.
+    map: floor2
 
+    # CORRECTED 2026-09-05. This block previously named map 'elevator_f2' and waypoints
+    # 'call_button_f2', 'car_panel_f2' and so on. NONE OF THOSE EXIST: the map on disk is
+    # maps/floor2.* and the recorded waypoints are all f2_-PREFIXED, not _f2-SUFFIXED. The entry
+    # had been written from the naming convention described at the top of this file rather than
+    # from the waypoints that were actually recorded, so `floor_swap.py --to 2 --go` would have
+    # failed to find its seed pose with the robot already standing inside the lift car. Caught by
+    # `floor_swap.py --check`, which is the one piece of this that behaved correctly.
     waypoints:
-      call_button:     call_button_f2
-      door_reverse:    lift_door_reverse_f2
-      car_facing_out:  car_facing_out_f2
-      car_panel:       car_panel_f2
-      # FORWARD ENTRY (2026-09-05). Optional roles; when both are present the route drives INTO
-      # the car nose-first instead of reversing. Two independent reasons, both measured today:
-      #   1. TIME. call_button_f2 is at yaw +108.4 and lift_door_facing_f2 at +107.3 -- a 1.1 deg
-      #      change. Backing in needs lift_door_reverse_f2 at -68.1, a ~176 deg turn that took
-      #      21.2 s, and an ADA opener does not hold that long. The doors shut mid-approach and
-      #      the entry leg was then planning through a wall.
-      #   2. THE REAR SENSOR ARTIFACT. The OS0 reports a ring of returns 0.85-1.20 m behind the
-      #      robot at z 0.41-0.89 m with nothing physically there (operator confirmed by eye,
-      #      2026-09-05). Reversing aims that arc into the car and stamps phantom obstacles across
-      #      the doorway. Driving forward leaves it trailing behind.
-      # All rotation then happens INSIDE the car, with the doors shut and no clock running.
-      door_facing:     lift_door_facing_f2
-      car_facing_in:   car_facing_in_f2
-      # THE EXIT IS THE SAME SPOT AS door_reverse, AND THAT IS NOT LAZINESS -- IT IS MEASURED.
-      # Driving straight out of the car along car_facing_out_f2's own heading, for the distance
-      # between the two poses, lands 1.9 cm from lift_door_reverse_f2 with 1.0 deg of heading
-      # difference (2026-09-04). The pose you line up on before reversing in IS the pose you end
-      # up in after driving out; they differ only in which direction you were travelling. Floor 1
-      # has two separate waypoints here (lift_door_reverse / lift_door) because they were recorded
-      # separately, not because the geometry requires it.
-      # safety/floor_plan.check_building() permits one name in two roles on the SAME floor; what
-      # it refuses is one name shared across floors, which is the case that silently overwrites.
-      exit:            lift_door_reverse_f2
+      call_button:     f2_call_button    # outside, at the call plate      (+6.499,+2.119)  +48.6
+      door_facing:     f2_lift_door      # outside, NOSE toward the doors  (+5.907,+2.537)  +55.4
+      car_facing_in:   f2_car_at_panel   # inside, facing away from doors  (+7.252,+4.298)  +56.2
+      car_facing_out:  f2_car_at_doors   # inside, facing the doors        (+7.252,+4.298) -123.8
+      car_panel:       f2_car_panel      # inside, square to the panel     (+6.889,+4.138) +174.3
+      exit:            f2_lift_door      # back outside the doors
+
+    # NO door_reverse, DELIBERATELY. Floor 2 enters nose-first, so no reverse pose was ever
+    # recorded and none should be invented. safety/floor_plan.py waives the role when door_facing
+    # and car_facing_in are both present -- see FORWARD_ENTRY_ROLES there for why pointing
+    # door_reverse at f2_lift_door instead would have been a lie no checker could catch.
+    #
+    # car_facing_in and car_facing_out are the SAME POSITION, 180 deg apart. The second was
+    # derived by flipping the first's heading rather than recorded separately, because the
+    # operator asked for exactly that. The turn between them is bringup/spin.py, NOT a Nav2 goal:
+    # MPPI takes its full 0.8 rad/s and loses the scan match. See spin.py's header.
+    #
+    # car_panel is 0.48 m from car_facing_out and is the pose the arm press was actually tuned at,
+    # after several offset corrections. It is NOT interchangeable with car_facing_in even though
+    # both sit "inside the car" -- car_facing_in has only ever been validated for navigation.
 
     call_query: "the blue elevator call button"
 

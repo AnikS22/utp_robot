@@ -332,7 +332,7 @@ def clear_costmaps() -> str:
 # ---------------------------------------------------------------------------------------------
 # The swap
 # ---------------------------------------------------------------------------------------------
-def do_swap(floor_id: str, go: bool) -> int:
+def do_swap(floor_id: str, go: bool, seed_role: str = "car_facing_out") -> int:
     cfg = load_yaml(FLOORS_YAML)
     wps = load_waypoints()
     ok, why = check_building(cfg, wps, maps_present())
@@ -347,7 +347,7 @@ def do_swap(floor_id: str, go: bool) -> int:
         return 2
     dest = floors[floor_id]
     try:
-        sx, sy, syaw = seed_pose(cfg, floor_id, wps)
+        sx, sy, syaw = seed_pose(cfg, floor_id, wps, role=seed_role)
     except ValueError as e:
         print(f"REFUSED -- no seed pose: {e}", file=sys.stderr)
         emit("swap", False, floor_id, dest.map, "no seed pose")
@@ -356,7 +356,7 @@ def do_swap(floor_id: str, go: bool) -> int:
     stem = MAPS_DIR / dest.map
     print(f"floor {floor_id}  map '{dest.map}'")
     print(f"  seed  x={sx:+.4f} y={sy:+.4f} yaw={math.degrees(syaw):+.1f} deg "
-          f"(waypoint '{dest.waypoints['car_facing_out']}')")
+          f"(waypoint '{dest.waypoints[seed_role]}', role {seed_role})")
     print(f"  this is a SEED, not a search: inside a closed car the scan is four blank walls and")
     print(f"  carries no information to search with. --verify, with the doors open, is the check.")
 
@@ -524,6 +524,13 @@ def main() -> int:
     g.add_argument("--to", metavar="FLOOR", help="swap localization onto this floor's map")
     g.add_argument("--verify", metavar="FLOOR", help="the gate: may the base move on this floor?")
     ap.add_argument("--go", action="store_true", help="with --to: actually do it")
+    # WHERE THE ROBOT IS RIDING. The seed is only correct if it names the spot the robot actually
+    # occupies; see safety/floor_plan.seed_pose. Default is the pose facing the doors, which is
+    # where a robot that drove in and stopped will be -- but a robot that then moved to the panel
+    # to press a floor button rides down at car_panel, and must be seeded there.
+    ap.add_argument("--seed-role", default="car_facing_out",
+                    choices=("car_facing_out", "car_panel", "car_facing_in"),
+                    help="role naming where the robot physically is (default: car_facing_out)")
     ap.add_argument("--doors-open", action="store_true",
                     help="with --verify: the OPERATOR states the doors are open")
     ap.add_argument("--check-doors", action="store_true",
@@ -535,7 +542,7 @@ def main() -> int:
     if a.plan:
         return do_plan([str(f) for f in a.plan])
     if a.to:
-        return do_swap(str(a.to), a.go)
+        return do_swap(str(a.to), a.go, seed_role=a.seed_role)
     return do_verify(str(a.verify), a.doors_open, a.check_doors)
 
 

@@ -78,6 +78,18 @@ KINDS = (NAV, PRESS, DOORS, RIDE, SWAP, VERIFY)
 # be the name on floor 1, because both live in maps/waypoints.yaml and the store is flat.
 REQUIRED_ROLES = ("call_button", "door_reverse", "car_facing_out", "car_panel", "exit")
 
+# ...except that door_reverse is only required for a floor that BACKS INTO the car. A floor that
+# enters nose-first defines door_facing + car_facing_in instead and never reverses, so it has no
+# reverse pose to record. Floor 2 is such a floor (see config/floors.yaml for the two measurements
+# that forced forward entry: a 176 deg turn takes 21.2 s and the ADA opener does not hold that
+# long, and reversing aims the OS0's near-field artifact into the doorway).
+#
+# The alternative was to point floor 2's door_reverse at its door_facing pose to satisfy the
+# schema. That would have been a lie in a config file that safety code reads, and it is exactly
+# how a check stops meaning anything: it would still pass, while naming a pose whose heading is
+# 176 deg from the one the name promises.
+FORWARD_ENTRY_ROLES = ("door_facing", "car_facing_in")
+
 # A map you can relocalize into is all four files or it is a picture -- the same rule
 # bringup/map_persist.sh enforces on the way in, restated here so a config referencing a
 # grid-only map is refused before the robot is in a lift.
@@ -170,7 +182,10 @@ def floors_of(cfg: dict) -> dict[str, Floor]:
         wps = spec["waypoints"]
         if not isinstance(wps, dict):
             raise ValueError(f"floor '{key}' waypoints is not a mapping")
-        absent = [r for r in REQUIRED_ROLES if not wps.get(r)]
+        required = list(REQUIRED_ROLES)
+        if all(wps.get(r) for r in FORWARD_ENTRY_ROLES):
+            required.remove("door_reverse")     # forward entry: nothing ever reverses in
+        absent = [r for r in required if not wps.get(r)]
         if absent:
             raise ValueError(f"floor '{key}' has no waypoint for role(s): {', '.join(absent)}")
         out[key] = Floor(id=key, map=str(spec["map"]),
@@ -216,7 +231,7 @@ def check_building(cfg: dict, waypoints: dict, maps_present: dict) -> tuple[bool
                 f"and given only a grid it starts a NEW graph at the robot's feet while looking "
                 f"healthy. Re-map and save: bash bringup/map_persist.sh save {fl.map}")
 
-        for role in REQUIRED_ROLES:
+        for role in fl.waypoints:
             name = fl.waypoints.get(role)
             wp = (waypoints or {}).get(name)
             if wp is None:
@@ -368,12 +383,25 @@ def plan_ride(cfg: dict, itinerary) -> list[Step]:
     return steps
 
 
-def seed_pose(cfg: dict, floor_id: str, waypoints: dict) -> tuple[float, float, float]:
+def seed_pose(cfg: dict, floor_id: str, waypoints: dict,
+              role: str = "car_facing_out") -> tuple[float, float, float]:
     """(x, y, yaw) to hand slam_toolbox as map_start_pose when swapping ONTO ``floor_id``.
 
-    It is the destination floor's car_facing_out waypoint, and it is correct by construction: the
-    robot has not moved relative to the car, the car stops in the same place on every floor, and
-    that waypoint was recorded at that spot in that car on that floor's map.
+    It is the destination floor's waypoint for ``role``, and it is correct by construction ONLY
+    when the robot is physically standing in that spot: the robot does not move relative to the car
+    during the ride, the car stops in the same place on every floor, and that waypoint was recorded
+    at that spot in that car on that floor's map.
+
+    ROLE IS A PARAMETER BECAUSE THE ROBOT DOES NOT ALWAYS RIDE IN car_facing_out. This defaulted to
+    car_facing_out unconditionally, which is right only if the ride begins from the pose the doors
+    face. On 2026-09-05 the robot rode down parked at car_panel, 0.48 m and 116 deg away from
+    car_facing_out -- seeding at car_facing_out would have handed slam_toolbox a start pose the
+    robot was demonstrably not at, inside a car whose blank walls give the matcher nothing to
+    correct it with. It would have come up ACTIVE and confident and half a metre wrong, and the
+    error would only have surfaced as a failed nav leg after the doors opened.
+
+    Pass the role matching WHERE THE ROBOT ACTUALLY IS when the swap runs. The caller knows this
+    and the config does not.
 
     THIS IS A SEED, NOT A SEARCH, and the difference matters. bringup/relocalise.py's global search
     scores the live scan over every free cell of the map -- which inside a closed car is a scan of
@@ -387,7 +415,10 @@ def seed_pose(cfg: dict, floor_id: str, waypoints: dict) -> tuple[float, float, 
     floors = floors_of(cfg)
     if floor_id not in floors:
         raise ValueError(f"unknown floor '{floor_id}'")
-    name = floors[floor_id].waypoints["car_facing_out"]
+    name = floors[floor_id].waypoints.get(role)
+    if not name:
+        have = ", ".join(sorted(floors[floor_id].waypoints)) or "none"
+        raise ValueError(f"floor {floor_id} has no waypoint for role '{role}' (has: {have})")
     wp = (waypoints or {}).get(name)
     if wp is None:
         raise ValueError(f"floor {floor_id}: waypoint '{name}' is not recorded, so there is no "
