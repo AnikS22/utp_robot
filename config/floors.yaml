@@ -10,9 +10,11 @@
 #
 # WAYPOINT NAMES ARE GLOBAL. maps/waypoints.yaml is one flat store shared by every map, so the
 # names below must be unique across floors or the second recording silently overwrites the first.
-# Hence the _f1 / _f2 suffixes. Floor 1 is the exception: its five waypoints were recorded on
-# 2026-09-01 under the unsuffixed names that bringup/elevator_route.sh already drives, and
-# renaming them would invalidate the one route on this robot that has been driven.
+# Hence the f1_ / f2_ prefixes -- ON BOTH FLOORS, since 2026-09-05. Floor 1 used to be the
+# exception: its five waypoints were recorded unsuffixed on 2026-09-01 because bringup/
+# elevator_route.sh already drove them by those names. They are being deleted and re-recorded
+# under f1_ names in the floor1 re-map (see the floor "1" entry below for why), which leaves no
+# unprefixed waypoint anywhere and no way for floor 3 to collide with floor 1 by accident.
 #
 # RECORD EACH FLOOR'S WAYPOINTS WHILE LOCALIZED IN THAT FLOOR'S MAP, in the session that saved it.
 # Full procedure: docs/MULTIFLOOR.md.
@@ -24,17 +26,57 @@ floors:
   # -------------------------------------------------------------------------------------------
   "1":
     description: >
-      Ground floor lift lobby. The map, the waypoints and both query strings here are the ones
-      bringup/elevator_route.sh drives; nothing in this entry is new or unproven.
-    map: elevator
+      Ground floor lift lobby AND the ADA door area, in ONE map: maps/floor1.*, recorded
+      2026-09-05 as a single continuous drive. NOT YET RECORDED AT THE TIME OF THIS EDIT -- this
+      entry is written ahead of the drive, so floor_swap.py --check FAILS until the map is saved
+      and the five f1_ waypoints below are recorded. That failure is correct fail-closed
+      behaviour and must NOT be "fixed" by pointing this floor back at the old map.
 
+    # WHY FLOOR 1 IS BEING RE-MAPPED, AND WHY IT HAD TO BE ONE CONTINUOUS DRIVE.
+    #
+    # Floor 1 used to be TWO maps and neither of them could do the job on its own:
+    #
+    #   maps/elevator.*  the lift lobby. All four files, a real pose graph, relocalizable. This is
+    #                    what this entry named until now and what elevator_route.sh drives.
+    #   maps/atrium.*    the ADA door area, where the ADA-button task waypoints were recorded.
+    #                    ONLY .pgm and .yaml. No .posegraph, no .data.
+    #
+    # A .pgm/.yaml pair is a PICTURE, not a map you can localize into. slam_toolbox's localization
+    # mode deserializes the .posegraph; handed only a grid it does not error -- it silently starts
+    # a NEW, EMPTY graph whose origin is wherever the robot is standing, publishes /map, reports
+    # ACTIVE, and looks completely healthy. So the ADA map could never localize, and every
+    # waypoint recorded in it names a coordinate in a frame that no longer exists.
+    #
+    # Nor could the two be merged. A slam_toolbox pose graph comes from ONE continuous drive, and
+    # there has never been a drive linking the lift lobby to the ADA door -- there is no chain of
+    # scan matches between them to merge along. Stitching two grids by hand would produce exactly
+    # the thing described above: a picture. The only fix is to drive both areas in one session so
+    # one graph covers both, which is what maps/floor1.* is.
+    #
+    # THE OLD MAPS ARE KEPT ON DISK, NOT DELETED. maps/elevator.* and maps/atrium.* stay exactly
+    # where they are as backup -- elevator.* is still the only floor-1 map that has ever been
+    # driven, and until floor1 is recorded, saved and checked it is the only one that works.
+    map: floor1
+
+    # ALL FIVE RE-RECORDED UNDER f1_ NAMES. The old unsuffixed floor-1 waypoints -- call_button,
+    # car_facing_out, car_panel, lift_door, lift_door_reverse -- belong to the OLD `elevator` map
+    # and are being DELETED from maps/waypoints.yaml, not renamed: their coordinates are in
+    # elevator's frame and floor1 has an unrelated origin, so carrying the numbers across would
+    # name a different physical place. Re-record them in floor1's own localization session.
+    #
+    # ROLE NAMES COME FROM safety/floor_plan.py, not from taste: REQUIRED_ROLES is
+    # (call_button, door_reverse, car_facing_out, car_panel, exit). door_reverse is waived only
+    # for a floor that enters nose-first and therefore defines BOTH of FORWARD_ENTRY_ROLES
+    # (door_facing, car_facing_in) -- that is floor 2, not floor 1. Floor 1 REVERSES INTO the car,
+    # which is why f1_lift_door_reverse is on this list and must be recorded too: five names, one
+    # for each of the five being deleted.
     waypoints:
-      call_button:     call_button          # outside the lift, facing the call plate
-      door_reverse:    lift_door_reverse    # outside, BACK to the doors -- we reverse in, because
-                                            # rotating inside a 2 m car is what confused Nav2 first
-      car_facing_out:  car_facing_out       # inside the car, facing the doors. THE SEED POSE
-      car_panel:       car_panel            # inside, square to the button panel
-      exit:            lift_door            # back outside the doors
+      call_button:     f1_call_button        # outside the lift, facing the call plate
+      door_reverse:    f1_lift_door_reverse  # outside, BACK to the doors -- we reverse in, because
+                                             # rotating inside a 2 m car is what confused Nav2 first
+      car_facing_out:  f1_car_facing_out     # inside the car, facing the doors. THE SEED POSE
+      car_panel:       f1_car_panel          # inside, square to the button panel
+      exit:            f1_lift_door          # back outside the doors
 
     # NAME THE COLOUR, NOT THE OBJECT. Measured 2026-09-03: "the elevator call button on the wall"
     # grounded the SILVER PANEL at 0.3859 -- inside the band where every known-bad grounding in
