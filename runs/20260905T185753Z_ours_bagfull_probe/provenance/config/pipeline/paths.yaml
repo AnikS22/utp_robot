@@ -1,0 +1,21 @@
+# Path configuration — keep EVERYTHING path-portable so the campaign moves to an
+# A100 HPC cluster unchanged. No absolute paths in code; resolve via this file.
+# Env-var overrides: any value may be written as "${ENV:VARNAME:default}".
+
+# Roots (override on HPC via env).
+isaac_sim_root: "${ENV:ISAAC_SIM_ROOT:~/isaacsim}"
+isaac_assets_root: "${ENV:ISAAC_ASSETS_ROOT:~/isaacsim_assets/Assets/Isaac/5.1}"
+project_root: "${ENV:UTP_ROOT:~/Desktop/Unlocking_the_path}"
+
+# Where imported robot/scene USDs live (built by isaac_worker, version-controlled or synced).
+assets_dir: "${project_root}/isaac_worker/assets"
+
+# Outputs — logs, artifacts, occupancy maps. Override to scratch/ on HPC via UTP_OUTPUT_DIR.
+output_dir: "${ENV:UTP_OUTPUT_DIR:${project_root}/runs}"
+log_file: "${output_dir}/trials.jsonl"
+sqlite_file: "${output_dir}/trials.sqlite"
+artifacts_dir: "${output_dir}/artifacts"
+
+# Third-party robot descriptions (cloned in M1).
+ranger_ros2_repo: "https://github.com/agilexrobotics/ranger_ros2"
+xarm_ros2_repo: "https://github.com/xArm-Developer/xarm_ros2"

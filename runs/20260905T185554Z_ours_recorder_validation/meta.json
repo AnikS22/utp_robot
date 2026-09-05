@@ -1,0 +1,16 @@
+{
+  "scene": "recorder_validation",
+  "method": "ours",
+  "map": "",
+  "started_utc": "2026-09-05T18:55:55.329835+00:00",
+  "git_sha": "262b40a16dff0cca558bbb648803c410e6531fc1",
+  "host": "weim-Dell-Pro-Max-16-Plus-MB16250",
+  "ros_domain_id": "9",
+  "camera_ns": "mast_cam",
+  "frame_fps": 2.0,
+  "frame_width": 640,
+  "note": "poses.jsonl is the trajectory; events.jsonl is appended by the route, not by this process",
+  "ended_utc": "2026-09-05T18:56:48.229479+00:00",
+  "n_frames": 85,
+  "n_poses": 500
+}

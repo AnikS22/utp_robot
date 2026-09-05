@@ -1,0 +1,56 @@
+# Mast camera — device, stream settings, and mount pose.
+#
+# MODEL CORRECTION, measured 2026-08-20: the connected camera is a RealSense **D435**
+# (USB 8086:0b07), not the D455 named throughout docs/HARDWARE_SPECS.md. This is not a
+# documentation nit — the colour FOV differs by a third:
+#
+#   D455 (assumed) : 90 deg H x 65 deg V
+#   D435 (actual)  : 70.2 deg H x 43.2 deg V   <- MEASURED from the streamed intrinsics
+#
+# Consequence for the pipeline: at a given standoff the grounder sees a substantially narrower
+# scene, so a door plate or call panel that the sim assumed was in frame may not be. Either stand
+# further back (and lose angular resolution on the target) or plan on a look-around sweep. The
+# D435 does have a CLOSER minimum depth than the D455 (~0.28 m vs ~0.52 m), which helps at
+# press range -- this is a trade, not a pure downgrade.
+#
+# The D435 also has NO IMU (that is the D435i). Anything expecting /mast_cam/imu gets nothing.
+
+serial_no: "261222076248"     # librealsense serial. NOTE: the USB descriptor reports 310323021610
+                              # instead -- D4xx report a different ASIC serial there. The ROS
+                              # driver's serial_no matches the librealsense value, not the USB one.
+model: "D435"
+firmware: "5.15.1.55"
+
+# Namespace and frame, per docs/HARDWARE_SPECS.md.
+namespace: "mast_cam"
+frame_id: "mast_cam_optical"
+parent_frame: "base_link"
+
+# Streams. Depth is 848x480 because that is the D435's native depth resolution -- asking for
+# 1280x720 depth makes the driver upscale, which invents detail it does not have.
+color_width: 1280
+color_height: 720
+depth_width: 848
+depth_height: 480
+fps: 30
+
+# MUST be true. Misalignment presents as "grounding is right but the 3D point is wrong", which is
+# very easily misdiagnosed as a hand-eye error and sends you back to redo CALIBRATION.md item 8
+# for nothing.
+align_depth: true
+
+# base_link -> mast_cam_link (body frame). Composed 2026-08-25 from the measured
+# calib/handeye.json base_link->color_optical transform and the live D435 factory
+# mast_cam_link->color_optical transform. Hand-eye RMS 3.0 mm, worst 8.2 mm.
+mount:
+  x_m: -0.326933889
+  y_m: -0.002611969
+  z_m: 1.471152384
+  roll_rad: 0.010940978
+  pitch_rad: 0.090636624
+  yaw_rad: 0.037076534
+  status: measured_handeye
+
+# Measured 2026-08-20 on the bench, camera on a desk pointing across the room.
+measured_color_fov_deg: [70.2, 43.2]
+measured_depth_valid_fraction: 0.61

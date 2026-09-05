@@ -1,0 +1,5 @@
+{"stamp": 1788559364.950148, "kind": "leg_start", "detail": "car_facing_out"}
+{"stamp": 1788559400.9287946, "kind": "leg_end", "detail": "car_facing_out:arrived"}
+{"stamp": 1788559402.3024292, "kind": "leg_start", "detail": "car_panel"}
+{"stamp": 1788559584.581554, "kind": "leg_end", "detail": "car_panel:timeout"}
+{"stamp": 1788559584.6297364, "kind": "route_complete", "detail": ""}

@@ -1,0 +1,138 @@
+# Base-motion safety arbiter. Consumed by utp/safety/twist_mux_node.py.
+#
+# THE RULE THIS FILE ENCODES: /cmd_vel has exactly ONE publisher — the mux. Nav2, the pipeline's
+# servo loops, and teleop each publish to their own topic and the mux decides. Before this, Nav2
+# and utp/pipeline/isaac_world.py both published straight to /cmd_vel, so there was no single
+# place to intervene; creating that chokepoint is what makes every interlock below possible.
+
+enabled: true
+
+output_topic: "/cmd_vel"
+status_topic: "/safety/status"      # String (JSON) — selected source, gates, ages, block reason
+rate_hz: 20.0                       # the mux publishes EVERY tick, zeros included (see arbiter.py)
+
+# Priority mux. Higher priority wins whenever its topic is fresh.
+#   requires_enable     : autonomous — only passes while the deadman is held.
+#   allows_arm_override : may move the base with the arm extended, and only while /safety/override
+#                         is asserted. Teleop only: this is the recovery path for a stuck arm.
+sources:
+  - name: teleop
+    topic: "/cmd_vel_teleop"
+    priority: 100
+    requires_enable: false
+    allows_arm_override: true
+  - name: servo
+    topic: "/cmd_vel_servo"         # utp/pipeline/*_world.py approach / retreat / look-around
+    priority: 50
+    # requires_enable: false -- SAME SUPERVISED DECISION AS `nav` ABOVE, 2026-09-01. The approach,
+    # look-around and retreat loops run under this source. With it true and no deadman held, the
+    # mux discarded every one of them and the FSM reported "moved=False" on each rung -- an inert
+    # look ladder that reads in the record as "looked and saw nothing". MUST GO BACK TO TRUE for
+    # any campaign; bringup/run_campaign.py refuses to start while it is false.
+    requires_enable: false
+    allows_arm_override: false
+  - name: nav
+    topic: "/cmd_vel_nav"           # Nav2 controller_server output (remapped in the launch file)
+    priority: 10
+    # requires_enable: false -- SET BY THE OPERATOR 2026-09-01, deliberately, for SUPERVISED runs.
+    #
+    # The deadman (bringup/deadman.py) proves a human is actively asking for motion. On this robot
+    # it is a browser button, and holding it costs the operator the hand that would otherwise be
+    # on the chassis E-stop. That E-stop cuts motor power; the software gate only stops commands
+    # reaching the driver, and the chassis still coasts ~1.26 s / ~18 cm after commands stop
+    # (measured 2026-08-21). Trading a stronger interlock for a weaker one to satisfy the config
+    # is worse, not better, so the operator holds the E-stop and this gate stands down.
+    #
+    # THE CONDITIONS THIS DEPENDS ON: an operator at the robot, hand on the E-stop, watching.
+    # It is NOT valid for an unattended run and NOT valid for the 50-trial campaign --
+    # run_campaign.py stops when the deadman goes silent, which is the whole point of it there.
+    # Set this back to true before any campaign run.
+    requires_enable: false
+    allows_arm_override: false
+
+# ARM-STOWED INTERLOCK: OFF. Set by the operator 2026-09-03, deliberately, for the elevator task.
+#
+# WHY. The lift task requires the base to move while the arm is still coming back: press the call
+# button, then get into the car before the doors close. Waiting for a full fold between the press
+# and the drive does not fit in that window, and the built-in alternative does not either --
+# allows_arm_override needs /safety/override held at >5 Hz AND clamps to override_speed_factor
+# (0.25), i.e. a crawl, which is the opposite of what "get in before the doors shut" needs.
+#
+# WHAT IT COSTS, stated plainly. The arm reaches ~0.88 m from link_base and the chassis coasts
+# ~1.26 s / ~18 cm after commands stop (measured 2026-08-21). With this false, a leg driven with
+# the arm out can put the tool into a door frame or a wall and nothing in software will stop it:
+# there is no force sensor on this arm (get_ft_sensor_data answers zeros, collision_sensitivity
+# is 0). The operator's judgement, stated 2026-09-01: "worse case the arm pushes ranger back a lil".
+# The physical e-stop is the protection, which is how this robot is run.
+#
+# WHAT IS UNAFFECTED. estop still hard-blocks every source and is latching. The arm monitor still
+# publishes /safety/arm_stowed and /safety/status still reports it, so the gate remains VISIBLE --
+# it just no longer blocks. Set this back to true for anything unattended.
+require_arm_stowed: false
+
+# Gate topics (all std_msgs/Bool). Every one is FAIL-CLOSED: never-seen and stale both mean
+# "not permitted". A stale gate is indistinguishable from a crashed publisher, and the crash is
+# what we are defending against.
+gates:
+  arm_stowed: "/safety/arm_stowed"  # from utp/safety/arm_monitor_node.py
+  enable: "/safety/enable"          # deadman — held button on the operator gamepad
+  override: "/safety/override"      # human-asserted arm-extended recovery
+  estop: "/safety/estop"            # LATCHING; cleared only by the /safety/clear_estop service
+
+timeouts:
+  input_s: 0.3      # a command source older than this is treated as absent
+  gate_s: 0.2       # a gate older than this collapses to False
+
+# Speed and slew ceilings applied AFTER arbitration.
+#   max_wz is the tightest relative to the platform's capability: the Ranger spins about its
+#   centre, and with the arm out the tool tip sweeps ~0.88 m radius through space the costmap
+#   believes is empty.
+#   Acceleration is capped well below deceleration on purpose — gentle ramp-up protects the raised
+#   CG (the riser made the known high-CoM tip worse), but refusing to stop promptly is never safer.
+limits:
+  max_vx: 0.6           # m/s
+  max_vy: 0.4           # m/s
+  max_wz: 0.8           # rad/s
+  max_accel_lin: 0.5    # m/s^2
+  max_decel_lin: 1.5    # m/s^2
+  max_accel_ang: 1.0    # rad/s^2
+  max_decel_ang: 3.0    # rad/s^2
+
+override_speed_factor: 0.25   # speed ceiling while driving with the arm extended
+
+# --- arm monitor -----------------------------------------------------------------------------
+# Publishes gates.arm_stowed. Two backends, same output topic, so the mux is identical in sim and
+# on hardware.
+#   scene_state : sim — /scene/state JSON, stowed := arm_state == "idle"
+#   xarm_sdk    : real — joint angles from XArmAPI compared against stow_pose_deg
+# On real hardware we gate on MEASURED joint angles, never on an FSM's belief about itself: the
+# FSM reporting "idle" after a crash is exactly the case the interlock exists to catch.
+arm_monitor:
+  # MEASURED joint angles on hardware, never an FSM's belief about itself. "scene_state" is the
+  # SIM backend: it reads /scene/state, which does not exist on this machine, so the arm_stowed
+  # gate fail-closes forever and the nav and servo mux sources are silently dead. Teleop still
+  # works (allows_arm_override), which is exactly why this hides.
+  backend: "xarm_sdk"
+  publish_rate_hz: 20.0
+  scene_state_topic: "/scene/state"
+  stale_after_s: 0.5          # default; per-backend below, because the rates differ 30x
+
+  # Sized against the rate each backend's evidence ACTUALLY arrives at, not a nominal one.
+  # Get this wrong and the gate collapses between messages: the arm is stowed, the topic is
+  # alive, and the base still refuses to move with "arm_not_stowed" three processes away.
+  xarm_sdk:
+    stale_after_s: 0.5        # polled at 20 Hz; 0.5 s tolerates ~10 missed reads
+  scene_state:
+    stale_after_s: 4.0        # /scene/state is nominally 5 Hz but MEASURED 0.55 Hz headless
+                              # on this laptop (2026-08-27) -- real time factor, not a fault
+  absent:
+    stale_after_s: 3.0        # self-generated at 1 Hz; only a dead node makes this go stale
+  xarm:
+    ip: "${ENV:UTP_XARM_IP:192.168.1.221}"   # VERIFIED reachable 2026-08-25 via enx00e04c674c60 (192.168.1.100/24)
+    # THE OPERATOR'S PACKED POSE, set on the robot 2026-09-01 and saved to
+    # calib/arm_packed.json. It was [0,-45,-45,0,90,0] -- if the two ever disagree the arm
+    # parks somewhere the mux does not recognise, arm_stowed stays false, and the base
+    # refuses to move with everything looking healthy.
+    # J2 is -55, the hard limit set in UFACTORY Studio; see safety/arm_limits.py.
+    stow_pose_deg: [0.01, -54.0, -9.85, 0.01, 68.03, -0.01]
+    joint_tolerance_deg: 5.0

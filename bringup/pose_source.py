@@ -139,8 +139,26 @@ class PoseSource:
         node.stamp = 0.0
 
     # ---- selection ---------------------------------------------------------------------------
-    def _map_available(self, settle_s: float = 2.5) -> bool:
-        """Is there a usable map -> base_link right now? Spins, because TF needs time to fill."""
+    def _map_available(self, settle_s: float = 12.0) -> bool:
+        """Is there a usable map -> base_link right now? Spins, because TF needs time to fill.
+
+        WHY 12 s AND NOT 2.5. This returned False on 2026-09-05 while `tf2_echo map base_link`
+        resolved the very same transform immediately and relocalise reported a 74.3% fit -- so
+        `waypoints.py record --frame map` refused to record a pose that demonstrably existed, and
+        printed the "the CHASSIS must be running too" refusal at an operator whose chassis was
+        running. The transform was never missing; the LISTENER was.
+
+        A TransformListener built here is brand new. Before it can see anything it has to complete
+        DDS discovery of every /tf publisher, and that regularly costs several seconds on this
+        machine -- tf2_echo looks instant only because by the time you read its output it has
+        already paid the same cost. A 2.5 s budget was timing the discovery handshake, not the
+        availability of the transform, and it failed intermittently exactly as a race does.
+
+        This is the same shape as the other checks that had to be fixed today: a probe whose
+        negative result means "I did not look long enough", reported as "it is not there". When
+        this one is wrong it costs a re-recorded waypoint, so it errs long -- the budget is only
+        spent on the failing path, since success returns as soon as the transform resolves.
+        """
         import rclpy
         self._buf = Buffer()
         self._listener = TransformListener(self._buf, self.node)

@@ -291,6 +291,19 @@ else
             down the fault is upstream in the lidar or the projection."
 fi
 
+# Fresh Ouster clouds contain an intermittent low-reflectivity near-field return. It is not stale
+# DDS data: stamps advance, but Nav2 would mark every flicker lethal. Confirm near returns across
+# consecutive scans on a separate topic; SLAM continues to consume the immediate /scan stream.
+r=$(rate /scan_nav sensor_msgs.msg LaserScan 3 reliable)
+if ! ge "$r" 1.5; then
+  [ "$STATUS_ONLY" = 1 ] || { note "/scan_nav silent -- restarting temporal near-field filter"
+    kill_matching scan_temporal_filter.py; sleep 2
+    start_bg python3 "$REPO/safety/scan_temporal_filter.py"; sleep 5
+    r=$(rate /scan_nav sensor_msgs.msg LaserScan 3 reliable); }
+fi
+ge "$r" 1.5 && record scan_nav ok "/scan_nav ${r} Hz, near returns confirmed" \
+              || record scan_nav FAIL "/scan_nav ${r} Hz"
+
 # ---------------------------------------------------------------- 3. camera (optional)
 if [ "${UTP_NO_CAMERA:-0}" = "1" ]; then
   record camera skip "UTP_NO_CAMERA=1 -- grounding and pressing will NOT work"

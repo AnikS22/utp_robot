@@ -157,6 +157,10 @@ echo "  /scan_filtered ok"
 # The relay is NOT optional: p2l publishes BEST_EFFORT, slam_toolbox subscribes RELIABLE, and
 # incompatible DDS QoS delivers zero messages with no error anywhere.
 alive /scan || { bg python3 bringup/scan_relay.py; waitfor 20 /scan || die "no /scan — relay failed"; }
+# Nav2 gets temporal confirmation on its own topic. /scan remains the immediate stream used by
+# slam_toolbox; feeding an unconfirmed 0.45 m Ouster flicker to a costmap creates a lethal cell.
+alive /scan_nav || { bg python3 safety/scan_temporal_filter.py; waitfor 20 /scan_nav \
+  || die "no /scan_nav — temporal near-field filter failed"; }
 
 # 2b. THE CAMERA. session.sh has always GATED on the camera without ever STARTING it: health.py
 # fails CRITICAL on camera_info < 20 Hz and lab_gates gate 2 requires base_link -> mast_cam_link,

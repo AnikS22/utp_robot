@@ -54,15 +54,21 @@ slam_toolbox:
     # thing that mattered; the scan has to be the same KIND the map was made from.
     # The fast path is still worth having -- see the note below -- but it needs a map built from
     # /ouster/scan to localize against, not this one.
-    # /scan, NOT /scan_nav. Corrected 2026-09-05.
-    # /scan_nav exists to hide the robot's own structure from NAV2, and it does that with a wide
-    # geometric mask -- a disc out to 1.30 m across the whole rear arc. slam_toolbox must NOT read
-    # it: this file's companion note in bringup/scan_relay.py says why, and it is measured --
-    # "slam_toolbox needs returns past 1.15 m astern or it loses the lift car's side walls;
-    # MASK_MAX_M 1.00 deleted them once already and cost a map". Feeding the matcher the nav scan
-    # blinds it astern to 1.30 m, which is most of a 2 m lift car.
-    # The two consumers need opposite things from the same bearings, which is the entire reason
-    # there are two topics. SLAM gets the 0.90 m mask; Nav2 gets the 1.30 m one.
+    # /scan, FOR BOTH MAPPING AND LOCALIZATION. This line was flipped three times on 2026-09-05 and
+    # each flip was defensible in isolation; the flipping itself was the bug. A map is only valid
+    # for the chain that built it, so the mapper and the localizer MUST read the same topic. Floor 1
+    # worked for exactly that reason and floor 2 did not.
+    #
+    # It can be /scan now because the near-field crosstalk is removed upstream, at the cloud, by
+    # safety/cloud_artifact_filter.py -- range < 1.4 m AND reflectivity <= 1, which is the artifact's
+    # actual signature (reflectivity pinned at the floor value of 1 on 15 of 128 downward rings).
+    # Before that filter existed the only lever was the geometric rear mask, and using the wide one
+    # (/scan_nav, 1.30 m) for mapping traded away the returns the matcher needs inside a 2 m lift
+    # car -- bringup/scan_relay.py records that MASK_MAX_M 1.00 already cost a map once that way.
+    #
+    # /scan_nav still exists and Nav2's costmaps still read it, because Nav2 needs the rear arc
+    # blanked to reverse into anything. Different consumers, different masks, one sensing chain --
+    # see bringup/sensing_chain.sh, which is now the single definition of all of it.
     scan_topic: /scan
     use_map_saver: true
     mode: mapping #localization

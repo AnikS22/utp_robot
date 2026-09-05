@@ -1,0 +1,9 @@
+{"stamp": 1788638882.774243, "kind": "leg_start", "detail": "f2_lift_door"}
+{"stamp": 1788638930.895749, "kind": "leg_end", "detail": "f2_lift_door:arrived"}
+{"stamp": 1788638934.2752964, "kind": "leg_start", "detail": "f2_call_button"}
+{"stamp": 1788638988.492299, "kind": "leg_end", "detail": "f2_call_button:arrived"}
+{"stamp": 1788638989.58159, "kind": "leg_start", "detail": "f2_car_at_panel"}
+{"stamp": 1788639021.7868748, "kind": "leg_end", "detail": "f2_car_at_panel:arrived"}
+{"stamp": 1788639024.5045903, "kind": "leg_start", "detail": "f2_car_at_doors"}
+{"stamp": 1788639101.59925, "kind": "leg_end", "detail": "f2_car_at_doors:arrived"}
+{"stamp": 1788639106.7571454, "kind": "route_complete", "detail": ""}

@@ -1,0 +1,2 @@
+probe: UTP_RUN_DIR=/home/weim/utp_robot/runs/20260905T185554Z_ours_recorder_validation  UTP_OUTPUT_DIR=/home/weim/utp_robot/runs/20260905T185554Z_ours_recorder_validation
+probe: done

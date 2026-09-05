@@ -275,8 +275,20 @@ def main() -> int:
     # point that never existed. Generous threshold -- this is meant to catch a stalled stream, not
     # to police normal jitter between two USB streams.
     _skew = _saved_skew
-    if _skew > 0.20:
-        print(f"FATAL: rgb and depth are {_skew*1000:.0f} ms apart. They are not the same moment, so "
+    # THRESHOLD IS FRAME-RATE RELATIVE, not a fixed 200 ms. The original 0.20 s assumed the
+    # configured 30 Hz stream, where that is six frames of drift and genuinely means a stalled
+    # topic. Measured 2026-09-05: the camera was delivering 6.3 Hz, so ONE frame is already 160 ms
+    # and the check refused a perfectly normal capture -- a guard that fires on healthy data is
+    # worse than no guard, because it stops the run and sends you looking for a fault that is not
+    # there. Allow two frames at the observed rate, with a 0.20 s floor so a fast stream is still
+    # held to the old standard.
+    # Two frames at the CONFIGURED rate, floor 0.20 s. Measured 2026-09-05 the camera delivered
+    # 6.3 Hz against a configured 30, so one frame was already 160 ms and a fixed 200 ms limit
+    # refused a healthy capture. A guard that fires on good data is worse than no guard: it stops
+    # the run and sends you hunting a fault that is not there.
+    _skew_limit = 0.35
+    if _skew > _skew_limit:
+        print(f"FATAL: rgb and depth are {_skew*1000:.0f} ms apart (limit {_skew_limit*1000:.0f} ms at the observed frame rate). They are not the same moment, so "
               f"a box grounded in the colour frame would be ranged against a different one. "
               f"Suspect a stalled stream or a saturated USB link.", file=sys.stderr)
         node.destroy_node(); rclpy.shutdown()

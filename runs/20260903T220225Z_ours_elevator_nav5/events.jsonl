@@ -1,0 +1,18 @@
+{"stamp": 1788472972.397395, "kind": "leg_start", "detail": "lift_door"}
+{"stamp": 1788473001.5116372, "kind": "leg_end", "detail": "lift_door:arrived"}
+{"stamp": 1788473003.6320684, "kind": "leg_start", "detail": "call_button"}
+{"stamp": 1788473050.7086089, "kind": "leg_end", "detail": "call_button:arrived"}
+{"stamp": 1788473053.652729, "kind": "leg_start", "detail": "lift_door_reverse"}
+{"stamp": 1788473078.5642533, "kind": "leg_end", "detail": "lift_door_reverse:blocked"}
+{"stamp": 1788473081.9575264, "kind": "route_complete", "detail": ""}
+{"stamp": 1788473436.7674882, "kind": "leg_start", "detail": "lift_door"}
+{"stamp": 1788473469.8055966, "kind": "leg_end", "detail": "lift_door:arrived"}
+{"stamp": 1788473470.7784057, "kind": "leg_start", "detail": "call_button"}
+{"stamp": 1788473724.8029854, "kind": "leg_start", "detail": "call_button"}
+{"stamp": 1788473753.6125093, "kind": "leg_end", "detail": "call_button:arrived"}
+{"stamp": 1788473766.5268002, "kind": "press_start", "detail": "the elevator call button on the wall"}
+{"stamp": 1788473788.2779694, "kind": "press_done", "detail": "the elevator call button on the wall"}
+{"stamp": 1788473901.2972937, "kind": "press_start", "detail": "the blue elevator call button"}
+{"stamp": 1788473964.4270043, "kind": "press_done", "detail": "the blue elevator call button"}
+{"stamp": 1788473990.3667943, "kind": "press_start", "detail": "the blue elevator call button"}
+{"stamp": 1788474055.5672112, "kind": "press_done", "detail": "the blue elevator call button"}

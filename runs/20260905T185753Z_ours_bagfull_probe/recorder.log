@@ -1,0 +1,3 @@
+[recorder] /home/weim/utp_robot/runs/20260905T185753Z_ours_bagfull_probe
+[recorder] frames: continuous (2.0 Hz @ 640 px), poses 10.0 Hz, no GPU, no /ouster/points
+[recorder] 87 frames, 499 poses -> /home/weim/utp_robot/runs/20260905T185753Z_ours_bagfull_probe

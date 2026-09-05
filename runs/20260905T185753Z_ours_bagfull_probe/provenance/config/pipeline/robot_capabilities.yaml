@@ -1,0 +1,33 @@
+# Robot capability manifest — the SELF-MODEL handed to the reasoner AND used as ground truth.
+# Faithful digital twin of the real AgileX Ranger Mini 3 + xArm6: the robot only NAVIGATES,
+# ARM-PRESSES one control at a time, and carries SOFTWARE state. It never opens a door itself,
+# never picks anything up, never uses hardware it lacks. Doors/elevators/readers are BUILDING
+# infrastructure (external), exactly as in a real automated building.
+robot: ranger_mini3_xarm6
+
+footprint:
+  length_m: 0.75
+  width_m: 0.51
+min_fit_width_m: 0.51        # a passage narrower than this is impassable ("I don't fit")
+
+# Action types the robot can choose (affordance selection: wrong type at a control = fail).
+capabilities:
+  navigate: true
+  press_button: true         # xArm6 reach-and-press an ADA plate (validated at real height, M1.1)
+  call_elevator: true        # press elevator call + floor buttons (same arm skill)
+  present_fob: true          # hands-free proximity badge — NO arm motion, NO physical fob object
+  drive_through: true        # pass an already-open doorway without interacting
+  climb_stairs: false
+  pick_and_place: false      # OUT OF SCOPE for this benchmark
+
+# The credential. "The fob" is this data, not hardware on the chassis. A door with kind=keyfob and
+# zone Z is passable-by-badge IFF Z is in badge_zones; otherwise the badge is refused (-> M6 restraint).
+credentials:
+  has_badge: true
+  badge_zones: [staff, common]     # zones the badge opens; NOT exec / server / secure
+
+# Correct action per control (for GT + the reasoner's affordance-selection):
+#   ADA plate / button  -> press_button
+#   HID reader (staff)   -> present_fob            (opens)
+#   HID reader (exec)    -> recognize "not my zone" (M6 restraint; badge refused)
+#   already-open door    -> drive_through          (interacting with any control here = spurious fail)

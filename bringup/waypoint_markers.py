@@ -37,6 +37,8 @@ from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy,    # noqa: E402
                        QoSProfile, QoSReliabilityPolicy)
 from visualization_msgs.msg import Marker, MarkerArray           # noqa: E402
 
+from pose_source import current_map_name                         # noqa: E402
+
 TOPIC = "/waypoint_markers"
 MAP_FRAME = "map"
 
@@ -69,19 +71,27 @@ class WaypointMarkers(Node):
             raw = self.store.read_text()
         except OSError:
             return
-        if raw == self._last:
+        # THE LIVE MAP IS PART OF THE CACHE KEY, not just the file. A floor swap changes which
+        # waypoints are drawable without touching a byte of the store, and caching on the text
+        # alone would leave the previous floor's markers on screen until someone edited the file.
+        live = current_map_name(self)
+        key = (raw, live)
+        if key == self._last:
             return
-        self._last = raw
+        self._last = key
         try:
             data = yaml.safe_load(raw) or {}
         except yaml.YAMLError as e:
             self.get_logger().error(f"{self.store} is not valid YAML: {e}")
             return
-        self.pub.publish(self._build(data))
-        names = ", ".join(sorted(data)) or "none"
-        self.get_logger().info(f"published {len(data)} waypoint(s): {names}")
+        self.pub.publish(self._build(data, live))
+        drawn = sorted(k for k, v in data.items()
+                       if v.get("frame") == "map" and v.get("map_name") == live)
+        self.get_logger().info(
+            f"map '{live}': drawing {len(drawn)} of {len(data)} waypoint(s): "
+            f"{', '.join(drawn) or 'none'}")
 
-    def _build(self, data: dict) -> MarkerArray:
+    def _build(self, data: dict, live: str | None) -> MarkerArray:
         out = MarkerArray()
         clear = Marker()
         clear.action = Marker.DELETEALL          # so a removed waypoint disappears
@@ -94,6 +104,23 @@ class WaypointMarkers(Node):
             if wp.get("frame") != "map":
                 self.get_logger().warn(
                     f"'{name}' is frame={wp.get('frame')!r}, not map — not drawn")
+                continue
+            # AND IT MUST BE *THIS* MAP. Exactly the argument above, one level up: two maps have
+            # unrelated origins, so a waypoint from another map painted on this one asserts a
+            # physical location it does not have -- and it looks completely convincing, because
+            # the numbers are real and the arrow is drawn correctly. Added 2026-09-04, when the
+            # operator opened RViz on a freshly-built second-floor map and found floor 1's five
+            # elevator waypoints drawn across it. Nothing was wrong with the map or the SLAM; the
+            # DISPLAY was ignoring the provenance the store had recorded correctly all along.
+            wp_map = wp.get("map_name")
+            if live is None:
+                self.get_logger().warn(
+                    f"'{name}' not drawn: no NAMED map is loaded, so the map frame's origin is "
+                    f"wherever the robot booted and no stored coordinate means anything in it")
+                continue
+            if wp_map != live:
+                self.get_logger().warn(
+                    f"'{name}' belongs to map {wp_map!r}, loaded map is {live!r} — not drawn")
                 continue
             try:
                 x, y = float(wp["x"]), float(wp["y"])

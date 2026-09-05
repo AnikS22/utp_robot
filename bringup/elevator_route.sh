@@ -59,9 +59,31 @@ trap _fold_on_exit EXIT
 # pressed anyway. Parse the status it prints. (press_route.sh still has the `|| die` form; it is
 # left alone on purpose, being the known-good door script.)
 nav() {
-    local wp="$1" out status
+    local wp="$1" out status rc tries
     say "NAVIGATE to '$wp'"
     event leg_start "$wp"
+
+    # CLEAR THE COSTMAPS BEFORE EVERY LEG, AND RETRY ONCE.
+    #
+    # Every leg that failed on 2026-09-04 failed for a TRANSIENT reason that a clear removes:
+    #   * the operator standing behind the robot -- the goals into the car sit at bearing +179 deg,
+    #     directly astern, and a person there marks them LETHAL. Measured: scan returns at 1.13 m
+    #     against a 1.20 m goal distance. The leg fails, the person moves, and nothing un-marks it.
+    #   * the lift doors shut while the robot was elsewhere, painting the doorway lethal. They
+    #     reopen; the mark stays.
+    # The obstacle layer only clears a cell by raytracing THROUGH it, which needs the robot to look
+    # from a pose it may never take. So a stale mark from thirty seconds ago can block a leg
+    # indefinitely, and the failure looks like a planner problem.
+    #
+    # Clearing is cheap and safe: the static map is untouched, and the layer re-marks anything the
+    # lidar can still see within one update cycle. What it removes is only history.
+    _clear_costmaps() {
+        timeout 15 ros2 service call /global_costmap/clear_entirely_global_costmap \
+            nav2_msgs/srv/ClearEntireCostmap >/dev/null 2>&1 || true
+        timeout 15 ros2 service call /local_costmap/clear_entirely_local_costmap \
+            nav2_msgs/srv/ClearEntireCostmap >/dev/null 2>&1 || true
+        sleep 2
+    }
     if [ -n "$DRY" ]; then python3 "$REPO/bringup/nav2_goto.py" "$wp" || true; return 0; fi
     # `out="$(cmd)"` is itself a simple command, so under `set -e` a non-zero exit terminates the
     # script AT THIS LINE -- echo, the RESULT parse and the die message below never run. nav2_goto
@@ -69,11 +91,24 @@ nav() {
     # i.e. every failure except `blocked`. So the whole "arrival is not an exit code" apparatus only
     # ever ran on success, and an operator saw one bare line: "rc=6 -- folding the arm". Capture the
     # code instead of dying on it; we want the RESULT line precisely when the command failed.
-    local rc=0
-    out="$(python3 "$REPO/bringup/nav2_goto.py" "$wp" --go 2>&1)" || rc=$?
-    echo "$out"
-    status="$(printf '%s\n' "$out" | grep -o 'RESULT {.*}' | tail -1 \
-              | python3 -c 'import sys,json; print(json.loads(sys.stdin.read()[7:]).get("status",""))' 2>/dev/null || true)"
+    tries=0
+    while :; do
+        tries=$((tries+1))
+        [ -n "$DRY" ] || _clear_costmaps
+        rc=0
+        out="$(python3 "$REPO/bringup/nav2_goto.py" "$wp" --go 2>&1)" || rc=$?
+        echo "$out"
+        status="$(printf '%s\n' "$out" | grep -o 'RESULT {.*}' | tail -1 \
+                  | python3 -c 'import sys,json; print(json.loads(sys.stdin.read()[7:]).get("status",""))' 2>/dev/null || true)"
+        # One retry only, and only for the transient statuses. A REFUSED goal is a provenance
+        # failure (wrong map) and retrying it just wastes a minute; a second identical failure
+        # means the obstruction is real and someone should look at it.
+        if [ "$status" = "arrived" ] || [ "$tries" -ge 2 ]; then break; fi
+        case "$status" in
+            blocked|timeout) say "leg '$wp' came back '$status' -- clearing and retrying once" ;;
+            *) break ;;
+        esac
+    done
     event leg_end "$wp:${status:-unknown}"
 
     # BRAKES, NOT A SPEED CAP. A fast turn outruns the scan matcher (coarse_angle_resolution is
@@ -205,8 +240,16 @@ if [ -z "$DRY" ]; then
 fi
 
 nav   lift_door_reverse   # back to the doors, so we reverse in rather than turn around inside
-nav   car_facing_out      # in the car
-nav   car_panel           # square to the panel
+# STRAIGHT TO THE PANEL, NO STAGING POSE INSIDE THE CAR.
+# car_facing_out faces the doors (+58 deg) while any panel pose faces the panel (~0 deg), so the
+# leg between them is a PURE SIDESTEP -- measured lateral/distance 1.00 for the old car_panel and
+# 0.97 for the re-recorded one. nav2_params motion_model is DiffDrive, so MPPI never emits
+# linear.y: to move 0.26 m sideways it must spin ~90 deg, creep, and spin back, inside a 2 m box.
+# That is what "trying to position itself in front of the button is rough" was, and no retry or
+# tuning fixes it. car_facing_out was only ever a staging pose, and Nav2 has now been shown to
+# drive into the car in a single leg -- so we go straight to the pose we actually want and the
+# strafe leg stops existing.
+nav   car_panel           # into the car and square to the panel, one leg
 
 wait_stow
 press "the blue elevator button"

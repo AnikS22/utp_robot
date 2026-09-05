@@ -65,10 +65,10 @@ Visualization Manager:
       Name: Scan (veto input)
       Enabled: true
       Topic:
-        Value: /scan_filtered
+        Value: /scan_nav
         Depth: 5
         Durability Policy: Volatile
-        Reliability Policy: Best Effort
+        Reliability Policy: Reliable
       Size (m): 0.05
       Style: Points
       Color: 255; 90; 90

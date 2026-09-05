@@ -1,0 +1,150 @@
+# slam_toolbox for the real robot. Derived from the stock
+# /opt/ros/jazzy/share/slam_toolbox/config/mapper_params_online_async.yaml, with two changes:
+#
+#   base_frame: base_footprint -> base_link
+#       Stock slam_toolbox assumes a base_footprint frame. This stack does not have one -- the
+#       chassis frame is base_link (config/lidar.yaml, config/camera.yaml, the ranger driver's
+#       base_frame). With the stock value slam_toolbox cannot resolve its base frame, so it
+#       NEVER PUBLISHES map -> odom -- and it logs nothing at all about it. /map still appears,
+#       the node looks healthy, and Nav2 downstream is simply blind. Measured 2026-08-20.
+#
+#   use_sim_time: true -> false
+#       Non-negotiable on hardware (CLAUDE.md). The sim configs default it true and the failure
+#       mode is a node waiting silently forever for a clock that never ticks.
+#
+slam_toolbox:
+  ros__parameters:
+
+    # Plugin params
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+
+    # ROS Parameters
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_link
+    # /scan is scan_relay.py's RELIABLE copy of /scan_filtered, which is the OS0 cloud projected
+    # by pointcloud_to_laserscan with min_height/max_height. The chassis is removed geometrically
+    # by that height band plus min_laser_range below, so the old A1M8-era rear-sector filter and
+    # Ackermann gate (/scan_mapping) are gone -- see archive/README.md.
+    # /scan_slam, not /scan. Measured 2026-09-04:
+    #     /ouster/scan    9.97 Hz   the driver's native LaserScan, a few kB
+    #     /ouster/points  2.66 Hz   3.1 MB per message, losing ~73% in DDS transport
+    #     /scan_filtered  4.39 Hz   what survives the cloud + pointcloud_to_laserscan
+    #     /scan_slam      8.40 Hz   /ouster/scan relayed to RELIABLE for this node
+    # The 3.1 MB cloud exists only to be flattened into a 2D scan, and it is the bottleneck. SLAM
+    # needs RATE above all: at ~2 Hz the matcher cannot follow a turn, the pose slides mid-rotation,
+    # and on 2026-09-03 that put the robot 1.85 m from where Nav2 reported it had arrived -- then it
+    # drove the wrong way and touched a wall. Nav2's costmaps stay on /scan, which is the 0.20-1.20 m
+    # HEIGHT BAND: the native ring is a single elevation and would miss a low obstacle, so the
+    # planner keeps the safer input while the matcher gets the faster one. Different inputs, on
+    # purpose.
+    # The relay is still required for QoS: the driver publishes BEST_EFFORT, this node subscribes
+    # RELIABLE, and incompatible QoS delivers zero messages with no error anywhere.
+    #   UTP_SCAN_IN=/ouster/scan UTP_SCAN_OUT=/scan_slam python3 bringup/scan_relay.py
+    # REVERTED to /scan on 2026-09-04, same day it was changed. /scan_slam carries the driver's
+    # native single-ring LaserScan at 8.4 Hz, which is far better RATE than the 3.5 Hz height-band
+    # scan -- but maps/elevator.* was BUILT from the height band, and a single ring at one elevation
+    # sees different geometry than a min-over-0.20-1.20 m projection. Matching a ring scan against a
+    # height-band map is comparing two different slices of the room. The rate was never the only
+    # thing that mattered; the scan has to be the same KIND the map was made from.
+    # The fast path is still worth having -- see the note below -- but it needs a map built from
+    # /ouster/scan to localize against, not this one.
+    scan_topic: /scan
+    use_map_saver: true
+    mode: mapping #localization
+
+    # MAP STARTING POSE -- REQUIRED in localization mode, and its absence FAILS SILENTLY-ISH.
+    # Without it slam_toolbox logs one ERROR line ("Map starting pose not specified") and then
+    # comes up ACTIVE anyway, publishing a BRAND NEW empty graph rooted at the robot's feet.
+    # Measured 2026-09-01: saved atrium is 772x855; without this it published 486x585 with the
+    # robot at (0,0). The saved map was never loaded and nothing downstream could tell.
+    #
+    # These are the coordinates of the 'start' waypoint recorded in maps/waypoints.yaml at the
+    # moment atrium was saved, i.e. the robot's parking spot. If the robot is somewhere else when
+    # you start localization, use RViz's "2D Pose Estimate" instead -- a seed that is metres wrong
+    # is worse than none, because the scan matcher will happily converge to the wrong corridor.
+    map_start_pose: [0.2888, -0.4561, -0.5207]
+
+    # if you'd like to immediately start continuing a map at a given pose
+    # or at the dock, but they are mutually exclusive, if pose is given
+    # will use pose
+    #map_file_name: test_steve
+    # map_start_pose: [0.0, 0.0, 0.0]
+    #map_start_at_dock: true
+
+    debug_logging: false
+    throttle_scans: 1
+    transform_publish_period: 0.02 #if 0 never publishes odometry
+    map_update_interval: 5.0
+    resolution: 0.05
+    restamp_tf: false
+    # min_laser_range IS INERT ON JAZZY. Upstream ships it in every stock config, but the node
+    # never declares it: launched against this file, configured, activated and fed scans,
+    # `ros2 param get /slam_toolbox min_laser_range` still answers "Parameter not set" while
+    # max_laser_range answers 20.0 (measured 2026-09-01). Do not rely on it to keep the chassis
+    # out of the map. What ACTUALLY does that is pointcloud_to_laserscan in session.sh:
+    # `range_min:=0.30` sets the scan message's own range_min, the min_height/max_height band
+    # removes most chassis geometry, and scan_relay.py masks the remaining measured self-return
+    # sectors without blinding the forward arc. Kept at a truthful value so that a
+    # future slam_toolbox which does honour it does not suddenly start mapping the robot.
+    min_laser_range: 0.55
+    max_laser_range: 20.0
+    # The A1M8 produces about 7 scans/s. Keep enough overlap for repetitive corridors;
+    # the former 0.5 s / 0.5 m / 0.5 rad thresholds skipped too much geometry.
+    minimum_time_interval: 0.15
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000 #// program needs a larger stack size to serialize large maps
+    enable_interactive_mode: true
+
+    # General Parameters
+    use_scan_matching: true
+    use_scan_barycenter: true
+    minimum_travel_distance: 0.10
+    minimum_travel_heading: 0.10
+    check_min_dist_and_heading_precisely: false
+    scan_buffer_size: 30
+    scan_buffer_maximum_scan_distance: 10.0
+    link_match_minimum_response_fine: 0.1  
+    link_scan_maximum_distance: 1.5
+    loop_search_maximum_distance: 3.0
+    do_loop_closing: true 
+    loop_match_minimum_chain_size: 10           
+    loop_match_maximum_variance_coarse: 3.0  
+    loop_match_minimum_response_coarse: 0.35    
+    loop_match_minimum_response_fine: 0.45
+
+    # Correlation Parameters - Correlation Parameters
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1 
+
+    # Correlation Parameters - Loop Closure Parameters
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+
+    # Scan Matcher Parameters
+    distance_variance_penalty: 0.5      
+    angle_variance_penalty: 1.0    
+
+    fine_search_angle_offset: 0.00349     
+    coarse_search_angle_offset: 0.349   
+    coarse_angle_resolution: 0.0349        
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true
+    min_pass_through: 2
+    occupancy_threshold: 0.1
+# --- OS0 deltas (2026-08-30) -------------------------------------------------------------------
+# scan_topic     -> /scan_filtered : the Ouster cloud projected to a LaserScan by
+#                   pointcloud_to_laserscan. ~977 valid beams over a full 360 deg, versus the 44
+#                   the A1M8 delivered -- which is the entire reason 2D SLAM failed here before.
+# min_laser_range -> 0.55 : the projection already drops returns inside 0.50 m (the robot's own
+#                   mast and arm); 0.55 keeps a margin so none leak in as phantom obstacles.
+# max_laser_range -> 20.0 : the OS0 reaches 30 m; 20 is plenty indoors and keeps the graph small.

@@ -52,8 +52,18 @@ def main() -> int:
         rclpy.spin_once(n, timeout_sec=0.2)
     if len(d) < 2:
         print("missing /map or /scan", file=sys.stderr); return 1
-    for _ in range(30):
+    # WAIT FOR TF, NOT FOR A FIXED NUMBER OF SPINS. 30 spins was ~3 s, and /map is latched while
+    # /scan runs at 4-7 Hz, so both arrive almost immediately -- leaving the TF listener too little
+    # time to receive map->odom AND odom->base_link. Measured 2026-09-05: 1 run in 4 printed
+    # "no map->base_link yet" and emitted no fit line at all, which made
+    # bringup/multifloor_route.sh's preflight abort the whole run with "could not score the
+    # localization fit" on a robot that was localized the entire time. Poll for the transform the
+    # caller actually needs, with a real budget.
+    _tf_end = time.time() + 20
+    while time.time() < _tf_end:
         rclpy.spin_once(n, timeout_sec=0.1)
+        if buf.can_transform("map", "base_link", rclpy.time.Time()):
+            break
     mp, sc = d["map"], d["scan"]; info = mp.info; res = info.resolution
     ox, oy = info.origin.position.x, info.origin.position.y
     W, H = info.width, info.height

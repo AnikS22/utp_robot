@@ -48,3 +48,12 @@ runs/*/frames/
 runs/*/thirdperson.mp4
 paper/exemplar_graphs/reference/*.png
 paper/exemplar_graphs/reference/*.jpg
+
+# Rosbags. runs/20260905T185753Z_ours_bagfull_probe/rosbag/rosbag_0.mcap is 3.4 GB on its own
+# and GitHub hard-rejects any single file over 100 MB -- a `git add runs/` would have made a
+# commit that can never be pushed and is painful to unwind. Bags are raw sensor capture: they
+# are re-recordable, they are not the result, and they do not belong in a PUBLIC repo.
+runs/*/rosbag/
+runs/*/telemetry/
+*.mcap
+*.db3

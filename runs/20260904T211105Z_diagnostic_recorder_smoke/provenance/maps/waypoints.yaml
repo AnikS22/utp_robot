@@ -1,0 +1,49 @@
+# Waypoints. The 'frame' field says which frame each one is in; ABSENT MEANS ODOM,
+# because every waypoint recorded before map support existed is an odom waypoint.
+#
+# frame: odom -- only meaningful within one continuous run of the ranger
+# driver: restarting it re-zeros odom and silently invalidates every entry here.
+# The 'odom_session' field is how you tell: the DDS GID of the /odom publisher, a new
+# value for every driver instance. goto and route_run REFUSE a waypoint whose session
+# does not match the running one. 'odom_epoch' is wall-clock provenance only -- nothing
+# reads it. See safety/waypoint_frame.py.
+call_button:
+  frame: map
+  map_name: elevator
+  mola_session: 010fa575c2c506e9
+  odom_epoch: 1788299163
+  x: -1.4596
+  y: 2.3805
+  yaw: -2.1278
+car_facing_out:
+  frame: map
+  map_name: elevator
+  mola_session: 010fa575d3f63065
+  odom_epoch: 1788301937
+  x: -1.8615
+  y: 0.4354
+  yaw: 1.0194
+car_panel:
+  frame: map
+  mola_session: 010fcecd2b28489c
+  odom_epoch: 1788472681
+  x: -1.6309
+  y: 0.3003
+  yaw: 0.0859
+  map_name: elevator
+lift_door:
+  frame: map
+  map_name: elevator
+  mola_session: 010fa575c2c506e9
+  odom_epoch: 1788297913
+  x: -0.9964
+  y: 1.6532
+  yaw: -2.0644
+lift_door_reverse:
+  frame: map
+  map_name: elevator
+  mola_session: 010fa575d3f63065
+  odom_epoch: 1788302227
+  x: -1.0863
+  y: 1.5343
+  yaw: 0.9797

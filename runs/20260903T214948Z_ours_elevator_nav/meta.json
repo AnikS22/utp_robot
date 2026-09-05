@@ -1,0 +1,16 @@
+{
+  "scene": "elevator_nav",
+  "method": "ours",
+  "map": "elevator",
+  "started_utc": "2026-09-03T21:49:48.766094+00:00",
+  "git_sha": "8c11dbc133abfe71d9f12e3655e412acef373478",
+  "host": "weim-Dell-Pro-Max-16-Plus-MB16250",
+  "ros_domain_id": "9",
+  "camera_ns": "mast_cam",
+  "frame_fps": 2.0,
+  "frame_width": 640,
+  "note": "poses.jsonl is the trajectory; events.jsonl is appended by the route, not by this process",
+  "ended_utc": "2026-09-03T22:23:30.710482+00:00",
+  "n_frames": 20,
+  "n_poses": 20210
+}

@@ -11,6 +11,7 @@ Writes runs/<utc>_<method>_<scene>/ :
     poses.jsonl    {stamp, map:{x,y,yaw}} at --pose-hz          <- the green line
     frames/*.jpg   ego-centric, throttled, downscaled           <- the keyframe column
     events.jsonl   created here, APPENDED BY THE ROUTE (see bringup/run_event.sh)
+    telemetry/*.jsonl  odom, velocity commands, safety state, and Nav2 plans
 
 WHY IT IS BUILT THIS CAREFULLY. The detector is the thing we are recording, it runs on
 cuda:0, and it has already been starved into CUDA OOM once -- by RViz holding 14.3 GB of
@@ -92,12 +93,16 @@ def main() -> int:
     from rclpy.node import Node
     from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
     from sensor_msgs.msg import Image
+    from geometry_msgs.msg import Twist
+    from nav_msgs.msg import Odometry, Path as NavPath
+    from std_msgs.msg import String
     import tf2_ros
 
     stamp_name = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out = Path(a.dir) if a.dir else REPO / "runs" / f"{stamp_name}_{a.method}_{a.scene}"
     (out / "frames").mkdir(parents=True, exist_ok=True)
     (out / "decisions").mkdir(parents=True, exist_ok=True)
+    (out / "telemetry").mkdir(parents=True, exist_ok=True)
 
     loaded_map = a.map
     if loaded_map is None:
@@ -130,6 +135,55 @@ def main() -> int:
                      history=HistoryPolicy.KEEP_LAST)
 
     state = {"last_frame": 0.0, "n_frames": 0, "n_poses": 0, "latest": None}
+
+    # Small, line-buffered JSON streams. These subscriptions are deliberately depth 1 and their
+    # callbacks only serialize the message already delivered by DDS. We do not subscribe to the
+    # point cloud, depth image, costmaps, or full-rate scan: those are the streams capable of
+    # perturbing perception on this laptop.
+    streams = {}
+
+    def stream(name):
+        if name not in streams:
+            streams[name] = (out / "telemetry" / f"{name}.jsonl").open("a", buffering=1)
+        return streams[name]
+
+    def write_stream(name, row):
+        row = {"stamp": time.time(), **row}
+        stream(name).write(json.dumps(row, separators=(",", ":")) + "\n")
+
+    def on_odom(msg):
+        p, q, v = msg.pose.pose.position, msg.pose.pose.orientation, msg.twist.twist
+        write_stream("odom", {"frame": msg.header.frame_id, "child_frame": msg.child_frame_id,
+            "x": p.x, "y": p.y, "z": p.z,
+            "yaw": float(2.0 * np.arctan2(q.z, q.w)),
+            "vx": v.linear.x, "vy": v.linear.y, "wz": v.angular.z})
+
+    def twist_cb(name):
+        def cb(msg):
+            write_stream(name, {"vx": msg.linear.x, "vy": msg.linear.y,
+                                "vz": msg.linear.z, "wx": msg.angular.x,
+                                "wy": msg.angular.y, "wz": msg.angular.z})
+        return cb
+
+    def path_cb(name):
+        def cb(msg):
+            pts = []
+            for ps in msg.poses:
+                p, q = ps.pose.position, ps.pose.orientation
+                pts.append({"x": p.x, "y": p.y,
+                            "yaw": float(2.0 * np.arctan2(q.z, q.w))})
+            write_stream(name, {"frame": msg.header.frame_id, "points": pts})
+        return cb
+
+    node.create_subscription(Odometry, "/odom", on_odom, qos)
+    for topic, name in (("/cmd_vel", "cmd_vel"), ("/cmd_vel_nav", "cmd_vel_nav"),
+                        ("/cmd_vel_servo", "cmd_vel_servo"),
+                        ("/cmd_vel_teleop", "cmd_vel_teleop")):
+        node.create_subscription(Twist, topic, twist_cb(name), qos)
+    for topic, name in (("/plan", "global_plan"), ("/local_plan", "local_plan")):
+        node.create_subscription(NavPath, topic, path_cb(name), qos)
+    node.create_subscription(String, "/safety/status",
+                             lambda m: write_stream("safety_status", {"data": m.data}), qos)
 
     def on_img(msg):
         now = time.time()
@@ -229,6 +283,11 @@ def main() -> int:
             rclpy.spin_once(node, timeout_sec=0.1)
     finally:
         posef.close()
+        for fh in streams.values():
+            try:
+                fh.close()
+            except Exception:
+                pass
         meta["ended_utc"] = datetime.now(timezone.utc).isoformat()
         meta["n_frames"] = state["n_frames"]
         meta["n_poses"] = state["n_poses"]

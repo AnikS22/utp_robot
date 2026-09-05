@@ -77,10 +77,10 @@ Visualization Manager:
     # What slam_toolbox is matching RIGHT NOW. If this is empty the map cannot grow, and that is
     # the first thing to check when the map stops changing.
     - Class: rviz_default_plugins/LaserScan
-      Name: Live scan (what SLAM matches)
+      Name: Live filtered scan (what SLAM matches)
       Enabled: true
       Topic:
-        Value: /scan
+        Value: /scan_nav
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last

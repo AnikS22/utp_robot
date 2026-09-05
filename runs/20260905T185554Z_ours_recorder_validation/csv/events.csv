@@ -1,0 +1,9 @@
+detail,kind,stamp
+call_button_f2,leg_start,1788634555.9924023
+call_button_f2:arrived,leg_end,1788634564.0175612
+the blue elevator call button,press_start,1788634570.0421898
+the blue elevator call button,press_done,1788634578.0675116
+1,swap_start,1788634584.093808
+1,swap_done,1788634592.122637
+1,verify_ok,1788634598.1476576
+2->1,route_complete,1788634606.1721356

@@ -1,0 +1,17 @@
+schema_version: 1
+margin_mm: 20.0
+max_tcp_speed_mm_s: 25.0
+max_joint_speed_deg_s: 5.0
+collision_sensitivity: 5
+# Measured 2026-08-24 with the arm at the closest safe configuration above the laptop screen.
+# More-negative J2 moves lower toward the screen. Controller reduced-mode range is applied and
+# read back; other joints retain the controller's factory ranges.
+joint_limits_deg:
+  j2_min: -61.0
+bounds_mm:
+  x_min: 206.3
+  x_max: null
+  y_min: null
+  y_max: null
+  z_min: null
+  z_max: null

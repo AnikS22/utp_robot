@@ -1,0 +1,132 @@
+[
+  {
+    "path": "provenance/config/arm_workspace.yaml",
+    "bytes": 496,
+    "sha256": "3838000c646f7ff78285282f38bcb07bc396cf3d91e32f4a0af9d2cf07660ca5"
+  },
+  {
+    "path": "provenance/config/camera.yaml",
+    "bytes": 2459,
+    "sha256": "e3d0f9fdd918fab54c0c34faa4ba352cfb1acb10ee9944997c6cb27cce5bf995"
+  },
+  {
+    "path": "provenance/config/lidar.yaml",
+    "bytes": 3549,
+    "sha256": "618a56858c6238292f080440e21f0442884f86b1a4e0b9546313b1c1e4701abd"
+  },
+  {
+    "path": "provenance/config/missions/office_building/missions.json",
+    "bytes": 38263,
+    "sha256": "ff1ce7174f46776ad92e0e6c1a1a3a4bb08454e5c433c60073a05dc2308711ac"
+  },
+  {
+    "path": "provenance/config/ouster.yaml",
+    "bytes": 10588,
+    "sha256": "1994cbd80a566264f3284151ed6a08bcd53627c18c3934be6f684a3264d0a744"
+  },
+  {
+    "path": "provenance/config/ouster_driver.yaml",
+    "bytes": 2081,
+    "sha256": "6554f5331ac5a1877402656d9ce258ae51fcc6deb526f8d5b24342ab29c20cd0"
+  },
+  {
+    "path": "provenance/config/pipeline/README.md",
+    "bytes": 1566,
+    "sha256": "8c8d6d152a5b886ea1847b8cb9df34b0cc058577973101d870257850f5a371f5"
+  },
+  {
+    "path": "provenance/config/pipeline/detectors.yaml",
+    "bytes": 2123,
+    "sha256": "6e5fc63583b2ca1a9ccdb72262d98d9d125a371886af160ffc735309f44947b5"
+  },
+  {
+    "path": "provenance/config/pipeline/lidar/RPLIDAR_A1M8.json",
+    "bytes": 1643,
+    "sha256": "5726a4136ed9f266a4364dee8400fd9fdae68c7e87f542e2c73bd4b415d61fc7"
+  },
+  {
+    "path": "provenance/config/pipeline/methods.yaml",
+    "bytes": 3928,
+    "sha256": "ce60fd57748a1555bed3b3fcbd4a42a9514850f226f0def05db0750100c751bb"
+  },
+  {
+    "path": "provenance/config/pipeline/paths.yaml",
+    "bytes": 1066,
+    "sha256": "ab971b502b4d0633ce8cbeb2dd43847bc7281ef0053b3156a05e88f6f053f715"
+  },
+  {
+    "path": "provenance/config/pipeline/ranger_kinematics.yaml",
+    "bytes": 3312,
+    "sha256": "9ba1200beb6f636920ea95aceae542d6306123330b6a570e15b106097d3593d3"
+  },
+  {
+    "path": "provenance/config/pipeline/robot.yaml",
+    "bytes": 4603,
+    "sha256": "19875556ca0dac1e1c3bc1d40c3e439e2b6218987ecf7651235a90c6b12a4715"
+  },
+  {
+    "path": "provenance/config/pipeline/robot_capabilities.yaml",
+    "bytes": 1865,
+    "sha256": "312376df07f4a6b2b07209c31189c40e6204ac3a9d4f41316e70148d908fadf3"
+  },
+  {
+    "path": "provenance/config/pipeline/runtime.yaml",
+    "bytes": 1642,
+    "sha256": "a5b331705a130d913c32ac214cb7d505c0029bbd89ef32f69192e7b68418c9f3"
+  },
+  {
+    "path": "provenance/config/pipeline/scenes.yaml",
+    "bytes": 11387,
+    "sha256": "26ac3765eb5e8a3050860d005a2b5685189f0a457609f0b4b58a42d8865f9d8c"
+  },
+  {
+    "path": "provenance/config/pipeline/sensors.yaml",
+    "bytes": 3292,
+    "sha256": "9732f670ce9893c837633100dcbbe065d89b6387f258e3b8efd983c386135d95"
+  },
+  {
+    "path": "provenance/config/routes.yaml",
+    "bytes": 9307,
+    "sha256": "d2237cc7928d5ebb634a475586332f9cde4120327a3461f99ebea66afae0447c"
+  },
+  {
+    "path": "provenance/config/safety.yaml",
+    "bytes": 8318,
+    "sha256": "f4f91ba47cf3d4c5952a4fca2041cd690476f7cc885b03bf3a1758d3051261e1"
+  },
+  {
+    "path": "provenance/config/slam_os0.yaml",
+    "bytes": 6350,
+    "sha256": "b830e010e931e4d8aec257cd7880138142430204429ab1cc063c13c0e491f33e"
+  },
+  {
+    "path": "provenance/maps/elevator.data",
+    "bytes": 6790283,
+    "sha256": "83d8c5b47ac80e559f7aabc063a05fb7e5780a6cbc181e50a43a9c19f49c7ded"
+  },
+  {
+    "path": "provenance/maps/elevator.pgm",
+    "bytes": 554793,
+    "sha256": "63f1324dbf0bceaf5d918ebc7ba458c0351557254606e95100f05c256a1ab423"
+  },
+  {
+    "path": "provenance/maps/elevator.posegraph",
+    "bytes": 29402155,
+    "sha256": "52a92e298127f0ea4eedb917eddb5e14fefa1fb1d6cbf6219b79d16e29f34cab"
+  },
+  {
+    "path": "provenance/maps/elevator.yaml",
+    "bytes": 132,
+    "sha256": "587879f304a35429916d7056a058748f479be47401c35f2b4cd7109ae2a3d2ff"
+  },
+  {
+    "path": "provenance/maps/waypoints.yaml",
+    "bytes": 1350,
+    "sha256": "8c6ff78df0f82d5565a2155a660ca57690719c89ead2625da99fb4a4d28bc15b"
+  },
+  {
+    "path": "provenance/nav2_bringup/ranger_nav.launch.py",
+    "bytes": 11201,
+    "sha256": "8c1b80b39c9db71a410b9d4ce5240e0e7106298dba41a7b80825c1611c703f48"
+  }
+]

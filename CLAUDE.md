@@ -18,6 +18,7 @@ retired). Deadline **2026-08-25**.
 | Measuring anything on the robot | `docs/CALIBRATION.md` |
 | What a "trial" is, methods, missions, metrics | `docs/PIPELINE.md` |
 | Mapping / Nav2 / recording a run | `docs/MAPPING.md`, `docs/NAV2.md`, `docs/RECORDING.md` |
+| Riding the lift between floors | `docs/MULTIFLOOR.md` |
 | The reasoning VLM endpoint and its key | `docs/LLM_ENDPOINT.md` |
 | What has actually been done and observed | `EXPERIMENT_LOG.md` |
 
@@ -219,6 +220,14 @@ over it. That is the whole reason the suite runs headless on a laptop with nothi
   because with the arm stowed the folded arm occupies the lower-centre of the mast camera's frame —
   exactly where a plate 0.7 m ahead appears. `elevator_route.sh` is this same chain twice, with
   different waypoint names and query strings; there is deliberately no state machine.
+- **A lift ride is a map handover, not a navigation problem** (`safety/floor_plan.py`,
+  `bringup/floor_swap.py`, `multifloor_route.sh`). One saved map per floor; the swap RESTARTS
+  slam_toolbox rather than deserializing in place, because a restart changes the DDS GID and so
+  invalidates the old floor's waypoints through `map_frame.py` for free. The load-bearing fact: a
+  lift car is geometrically identical on every floor, so a scan-match fit taken inside a closed car
+  is high, confident, and says nothing about which floor you are on. The floor is only observable
+  once the doors open, which is why the gate refuses a fit measured with them shut. Untested on
+  hardware; the destination floor's map does not exist yet. See `docs/MULTIFLOOR.md`.
 - **Recording a run**: `bringup/run_dataset.py` wraps any command in a low-interference recorder and
   writes `runs/<UTC>_<method>_<scene>/`. Routes mark moments with `event()` from `run_event.sh`,
   which is a silent no-op unless `UTP_RUN_DIR` is set — an instrumented run and a plain run must

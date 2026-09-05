@@ -1,0 +1,4 @@
+[recorder] /home/weim/utp_robot/runs/20260904T211105Z_diagnostic_recorder_smoke
+[recorder] frames: continuous (1.0 Hz @ 640 px), poses 10.0 Hz, no GPU, no /ouster/points
+[recorder] 0 frames, 0 poses -> /home/weim/utp_robot/runs/20260904T211105Z_diagnostic_recorder_smoke
+[recorder] WARNING: no poses. Was map->base_link available? The trajectory figure needs this and it cannot be recovered later.

@@ -1,0 +1,8 @@
+{"stamp": 1788634555.9924023, "kind": "leg_start", "detail": "call_button_f2"}
+{"stamp": 1788634564.0175612, "kind": "leg_end", "detail": "call_button_f2:arrived"}
+{"stamp": 1788634570.0421898, "kind": "press_start", "detail": "the blue elevator call button"}
+{"stamp": 1788634578.0675116, "kind": "press_done", "detail": "the blue elevator call button"}
+{"stamp": 1788634584.093808, "kind": "swap_start", "detail": "1"}
+{"stamp": 1788634592.122637, "kind": "swap_done", "detail": "1"}
+{"stamp": 1788634598.1476576, "kind": "verify_ok", "detail": "1"}
+{"stamp": 1788634606.1721356, "kind": "route_complete", "detail": "2->1"}

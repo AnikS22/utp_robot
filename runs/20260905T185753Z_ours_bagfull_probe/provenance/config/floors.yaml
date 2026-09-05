@@ -1,0 +1,100 @@
+# The building, one entry per floor. Read safety/floor_plan.py's header first -- it says why a
+# lift ride is a map handover and not a navigation problem, and why that makes this file safety
+# critical rather than cosmetic.
+#
+# ONE MAP PER FLOOR, AND THEY MUST BE DIFFERENT MAPS. Two floors cannot share a slam_toolbox pose
+# graph: a graph is built from one continuous drive and there is no drive between floors. Every
+# identity check in this stack (safety/map_frame.py, bringup/nav2_goto.py, bringup/floor_swap.py)
+# compares MAP NAMES, so two floors naming one map turns the swap into a no-op that reports
+# success while the robot drives floor 1's route standing on floor 2. check_building() refuses it.
+#
+# WAYPOINT NAMES ARE GLOBAL. maps/waypoints.yaml is one flat store shared by every map, so the
+# names below must be unique across floors or the second recording silently overwrites the first.
+# Hence the _f1 / _f2 suffixes. Floor 1 is the exception: its five waypoints were recorded on
+# 2026-09-01 under the unsuffixed names that bringup/elevator_route.sh already drives, and
+# renaming them would invalidate the one route on this robot that has been driven.
+#
+# RECORD EACH FLOOR'S WAYPOINTS WHILE LOCALIZED IN THAT FLOOR'S MAP, in the session that saved it.
+# Full procedure: docs/MULTIFLOOR.md.
+
+building: fau_eng
+
+floors:
+
+  # -------------------------------------------------------------------------------------------
+  "1":
+    description: >
+      Ground floor lift lobby. The map, the waypoints and both query strings here are the ones
+      bringup/elevator_route.sh drives; nothing in this entry is new or unproven.
+    map: elevator
+
+    waypoints:
+      call_button:     call_button          # outside the lift, facing the call plate
+      door_reverse:    lift_door_reverse    # outside, BACK to the doors -- we reverse in, because
+                                            # rotating inside a 2 m car is what confused Nav2 first
+      car_facing_out:  car_facing_out       # inside the car, facing the doors. THE SEED POSE
+      car_panel:       car_panel            # inside, square to the button panel
+      exit:            lift_door            # back outside the doors
+
+    # NAME THE COLOUR, NOT THE OBJECT. Measured 2026-09-03: "the elevator call button on the wall"
+    # grounded the SILVER PANEL at 0.3859 -- inside the band where every known-bad grounding in
+    # this project sits (fire-alarm cover 0.397, arm-in-frame 0.381). The blue tape is the only
+    # saturated colour in an all-grey lobby. "the blue elevator button" 0.443 beat "the elevator
+    # button marked with blue tape" 0.267, so name the colour and stop there.
+    call_query: "the blue elevator call button"
+
+    # The button INSIDE the car that sends it to THIS floor. See the warning under floor 2.
+    select_query: "the blue elevator button"
+
+  # -------------------------------------------------------------------------------------------
+  "2":
+    description: >
+      Destination floor. Map recorded and saved 2026-09-04 18:28 (maps/elevator_f2.*, 719x444 at
+      0.05 m, 4213 occupied cells, lift lobby + car interior). Waypoints recorded the same evening
+      in that map's localization session. NOT YET DRIVEN -- no leg of this floor has been executed
+      by Nav2, and the lift has never been ridden.
+    map: elevator_f2
+
+    waypoints:
+      call_button:     call_button_f2
+      door_reverse:    lift_door_reverse_f2
+      car_facing_out:  car_facing_out_f2
+      car_panel:       car_panel_f2
+      # FORWARD ENTRY (2026-09-05). Optional roles; when both are present the route drives INTO
+      # the car nose-first instead of reversing. Two independent reasons, both measured today:
+      #   1. TIME. call_button_f2 is at yaw +108.4 and lift_door_facing_f2 at +107.3 -- a 1.1 deg
+      #      change. Backing in needs lift_door_reverse_f2 at -68.1, a ~176 deg turn that took
+      #      21.2 s, and an ADA opener does not hold that long. The doors shut mid-approach and
+      #      the entry leg was then planning through a wall.
+      #   2. THE REAR SENSOR ARTIFACT. The OS0 reports a ring of returns 0.85-1.20 m behind the
+      #      robot at z 0.41-0.89 m with nothing physically there (operator confirmed by eye,
+      #      2026-09-05). Reversing aims that arc into the car and stamps phantom obstacles across
+      #      the doorway. Driving forward leaves it trailing behind.
+      # All rotation then happens INSIDE the car, with the doors shut and no clock running.
+      door_facing:     lift_door_facing_f2
+      car_facing_in:   car_facing_in_f2
+      # THE EXIT IS THE SAME SPOT AS door_reverse, AND THAT IS NOT LAZINESS -- IT IS MEASURED.
+      # Driving straight out of the car along car_facing_out_f2's own heading, for the distance
+      # between the two poses, lands 1.9 cm from lift_door_reverse_f2 with 1.0 deg of heading
+      # difference (2026-09-04). The pose you line up on before reversing in IS the pose you end
+      # up in after driving out; they differ only in which direction you were travelling. Floor 1
+      # has two separate waypoints here (lift_door_reverse / lift_door) because they were recorded
+      # separately, not because the geometry requires it.
+      # safety/floor_plan.check_building() permits one name in two roles on the SAME floor; what
+      # it refuses is one name shared across floors, which is the case that silently overwrites.
+      exit:            lift_door_reverse_f2
+
+    call_query: "the blue elevator call button"
+
+    # KNOWN-OPEN, AND THE MOST LIKELY THING TO GO WRONG IN A DEMO. A panel has one button per
+    # floor and they are all the same blue. This query cannot tell them apart, and the grounder
+    # will return whichever it likes best -- which is the same failure shape as the fire alarm on
+    # 2026-08-29 (confident, well-formed, wrong object), except press_veto.py has nothing to say
+    # about it because a wrong floor button is not a dangerous object.
+    #
+    # For a two-button lift the odds are what they are and press_run.sh shows the chosen box
+    # before the arm moves, so an operator watching can stop it. Do not read a successful demo as
+    # evidence that this query is discriminative. If it needs to be, the honest fix is a spatial
+    # one -- the panel's buttons are vertically ordered and their order is known -- and that is a
+    # geometry question for the grounder's output, not a better sentence.
+    select_query: "the blue elevator button"
