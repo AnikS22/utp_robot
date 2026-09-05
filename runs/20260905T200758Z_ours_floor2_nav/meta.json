@@ -9,5 +9,8 @@
   "camera_ns": "mast_cam",
   "frame_fps": 2.0,
   "frame_width": 640,
-  "note": "poses.jsonl is the trajectory; events.jsonl is appended by the route, not by this process"
+  "note": "poses.jsonl is the trajectory; events.jsonl is appended by the route, not by this process",
+  "ended_utc": "2026-09-05T20:56:39.183048+00:00",
+  "n_frames": 42,
+  "n_poses": 28797
 }
