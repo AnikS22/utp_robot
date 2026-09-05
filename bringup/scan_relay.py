@@ -83,13 +83,13 @@ OUT_TOPIC = os.environ.get("UTP_SCAN_OUT", "/scan")
 #
 # RE-MEASURE THIS IF THE ARM MOVES OR THE MAST CHANGES. It is a fact about the current build,
 # not about lidars. bringup/check_scan_geometry.py is the tool.
-MASK_MIN_DEG = 74.0     # widened from 88 after re-measuring 2026-09-01: the +75..+90 bins are
+MASK_MIN_DEG = float(os.environ.get('UTP_MASK_MIN_DEG', 74.0))  # widened from 88 after re-measuring 2026-09-01: the +75..+90 bins are
                         # BIMODAL -- median 1.81-1.88 m (the real room) with a hard floor at
                         # 0.71-0.72 m and spread 1.1-1.3. Two populations at one bearing means
                         # structure in front of room, and the arm reaches further forward than
                         # 88 deg. Below 74 deg the floor climbs smoothly (1.91, 2.00, 2.08 ...)
                         # with spread under 0.25 -- that is room, and it is kept.
-MASK_MAX_DEG = 180.0    # THE WHOLE REAR ARC, both sides (the test is on |bearing|).
+MASK_MAX_DEG = float(os.environ.get('UTP_MASK_MAX_DEG', 180.0))  # THE WHOLE REAR ARC, both sides (the test is on |bearing|).
                         #
                         # WAS 155, AND 155 WAS AN ARTEFACT OF THE BUG IT WAS MEANT TO FIX. The
                         # sweep that produced it was taken while pointcloud_to_laserscan's
@@ -112,7 +112,7 @@ MASK_MAX_DEG = 180.0    # THE WHOLE REAR ARC, both sides (the test is on |bearin
                         # Measuring the extent of a self-occlusion through a filter that is
                         # already deleting self-occlusions can only ever under-report it. Measure
                         # with range_min at its lowest, then mask.
-MASK_MAX_M = 0.90       # structure measured at 0.39-0.85 m; this sits just above it.
+MASK_MAX_M = float(os.environ.get('UTP_MASK_MAX_M', 0.90))  # structure measured at 0.39-0.85 m; this sits just above it.
                         #
                         # WAS 1.00, AND THAT COST A MAP. Measured in open floor, where nothing
                         # real lives inside a metre astern, so the choice looked free -- and I
@@ -133,6 +133,46 @@ MASK_MAX_M = 0.90       # structure measured at 0.39-0.85 m; this sits just abov
 
 # One line every LOG_PERIOD_S at most. An operator needs to see the mask working -- "0 bins
 # masked" after the arm is re-stowed is the signal that the geometry moved -- but at 6-10 Hz a
+# THE MASK IS A BAND, NOT A DISC -- and the lower edge exists for ONE consumer.
+#
+# UTP_MASK_MIN_M defaults to 0.0, so the mask is a disc out to MASK_MAX_M exactly as before and
+# nothing about /scan changes. It is raised only by the SECOND relay instance that feeds Nav2.
+#
+# WHY THERE IS A SECOND RELAY. Measured 2026-09-05: the OS0 reports a ring of returns 0.85-1.20 m
+# behind the robot at z 0.41-0.89 m, in an open lobby, with nothing physically there -- confirmed
+# by the operator on foot, and confirmed as an artifact by raycasting the saved map (12 of 19
+# bearings reported an obstacle metres inside the mapped wall, every one of them astern). The ring
+# is fixed in base_link, so it travels with the robot and is re-marked every cycle; clearing the
+# costmap removes it for under six seconds.
+#
+# What that costs: any Nav2 goal 0.85-1.65 m BEHIND the robot is unreachable, anywhere in the
+# building, because the ring plus 0.30 m inflation sits across the path. That is exactly the lift
+# entry and exit geometry, and it is why every ordering, waypoint and clear-timing variation tried
+# on 2026-09-05 failed identically.
+#
+# WHY NOT JUST RAISE MASK_MAX_M ON /scan. Because slam_toolbox and Nav2 need opposite things from
+# the same bearings, and one scalar cannot serve both:
+#     slam_toolbox  needs returns past 1.15 m astern or it loses the lift car's side walls --
+#                   MASK_MAX_M 1.00 deleted them once already and cost a map (docs/MORNING.md).
+#     Nav2          must not see the ring at 0.85-1.20 m or it can never reverse out of anything.
+# So /scan stays exactly as it is for SLAM, and a second relay publishes /scan_nav with the ring's
+# band masked out for the costmap. Different consumers, different masks, one implementation.
+#
+# WHAT THIS GIVES UP, PLAINLY: /scan_nav masks the rear arc as a DISC out to UTP_MASK_MAX_M, so
+# the costmap is blind astern to 1.30 m instead of the 0.90 m it was already blind to -- 0.40 m
+# of new blindness directly behind the robot.
+#
+# IT HAS TO BE A DISC, NOT A BAND, AND THAT IS WORTH SPELLING OUT because the obvious improvement
+# is wrong: bounding the mask BELOW (say 0.80-1.30 m) so close obstacles still register would let
+# the robot's OWN chassis and mast back in -- that structure is measured at 0.39-0.85 m astern and
+# removing it is the entire reason this mask exists. A lower bound re-creates the problem the file
+# was written to solve. UTP_MASK_MIN_M exists and defaults to 0.0; leave it there unless the
+# self-return geometry is re-measured and something is genuinely known to sit under it.
+#
+# This is a trade made with the artifact still unexplained. When the ring is understood at the
+# sensor, DELETE the second relay -- do not widen this band and do not let it become permanent.
+MASK_MIN_M = float(os.environ.get('UTP_MASK_MIN_M', 0.0))
+
 # per-scan line is 10 lines a second of noise that hides everything else in the terminal.
 LOG_PERIOD_S = 5.0
 
@@ -203,7 +243,7 @@ def mask_self_returns(ranges: Sequence[float], angle_min: float,
     inf = float("inf")
     for i in _masked_indices(n, angle_min, angle_increment):
         r = out[i]
-        if math.isfinite(r) and r <= MASK_MAX_M:
+        if math.isfinite(r) and MASK_MIN_M <= r <= MASK_MAX_M:
             out[i] = inf
             masked += 1
     return MaskResult(out, masked)

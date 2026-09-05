@@ -50,15 +50,30 @@ def _costmap_sources(doc):
     return found
 
 
+# The relay outputs a costmap may legitimately consume. /scan_filtered -- the raw projection,
+# which contains the robot's own arm and mast -- is never in this set, and that is the point.
+MASKED_SCANS = {"/scan", "/scan_nav"}
+
+
 @pytest.mark.parametrize("path", PARAMS, ids=lambda p: p.name)
 def test_every_costmap_observation_source_uses_the_masked_scan(path):
     doc = yaml.safe_load(path.read_text())
     sources = _costmap_sources(doc)
     assert sources, f"{path.name}: no costmap observation source found — did the schema change?"
     for where, topic in sources:
-        assert topic == "/scan", (
+        # A MASKED scan, not necessarily /scan. Since 2026-09-05 there are TWO relay outputs and
+        # the costmaps take the more aggressively masked one:
+        #   /scan      mask 0.90 m -- slam_toolbox, which needs the lift car's walls at 1.00-1.15 m
+        #   /scan_nav  mask 1.50 m -- the costmaps, which must not see the OS0's near-field ring at
+        #              0.85-1.30 m astern; that ring is fixed in base_link, so it made every Nav2
+        #              goal 0.85-1.65 m BEHIND the robot unreachable anywhere in the building.
+        # What this test has always been about is that a costmap must never consume the RAW
+        # projection, because that contains the robot itself. That invariant is unchanged; only the
+        # number of acceptable masked outputs grew. /scan_filtered remains forbidden.
+        assert topic in MASKED_SCANS, (
             f"{path.name}: {where} consumes {topic}. /scan_filtered is the RAW projection and "
-            f"contains the robot's own arm and mast; the masked scan is /scan.")
+            f"contains the robot's own arm and mast; a costmap must consume a scan_relay output "
+            f"({', '.join(sorted(MASKED_SCANS))}).")
 
 
 @pytest.mark.parametrize("path", PARAMS, ids=lambda p: p.name)
@@ -74,5 +89,9 @@ def test_the_relay_is_what_publishes_the_masked_topic():
     """Ties the assertion above to the thing that actually does the masking, so a rename of either
     side breaks a test rather than silently splitting the chain again."""
     src = (REPO / "bringup" / "scan_relay.py").read_text()
-    assert 'OUT_TOPIC = "/scan"' in src, "scan_relay.py no longer publishes /scan"
-    assert 'IN_TOPIC = "/scan_filtered"' in src, "scan_relay.py no longer consumes /scan_filtered"
+    # The topics became env-overridable so ONE implementation can serve both consumers (a second
+    # instance publishes /scan_nav). The literal assertion below therefore checks the DEFAULTS,
+    # which are what an un-overridden relay still produces.
+    assert 'UTP_SCAN_OUT", "/scan"' in src, "scan_relay.py no longer defaults to publishing /scan"
+    assert 'UTP_SCAN_IN", "/scan_filtered"' in src, \
+        "scan_relay.py no longer defaults to consuming /scan_filtered"

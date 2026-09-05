@@ -54,6 +54,15 @@ slam_toolbox:
     # thing that mattered; the scan has to be the same KIND the map was made from.
     # The fast path is still worth having -- see the note below -- but it needs a map built from
     # /ouster/scan to localize against, not this one.
+    # /scan, NOT /scan_nav. Corrected 2026-09-05.
+    # /scan_nav exists to hide the robot's own structure from NAV2, and it does that with a wide
+    # geometric mask -- a disc out to 1.30 m across the whole rear arc. slam_toolbox must NOT read
+    # it: this file's companion note in bringup/scan_relay.py says why, and it is measured --
+    # "slam_toolbox needs returns past 1.15 m astern or it loses the lift car's side walls;
+    # MASK_MAX_M 1.00 deleted them once already and cost a map". Feeding the matcher the nav scan
+    # blinds it astern to 1.30 m, which is most of a 2 m lift car.
+    # The two consumers need opposite things from the same bearings, which is the entire reason
+    # there are two topics. SLAM gets the 0.90 m mask; Nav2 gets the 1.30 m one.
     scan_topic: /scan
     use_map_saver: true
     mode: mapping #localization
@@ -142,7 +151,7 @@ slam_toolbox:
     min_pass_through: 2
     occupancy_threshold: 0.1
 # --- OS0 deltas (2026-08-30) -------------------------------------------------------------------
-# scan_topic     -> /scan_filtered : the Ouster cloud projected to a LaserScan by
+# scan_topic     -> /scan_nav : the projected scan after near-field temporal confirmation by
 #                   pointcloud_to_laserscan. ~977 valid beams over a full 360 deg, versus the 44
 #                   the A1M8 delivered -- which is the entire reason 2D SLAM failed here before.
 # min_laser_range -> 0.55 : the projection already drops returns inside 0.50 m (the robot's own

@@ -300,7 +300,19 @@ global_costmap:
         enabled: true
         observation_sources: scan
         scan:
-          topic: /scan       # MASKED + RELIABLE. See bringup/scan_relay.py.
+          # /scan_nav, NOT /scan. Both come from bringup/scan_relay.py off the same
+          # /scan_filtered; they differ only in mask radius, and they differ because slam_toolbox
+          # and this costmap need opposite things from the rear arc:
+          #   /scan      masks astern to 0.90 m -- keeps the lift car's side walls at 1.00-1.15 m,
+          #              which slam_toolbox needs to localize inside the car.
+          #   /scan_nav  masks astern to 1.30 m -- removes the OS0's near-field ring at
+          #              0.85-1.20 m (measured 2026-09-05, nothing physically there), which is
+          #              fixed in base_link and therefore made EVERY Nav2 goal 0.85-1.65 m behind
+          #              the robot unreachable anywhere in the building. That is the lift entry and
+          #              exit geometry exactly.
+          # Costs 0.40 m of new blindness directly astern. Revert to /scan and delete the second
+          # relay the moment the ring is understood at the sensor.
+          topic: /scan_nav
                                       # WAS /scan_filtered UNTIL 2026-09-01, and the old comment here
                                       # was INVERTED and cost most of a session: it claimed this
                                       # topic was the cleaned one. It described the
@@ -344,6 +356,23 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0      # [NONDEFAULT] gentle decay -> doorways stay passable
+        # RAISED 0.20 -> 0.30 on 2026-09-05, after the robot nearly struck a wall while ROTATING
+        # and the operator stopped it on the RC.
+        #
+        # 0.20 m was BELOW the robot's own inscribed radius (0.25 half-width + 0.03 padding =
+        # 0.28 m). Nav2's InflationLayer only writes cost out to inflation_radius, so the band
+        # 0.20-0.28 m from every obstacle read cost 0 -- FREE -- while the robot's body in that
+        # band is already inside the wall. The costmap was not being permissive; it was lying.
+        # Rotation makes it worse: the corners sweep the CIRCUMSCRIBED radius,
+        # sqrt(0.36^2 + 0.25^2) + 0.03 = 0.468 m, which is 2.3x the old inflation radius, so a
+        # spin next to a wall got essentially no warning. Only MPPI's consider_footprint stood
+        # between that and contact, and it samples poses -- it is not a swept-volume check.
+        #
+        # THE FEAR THAT THIS CLOSES THE LIFT IS MEASURED AND WRONG. The lift doorway on
+        # elevator_f2 is 0.98 m at its narrowest (y=+4.75, measured off the saved grid). With
+        # inflation at the geometric floor the centre still has 0.98 - 2*0.28 = 0.42 m of
+        # corridor. Tight, and it demands good localization, but plannable.
+        # Do NOT go below 0.28. Anything less is not extra clearance, it is an unmarked collision.
         inflation_radius: 0.30        # [NONDEFAULT] footprint-derived, NOT scene tuning. 0.45 m exceeded half of a real
         # ~0.75-0.80 m doorway, so inflation from BOTH jambs overlapped and closed the doorway, and in-room goals landed
         # inside inflation -> unplannable. 0.30 m sits just above inscribed radius (0.255) + footprint_padding (0.03), so
@@ -375,7 +404,8 @@ local_costmap:
         enabled: true
         observation_sources: scan
         scan:
-          topic: /scan       # MASKED + RELIABLE (scan_relay.py); see the global costmap above
+          # /scan_nav -- see the global costmap above for why the two scans differ.
+          topic: /scan_nav
           sensor_frame: base_link     # [OS0] see header note 1
           data_type: "LaserScan"
           # [NONDEFAULT] MULTI-FLOOR z-BAND. Nav2's ObservationBuffer discards scan points whose z
@@ -403,6 +433,23 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0      # [NONDEFAULT]
+        # RAISED 0.20 -> 0.30 on 2026-09-05, after the robot nearly struck a wall while ROTATING
+        # and the operator stopped it on the RC.
+        #
+        # 0.20 m was BELOW the robot's own inscribed radius (0.25 half-width + 0.03 padding =
+        # 0.28 m). Nav2's InflationLayer only writes cost out to inflation_radius, so the band
+        # 0.20-0.28 m from every obstacle read cost 0 -- FREE -- while the robot's body in that
+        # band is already inside the wall. The costmap was not being permissive; it was lying.
+        # Rotation makes it worse: the corners sweep the CIRCUMSCRIBED radius,
+        # sqrt(0.36^2 + 0.25^2) + 0.03 = 0.468 m, which is 2.3x the old inflation radius, so a
+        # spin next to a wall got essentially no warning. Only MPPI's consider_footprint stood
+        # between that and contact, and it samples poses -- it is not a swept-volume check.
+        #
+        # THE FEAR THAT THIS CLOSES THE LIFT IS MEASURED AND WRONG. The lift doorway on
+        # elevator_f2 is 0.98 m at its narrowest (y=+4.75, measured off the saved grid). With
+        # inflation at the geometric floor the centre still has 0.98 - 2*0.28 = 0.42 m of
+        # corridor. Tight, and it demands good localization, but plannable.
+        # Do NOT go below 0.28. Anything less is not extra clearance, it is an unmarked collision.
         inflation_radius: 0.30        # [NONDEFAULT] footprint-derived, NOT scene tuning. 0.45 m exceeded half of a real
         # ~0.75-0.80 m doorway, so inflation from BOTH jambs overlapped and closed the doorway, and in-room goals landed
         # inside inflation -> unplannable. 0.30 m sits just above inscribed radius (0.255) + footprint_padding (0.03), so
