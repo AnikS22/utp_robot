@@ -84,7 +84,11 @@ source "$REPO/bringup/env.sh" >/dev/null 2>&1 || { echo "cannot source bringup/e
 
 LOG=/tmp/utp_bringup.log
 MODE=nav
-MAP_NAME="${MAP_NAME:-elevator}"
+# The default must be the map the WAYPOINTS were actually recorded in. `bringup/session.sh` and
+# `bringup/stack.sh` both default to floor1 and tests/test_stack_wiring.py pins them to agree with
+# maps/waypoints.yaml; a bring-up that quietly loads a different map hands every waypoint a
+# different physical meaning, and safety/map_frame.py then refuses all of them.
+MAP_NAME="${MAP_NAME:-floor1}"
 STATUS_ONLY=0
 NEED_ARM="${UTP_NEED_ARM:-0}"
 

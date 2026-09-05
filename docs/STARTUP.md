@@ -14,7 +14,7 @@ would otherwise have looked like.
 ## The one command
 
 ```bash
-bash bringup/bringup_all.sh --mode nav --map elevator
+bash bringup/bringup_all.sh --mode nav --map floor1
 ```
 
 ```bash
