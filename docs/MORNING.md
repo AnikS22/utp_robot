@@ -66,14 +66,29 @@ suspect the robot before you suspect the room.
 
 ## 2. The map
 
-**`atrium` exists and it is relocalizable.** Saved 2026-09-01 with its pose graph:
+> **CORRECTED 2026-09-05 — this section said `atrium` was relocalizable. It is not, any more.**
+> `maps/atrium.posegraph` and `maps/atrium.data` are gone; what is on disk is `atrium.pgm` +
+> `atrium.yaml`, a **picture**. slam_toolbox's localization mode deserializes the `.posegraph`, and
+> handed only a grid it does not error — it starts a new, empty graph at the robot's feet and comes
+> up `active`. So the ADA-button waypoints, which were recorded in `atrium`, name coordinates in a
+> frame that no longer exists. Do not use `MAP_NAME=atrium`.
 
-    772 x 855 @ 0.05 m = 38.6 x 42.8 m, 10,452 occupied
-    maps/atrium.posegraph (29 MB) + atrium.data (11 MB) + atrium.pgm + atrium.yaml
+**What is actually relocalizable right now**, all four files each:
 
-That is the difference that matters: every earlier map in `maps/` is a `.pgm`/`.yaml` pair — a
-picture, with nothing slam_toolbox can resume a scan-matcher against. **You do not need to re-map.**
-Go to §3.
+    maps/elevator.*  saved 2026-09-01 — the floor-1 LIFT LOBBY only. The map
+                     bringup/elevator_route.sh drives. 554 KB grid + 29 MB posegraph.
+    maps/floor2.*    saved 2026-09-05 — floor 2. 273 KB grid + 20.9 MB posegraph,
+                     2884 occupied cells. Five f2_ waypoints, four nav legs driven.
+
+**`maps/floor1.*` is being recorded now** — one continuous drive covering the lift lobby AND the
+ADA door, which is the only way to get one pose graph spanning both (a graph is a chain of scan
+matches from a single drive; there has never been a drive linking them, so `elevator` and `atrium`
+could not be merged). `config/floors.yaml` already names it, so `floor_swap.py --check` fails on
+purpose until the drive is saved and the five `f1_` waypoints are recorded. Procedure and required
+order: **`docs/FLOOR1_REMAP.md`**. Until then, floor 1 is `MAP_NAME=elevator` and the lobby only.
+
+The difference that matters throughout: a `.pgm`/`.yaml` pair is a picture, with nothing
+slam_toolbox can resume a scan-matcher against.
 
 ### If you do need to re-map
 
@@ -82,7 +97,8 @@ Full detail in `MAPPING.md`. The short version:
 ```bash
 bash bringup/session.sh map                  # then drive the loop — CLOSE it
 python3 bringup/map_watch.py                 # in another terminal, while driving
-bash bringup/map_persist.sh save atrium      # while slam_toolbox is STILL RUNNING
+bash bringup/map_persist.sh save <name>      # while slam_toolbox is STILL RUNNING
+bash bringup/map_insurance.sh start <name>   # BEFORE the drive: a drive lives only in RAM
 ```
 
 Then, **in the same session**, record the waypoints — a recording made after slam_toolbox restarts
@@ -97,8 +113,16 @@ bash bringup/map_persist.sh list             # confirms the map is campaign-usab
 
 ### Park the robot where the map says, or tell it where you parked
 
-`config/slam_os0.yaml` carries `map_start_pose: [0.2888, -0.4561, -0.5207]` — the pose the robot
-was standing in when `atrium` was saved. **This is the seed, and it is not optional.**
+`config/slam_os0.yaml` carries `map_start_pose: [0.2888, -0.4561, -0.5207]`. **Read that number as
+history, not as a default.** It is the pose the robot was standing in when `atrium` was saved, and
+`atrium` is no longer relocalizable — seeding `elevator` or `floor2` from it converges confidently
+into the wrong corridor. What is not optional is *a* seed, not *this* seed. Get one of:
+
+* `python3 bringup/floor_swap.py --seed <floor> [--seed-role car_panel]` prints `x,y,yaw` for a
+  recorded waypoint, and `SEED_POSE="$(...)" bash bringup/stack.sh` passes it through. Use this when
+  the robot is parked on a named waypoint — a cold boot inside the lift car is the case it exists
+  for, because a closed car's scan is four blank walls and a global search has nothing to work with.
+* RViz **2D Pose Estimate**, or `python3 bringup/relocalise.py`, otherwise.
 
 * **With no `map_start_pose`, slam_toolbox silently discards the saved map.** It logs one line —
   `LocalizationSlamToolbox: Map starting pose not specified...` — and then comes up **ACTIVE
