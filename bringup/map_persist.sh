@@ -137,9 +137,19 @@ fi
 # ============================================================================== save
 if has_service /slam_toolbox/serialize_map; then
     # A map costs a walk around a building. Do not let a bad one silently replace a good one.
-    if [ -f "$STEM.pgm" ] && [ -z "${UTP_MAP_OVERWRITE:-}" ]; then
-        printf '  %s.pgm already exists (%s). Overwrite? type yes: ' "$NAME" \
-            "$(date -r "$STEM.pgm" '+%Y-%m-%d %H:%M')"
+    # CHECK ALL FOUR EXTENSIONS, not just .pgm. The four files come from two different steps --
+    # serialize_map writes .posegraph/.data, map_saver writes .pgm/.yaml -- so an interrupted save
+    # leaves some present and some absent. Guarding on .pgm alone means a name holding a good
+    # .posegraph but no .pgm gets overwritten with no prompt at all, and the posegraph is the half
+    # that cannot be regenerated from the other.
+    _clobber=""
+    for _e in pgm yaml posegraph data; do
+        [ -f "$STEM.$_e" ] && _clobber="$_clobber .$_e"
+    done
+    if [ -n "$_clobber" ] && [ -z "${UTP_MAP_OVERWRITE:-}" ]; then
+        _newest="$(ls -t "$STEM".pgm "$STEM".yaml "$STEM".posegraph "$STEM".data 2>/dev/null | head -1)"
+        printf '  %s already exists (%s, modified %s). Overwrite? type yes: ' \
+            "$NAME" "${_clobber# }" "$(date -r "$_newest" '+%Y-%m-%d %H:%M' 2>/dev/null)"
         read -r ok
         [ "$ok" = "yes" ] || { echo "  keeping the existing map."; exit 1; }
     fi
