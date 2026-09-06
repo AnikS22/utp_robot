@@ -28,6 +28,58 @@ DRY=""; [ "${1:-}" = "--dry-run" ] && DRY="--dry-run"
 BUTTON_WP="${UTP_BUTTON_WP:-f1_ada_button}"
 OUTSIDE_WP="${UTP_OUTSIDE_WP:-f1_outside}"
 
+VENV="$HOME/unlocking-the-path/env/.venv/bin/python"
+NAV_TIMEOUT="${UTP_NAV_TIMEOUT:-180}"
+
+# NAVIGATE, AND BELIEVE THE RESULT LINE -- NOT THE EXIT CODE.
+#
+# This script used to do `nav2_goto.py ... --go || die`. nav2_goto returns 0 for ANY real
+# navigation outcome, arrived AND blocked alike -- that is a deliberate, documented contract with
+# RosWorld.navigate_to_goal, which reads the JSON RESULT line to tell them apart. Reading the exit
+# code here could not distinguish them, so on 2026-09-06 a drive that ABORTED after 158 s was
+# treated as an arrival: the route continued and commanded the arm at a plate 4.99 m away, from
+# the start pose, with the robot never having moved. The arm refused on reach limits. Nothing else
+# in the chain would have.
+#
+# A blockage is NOT a reason to continue. It is the event the reasoning layer exists for, so it
+# stops here and asks the VLM what is in the way.
+nav_to() {
+    local wp="$1" out status
+    out="$(mktemp)"
+    python3 "$REPO/bringup/nav2_goto.py" "$wp" --go --timeout "$NAV_TIMEOUT" 2>&1 | tee "$out"
+    status="$(sed -n 's/^RESULT //p' "$out" | tail -1 \
+              | python3 -c 'import sys,json; d=sys.stdin.read().strip();
+print(json.loads(d).get("status","") if d else "")' 2>/dev/null)"
+    rm -f "$out"
+    case "$status" in
+        arrived) return 0 ;;
+        blocked|timeout)
+            echo
+            echo "  nav to '$wp' came back '$status'. NOT continuing -- asking what is in the way."
+            ask_blockage_now "$wp" "$status"
+            return 1 ;;
+        "")  echo "  nav to '$wp': no RESULT line at all -- nav2_goto did not run to completion." >&2
+             return 1 ;;
+        *)   echo "  nav to '$wp' came back '$status', which is not an arrival." >&2
+             return 1 ;;
+    esac
+}
+
+# Perception, not a decision. ask_blockage.py reports WHAT IS THERE and deliberately never says
+# what to do about it -- see its header for why that line matters to the paper's claim.
+ask_blockage_now() {
+    local wp="$1" why="$2" cap
+    cap="$REPO/captures/blocked_$(date +%H%M%S)"
+    if [ ! -x "$VENV" ]; then
+        echo "  (pipeline venv missing at $VENV -- cannot ask the VLM)" >&2; return 0
+    fi
+    python3 "$REPO/bringup/grab_frame.py" "$cap" >/dev/null 2>&1 || {
+        echo "  (could not grab a frame for the VLM)" >&2; return 0; }
+    echo "  VLM on $cap:"
+    "$VENV" "$REPO/bringup/ask_blockage.py" "$cap" 2>&1 | sed 's/^/    /'
+    echo "  blocked at '$wp' ($why). Capture: $cap"
+}
+
 say() { echo; echo "=============================================================="; echo " $*"; \
         echo "=============================================================="; }
 die() { echo "STOP: $*" >&2; exit 1; }
@@ -53,7 +105,7 @@ PY
 
 say "1  NAVIGATE to '$BUTTON_WP'"
 if [ -z "$DRY" ]; then
-    python3 "$REPO/bringup/nav2_goto.py" "$BUTTON_WP" --go || die "could not reach '$BUTTON_WP'"
+    nav_to "$BUTTON_WP" || die "did not arrive at '$BUTTON_WP' -- the arm is not being commanded"
 else
     python3 "$REPO/bringup/nav2_goto.py" "$BUTTON_WP" || true
 fi
@@ -105,9 +157,39 @@ else
     "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" || true
 fi
 
+say "3b DOORS     did the press work? the doors answer that, and start a clock"
+# THE DOORS ARE THE CONFIRMATION, AND THEY ARE ALSO THE DEADLINE.
+#
+# The previous version of this step waited for an operator to press RETURN. That was the wrong
+# instrument twice over. Nothing in the arm chain can see whether the plate actuated -- the arm
+# reports reaching a pose, which is a different claim -- but the DOORS OPENING is direct evidence
+# that it did. And an ADA opener holds for a bounded time and then shuts, so every second spent
+# confirming is a second off the drive out. A human keypress is slower than the thing it confirms.
+#
+# doors_open.py exits 0 the moment they open, 1 if still shut, 2 if it could not tell (which it
+# treats as shut, because the glass fooled both the camera and the lidar on 2026-09-01).
+DOORS_TIMEOUT="${UTP_DOORS_TIMEOUT:-20}"
+if [ -z "$DRY" ]; then
+    if python3 "$REPO/bringup/doors_open.py" --timeout "$DOORS_TIMEOUT"; then
+        echo "  DOORS OPEN -- going now, before they shut"
+    else
+        rc=$?
+        echo
+        echo "  doors did NOT open within ${DOORS_TIMEOUT}s (doors_open.py exit $rc)."
+        echo "  That is the press failing, not the drive. Not driving into a closed door."
+        # UTP_DOORS_OVERRIDE=1 for an operator who can see they are open and disagrees with the
+        # detector -- glass has fooled it before, in both directions.
+        if [ "${UTP_DOORS_OVERRIDE:-0}" = "1" ]; then
+            echo "  UTP_DOORS_OVERRIDE=1 -- continuing anyway on the operator's word"
+        else
+            die "doors never opened; set UTP_DOORS_OVERRIDE=1 to drive out regardless"
+        fi
+    fi
+fi
+
 say "4  NAVIGATE to '$OUTSIDE_WP'"
 if [ -z "$DRY" ]; then
-    python3 "$REPO/bringup/nav2_goto.py" "$OUTSIDE_WP" --go || die "could not reach '$OUTSIDE_WP'"
+    nav_to "$OUTSIDE_WP" || die "did not arrive at '$OUTSIDE_WP'"
 else
     python3 "$REPO/bringup/nav2_goto.py" "$OUTSIDE_WP" || true
 fi

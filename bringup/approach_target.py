@@ -27,6 +27,7 @@ wall the plate is on, not straight down the arm's own axis.
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import subprocess
 import sys
@@ -143,6 +144,16 @@ def main() -> int:
     ap.add_argument("--speed", type=float, default=None,
                     help="Cartesian speed mm/s (default 25). Raising it raises the current the "
                          "joints draw against contact, which is what error 31 reads.")
+    # WHICH CORRECTION TO USE, and why this is a flag rather than one number in the file.
+    # The default offset was measured against the elevator CALL button and independently improved
+    # the ADA plate -- two unrelated targets, which is what makes it a property of the rig. The
+    # 25 mm floor-select button inside the lift car needed a further correction that was never
+    # re-checked against either of them, and for a while that in-car value was the default and was
+    # therefore applied to every press this rig makes. Naming it keeps it available for the target
+    # it was measured on without letting it silently follow the arm everywhere else.
+    ap.add_argument("--offset-profile", default=None,
+                    help="named offset from calib/handeye.json target_offset_profiles, "
+                         "e.g. lift_car_select. Default: the validated global offset.")
     ap.add_argument("--min-standoff", type=float, default=150.0,
                     help="stop with the MARKER this far from the target, mm")
     ap.add_argument("--go", action="store_true")
@@ -220,10 +231,21 @@ def main() -> int:
     # rather than nudged per button, because the bias is a property of the lift and not of any one
     # target -- and this rig presses buttons on many floors and many panels. See
     # target_offset_note in that file for how it was measured and what would invalidate it.
-    _off = np.array(c.get("target_offset_link_base_m", [0.0, 0.0, 0.0]), dtype=float)
+    _prof = (getattr(a, "offset_profile", None) or os.environ.get("UTP_OFFSET_PROFILE") or "").strip()
+    _profiles = c.get("target_offset_profiles", {}) or {}
+    if _prof:
+        if _prof not in _profiles:
+            print(f"unknown --offset-profile '{_prof}'. Known: {sorted(_profiles) or 'none'}",
+                  file=sys.stderr)
+            return 2
+        _off = np.array(_profiles[_prof], dtype=float)
+        _src = f"profile '{_prof}'"
+    else:
+        _off = np.array(c.get("target_offset_link_base_m", [0.0, 0.0, 0.0]), dtype=float)
+        _src = "default"
     if np.any(_off):
         p_arm = p_arm + _off
-        print(f"target offset    : {_off.round(4)} m from calib/handeye.json")
+        print(f"target offset    : {_off.round(4)} m from calib/handeye.json ({_src})")
     approach = T[:3, :3] @ np.array([0.0, 0.0, 1.0])       # wall-ward, in arm coordinates
     approach /= np.linalg.norm(approach)
 

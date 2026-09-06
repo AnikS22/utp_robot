@@ -63,6 +63,43 @@ map_server:
     frame_id: "map"
 
 # -----------------------------------------------------------------------------
+# KEEPOUT FILTER — the operator's hand-drawn "do not route through here".
+# -----------------------------------------------------------------------------
+# THE OTHER HALF OF allow_unknown: false (see planner_server below). That flag stops the planner
+# inventing routes through the 470,246 unknown cells of floor1 it has never seen. It does nothing
+# about the opposite case: floor that IS mapped free and must not be driven anyway — a stairwell
+# lip, a lab bay, the far side of a fire door. Nothing in a costmap distinguishes "free and safe"
+# from "free and forbidden", so until this mask existed there was no way to express the second.
+#
+# Two servers, both lifecycle nodes, both started ONLY when the mask file exists
+# (ranger_nav.launch.py, `keepout` arg): filter_mask_server is an ordinary map_server publishing
+# the painted grid, and costmap_filter_info_server tells the KeepoutFilter plugins how to read it.
+# maps/floor1_keepout.pgm is all-white on creation, and white means unchanged, so wiring this in
+# alters no plan until somebody paints. bringup/keepout_mask.py and docs/KEEPOUT.md.
+costmap_filter_info_server:
+  ros__parameters:
+    use_sim_time: false               # [HARDWARE] wall clock; CLAUDE.md forbids sim time on real hardware
+    type: 0                           # 0 = keepout/preferred-lane. 1 = speed limit %, 2 = speed limit abs
+    filter_info_topic: "/costmap_filter_info"
+    mask_topic: "/keepout_filter_mask"
+    # base 0.0 / multiplier 1.0 are the values a KEEPOUT filter requires: the plugin checks them and
+    # logs "base and multiplier ... should be set to their default values" if they are anything
+    # else. They are the affine transform from mask value to filter value, and for a keepout the
+    # mask value IS the answer. They matter for a SpeedFilter, not for this.
+    base: 0.0
+    multiplier: 1.0
+
+filter_mask_server:
+  ros__parameters:
+    use_sim_time: false               # [HARDWARE] wall clock; CLAUDE.md forbids sim time on real hardware
+    yaml_filename: ""                 # injected by the launch file (keepout arg)
+    # The mask is served on its OWN topic, never on /map. slam_toolbox owns /map; a second
+    # publisher there is the failure this repo has already paid for twice (header note 3/4), and
+    # the costmap would latch whichever it saw first.
+    topic_name: "/keepout_filter_mask"
+    frame_id: "map"
+
+# -----------------------------------------------------------------------------
 # Planner server — global path. NavfnPlanner: robust, costmap-based, no extra
 # tuning; works for a ~circumscribed-radius robot in 1 m corridors. (Swap to
 # nav2_smac_planner::SmacPlanner2D if smoother feasible paths are wanted — see
@@ -85,7 +122,18 @@ planner_server:
       # (e.g. lower inflation_radius toward the inscribed radius, or place goals at footprint-fittable
       # cells), validated live — NOT a goal-tolerance bump. Left for a focused nav-tuning pass.
       use_astar: true                 # [NONDEFAULT] A* gives straighter paths than Dijkstra in corridors
-      allow_unknown: true
+      # FALSE since 2026-09-06, and this is the fix for a runaway, not a tuning preference.
+      # floor1's global costmap is 470,246 unknown cells against 139,078 free -- most of the grid
+      # is space nobody has driven. With allow_unknown: true the planner treats all of it as
+      # traversable, so the moment the direct route is obstructed it routes AROUND through
+      # unmapped space and straight off the edge of the map. Observed live: the robot left the
+      # button heading in a direction with no goal in it and did not stop on its own.
+      #
+      # False means the planner can only use cells the map says are FREE. When there is no such
+      # path it FAILS, loudly and immediately, instead of inventing one -- which is what a
+      # blocked route is supposed to do so the reasoning layer can be asked what is in the way.
+      # A planner that always finds a path has stopped being able to report a blockage.
+      allow_unknown: false
 
 # -----------------------------------------------------------------------------
 # Controller server — local trajectory. Regulated Pure Pursuit (RPP).
@@ -292,6 +340,22 @@ global_costmap:
       footprint_padding: 0.03         # [NONDEFAULT] small safety pad around the body
       # [OS0] A real map exists now: plan across all of it, not just a rolling window.
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      # `filters` is a SECOND, separate list from `plugins`, run after all of them, and that
+      # ordering is the whole point: the obstacle layer clears cells it can see are empty, so a
+      # keepout expressed as a plugin would be cleared away by the next scan. As a filter it is
+      # applied last and survives.
+      #
+      # A dangling filter is HARMLESS. With no costmap_filter_info_server running, the plugin
+      # loads, subscribes, and logs "KeepoutFilter: Filter mask was not received" every 2 s while
+      # changing no cell -- VERIFIED 2026-09-06 on an isolated costmap (domain 77): the costmap
+      # still reached ACTIVE and published, and cost at a would-be keepout stayed 0. That is what
+      # lets ranger_nav.launch.py leave the two servers off when no mask file exists without
+      # having to rewrite this file.
+      filters: ["keepout_filter"]
+      keepout_filter:
+        plugin: "nav2_costmap_2d::KeepoutFilter"
+        enabled: true
+        filter_info_topic: "/costmap_filter_info"
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: true
@@ -399,6 +463,18 @@ local_costmap:
       footprint: "[[0.36, 0.25], [0.36, -0.25], [-0.36, -0.25], [-0.36, 0.25]]"  # [NONDEFAULT]
       footprint_padding: 0.03         # [NONDEFAULT]
       plugins: ["obstacle_layer", "inflation_layer"]
+      # Same mask here as in the global costmap, and it is NOT redundant. The global costmap is
+      # what the planner routes on, so the mask is what keeps a path out of the zone; this one is
+      # what MPPI scores against, so without it the controller would happily cut a corner into a
+      # forbidden area while tracking a path that stays outside it. The plugin transforms the
+      # costmap frame into the mask frame through TF, which is why a mask stamped "map" works in a
+      # costmap whose global_frame is odom -- so long as map->odom exists, which Nav2 already
+      # requires here (bringup_all.sh STAGE 9 refuses to launch without it).
+      filters: ["keepout_filter"]
+      keepout_filter:
+        plugin: "nav2_costmap_2d::KeepoutFilter"
+        enabled: true
+        filter_info_topic: "/costmap_filter_info"
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true

@@ -5,6 +5,7 @@
 # =============================================================================
 # Brings up (all lifecycle-managed, autostarted):
 #   map_server, planner_server, controller_server, behavior_server, bt_navigator
+#   filter_mask_server, costmap_filter_info_server   (only when keepout:=<an existing file>)
 # plus a lifecycle_manager that configures+activates them in order.
 #
 # Consumes : /scan, /odom, /tf, /tf_static          (published by the Isaac worker)
@@ -81,6 +82,22 @@ def generate_launch_description() -> LaunchDescription:
         "log_level", default_value="info",
         description="Logging level for all Nav2 nodes.")
 
+    # KEEPOUT MASK — off by default, and off by FILE EXISTENCE rather than by a flag.
+    # The two filter servers are lifecycle nodes, and the lifecycle manager waits on a bond from
+    # every name in node_names: a name whose node was never started does not get skipped, it
+    # stalls the entire Nav2 bring-up (see the node_names comment below). So "no mask" must mean
+    # "not in the list AND not launched", from ONE predicate, or a routine bring-up on a machine
+    # without a mask file would hang with no navigation at all. os.path.isfile is that predicate,
+    # evaluated at launch time so it also catches a path typed wrong on the command line.
+    keepout = LaunchConfiguration("keepout")
+    declare_keepout = DeclareLaunchArgument(
+        "keepout", default_value="",
+        description="Full path to a Nav2 keepout mask YAML (maps/<map>_keepout.yaml). Empty or "
+                    "missing => no filter servers start and the KeepoutFilter in both costmaps "
+                    "idles harmlessly. See docs/KEEPOUT.md.")
+    _keepout_expr = ["os.path.isfile('", keepout, "')"]
+    _keepout_mode = IfCondition(PythonExpression(_keepout_expr, python_modules=["os"]))
+
     # Per-node param override applied on top of the shared params_file.
     common_overrides = {"use_sim_time": use_sim_time}
 
@@ -128,6 +145,32 @@ def generate_launch_description() -> LaunchDescription:
         name="amcl",
         output="screen",
         condition=_amcl_mode,
+        parameters=[params_file, common_overrides],
+        arguments=arguments,
+    )
+
+    # The mask itself, served on its own topic. This is a map_server binary, but it is NOT a map:
+    # nothing subscribes to it except the KeepoutFilter plugins, and it must never land on /map,
+    # which slam_toolbox owns.
+    filter_mask_server = Node(
+        package="nav2_map_server",
+        executable="map_server",
+        name="filter_mask_server",
+        output="screen",
+        condition=_keepout_mode,
+        parameters=[params_file, common_overrides, {"yaml_filename": keepout}],
+        arguments=arguments,
+    )
+
+    # Tells the KeepoutFilter plugins which topic carries the mask and how to read its values.
+    # Without it the plugins subscribe to /costmap_filter_info, never hear anything, and warn
+    # "KeepoutFilter: Filter mask was not received" forever while changing nothing.
+    costmap_filter_info_server = Node(
+        package="nav2_map_server",
+        executable="costmap_filter_info_server",
+        name="costmap_filter_info_server",
+        output="screen",
+        condition=_keepout_mode,
         parameters=[params_file, common_overrides],
         arguments=arguments,
     )
@@ -194,10 +237,22 @@ def generate_launch_description() -> LaunchDescription:
 
     # The manager must be told EXACTLY the nodes that exist: it waits on a bond from each, and a
     # name that was never started stalls the whole bringup rather than being skipped.
-    node_names = PythonExpression([
-        "['map_server','amcl'] + ", str(lifecycle_nodes[1:]),
-        " if '", localization, "' == 'amcl' else ", str(lifecycle_nodes[1:]),
-    ])
+    #
+    # The two filter servers go FIRST. The manager configures and activates in list order, and the
+    # costmaps that consume the mask are inside planner_server and controller_server -- putting the
+    # mask ahead of them means the filter info is already on the wire when those costmaps
+    # configure, instead of arriving some callbacks later. Nothing breaks if it arrives late (the
+    # plugin handles a late mask), but the first plan after activation is then made against the
+    # mask rather than without it, and that first plan is the one an operator watches.
+    #
+    # This shares os.path.isfile with the Node conditions above ON PURPOSE. The two must agree
+    # exactly: a name here with no node is a hang, and a node with no name here never activates.
+    node_names = PythonExpression(
+        ["(['filter_mask_server', 'costmap_filter_info_server'] if "] + _keepout_expr + [" else [])",
+         " + (['map_server','amcl'] + ", str(lifecycle_nodes[1:]),
+         " if '", localization, "' == 'amcl' else ", str(lifecycle_nodes[1:]), ")"],
+        python_modules=["os"],
+    )
 
     lifecycle_manager = Node(
         package="nav2_lifecycle_manager",
@@ -221,6 +276,9 @@ def generate_launch_description() -> LaunchDescription:
         declare_map,
         declare_log_level,
         declare_localization,
+        declare_keepout,
+        filter_mask_server,
+        costmap_filter_info_server,
         map_server,
         amcl,
         planner_server,

@@ -11,10 +11,10 @@ f1_ada_button:
   frame: map
   map_name: floor1
   mola_session: 010fa57561f11028
-  odom_epoch: 1788722980
-  x: 8.0509
-  y: 3.3773
-  yaw: 0.5548
+  odom_epoch: 1788726099
+  x: 7.9877
+  y: 3.3266
+  yaw: 0.7718
 f1_outside:
   frame: map
   map_name: floor1
