@@ -103,7 +103,11 @@ def _relift(det, cand, depth, cam):
         det.point3d = None
         return det
     z = float(_np.median(good))
+    # K is stored either flat (9 values) or as a 3x3 nested list, depending on who wrote the
+    # capture. Flatten before indexing rather than assuming, which is what crashed here first.
     K = cam["K"]
+    if K and isinstance(K[0], (list, tuple)):
+        K = [v for row in K for v in row]
     fx, fy = float(K[0]), float(K[4])
     ppx, ppy = float(K[2]), float(K[5])
     ux, uy = (x0 + x1) / 2.0, (y0 + y1) / 2.0

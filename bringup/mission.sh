@@ -26,10 +26,14 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO/bringup/env.sh" >/dev/null 2>&1 || { echo "env.sh failed" >&2; exit 1; }
 
-FROM=2; TO=1; DRY=""
+FROM=2; TO=1; DRY=""; ARRIVAL_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY="--dry-run"; shift ;;
+    # Resume at the arrival half. The ride is the one part a script cannot own -- the robot is
+    # carried and nothing in software is true about which floor it is on -- so a run interrupted
+    # anywhere in the car needs a way back in without re-driving floor 2.
+    --arrival-only) ARRIVAL_ONLY=1; shift ;;
     --from) FROM="$2"; shift 2 ;;
     --to)   TO="$2";   shift 2 ;;
     *) echo "usage: bash bringup/mission.sh [--dry-run] [--from N] [--to N]" >&2; exit 2 ;;
@@ -255,6 +259,9 @@ if [ -z "$DRY" ]; then
 fi
 
 # ---------------------------------------------------------------------------- 1  floor FROM
+if [ "$ARRIVAL_ONLY" = 1 ]; then
+    say "SKIPPING floor $FROM -- resuming at the arrival on floor $TO"
+else
 localize_on "$A_MAP"
 
 # DOORS FIRST, THEN THE PLATE -- the operator's stated order for floor 2. It also puts the robot
@@ -296,6 +303,7 @@ cat <<'RIDE'
   well if the lift were stuck.
 RIDE
 doors "the car has arrived -- they must be OPEN before anything below runs"
+fi
 
 # ---------------------------------------------------------------------------- 3  floor TO
 # RELOCALIZE WITH THE DOORS OPEN, AND ONLY THEN. seed_pose's docstring is right that a global
