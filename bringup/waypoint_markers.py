@@ -175,6 +175,19 @@ def main() -> int:
             for k, v in store_now.items())))
         if key != state["key"]:
             state["key"] = key
+            # DELETEALL FIRST. RViz keeps every marker it has been sent until something deletes
+            # it, so publishing a SHORTER array does not remove the old ones -- after the swap to
+            # floor1 the display went on showing floor2's five waypoints beside floor1's two, on
+            # floor1's map, with unrelated origins. Reported by the operator as "the floor 2
+            # waypoints are still there and the floor 1 waypoints didn't switch". The provenance
+            # filter was working; the stale markers were never being cleared.
+            wipe = MarkerArray()
+            gone = Marker()
+            gone.header.frame_id = a.frame
+            gone.header.stamp = node.get_clock().now().to_msg()
+            gone.action = Marker.DELETEALL
+            wipe.markers.append(gone)
+            pub.publish(wipe)
             state["markers"], _d, _s = build(store_now, live_now)
             drawn_now = sum(1 for m in state["markers"].markers if m.ns == "waypoint_arrow")
             node.get_logger().info(
