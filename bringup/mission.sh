@@ -26,7 +26,7 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO/bringup/env.sh" >/dev/null 2>&1 || { echo "env.sh failed" >&2; exit 1; }
 
-FROM=2; TO=1; DRY=""; ARRIVAL_ONLY=0
+FROM=2; TO=1; DRY=""; ARRIVAL_ONLY=0; MANUAL_CALL=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY="--dry-run"; shift ;;
@@ -34,6 +34,15 @@ while [ $# -gt 0 ]; do
     # carried and nothing in software is true about which floor it is on -- so a run interrupted
     # anywhere in the car needs a way back in without re-driving floor 2.
     --arrival-only) ARRIVAL_ONLY=1; shift ;;
+    # The OPERATOR presses the call plate; the robot does everything else. Not a convenience:
+    # measured 2026-09-06, the call press grounds the right button (0.564) with clean depth
+    # (810/810 valid, 2 mm std) and still lands wide, because the hand-eye solve is
+    # flange-relative while a 172 mm tool makes set_position mean the tool tip -- roughly
+    # 100-170 mm along the approach axis. A 120 mm ADA plate absorbs that; a 27 px call button
+    # does not. arm_tool.py says which state is right "cannot be settled from software" and needs
+    # the physical measurement in docs/CALIBRATION.md item 2. Until that is done, this flag keeps
+    # the rest of the run autonomous instead of blocking it behind a calibration.
+    --manual-call) MANUAL_CALL=1; shift ;;
     --from) FROM="$2"; shift 2 ;;
     --to)   TO="$2";   shift 2 ;;
     *) echo "usage: bash bringup/mission.sh [--dry-run] [--from N] [--to N]" >&2; exit 2 ;;
@@ -316,8 +325,14 @@ localize_on "$A_MAP"
 # where it can see the lift before it asks for it, so a failed call is visible immediately rather
 # than after a drive.
 [ -n "${A_DOOR_FACING:-}" ] && nav "$A_DOOR_FACING"
-nav   "$A_CALL_BUTTON"
-press "$A_CALL_QUERY"
+if [ "$MANUAL_CALL" = 1 ]; then
+    say "CALL PLATE -- the operator presses it; the robot waits at the doors"
+    note "skipping the drive to '$A_CALL_BUTTON' and its press (--manual-call)"
+    note "press the call button now; the lidar below is watching the doorway"
+else
+    nav   "$A_CALL_BUTTON"
+    press "$A_CALL_QUERY"
+fi
 
 # Forward entry where the floor defines it, else the original reverse.
 ENTRY_APPROACH="${A_DOOR_FACING:-${A_DOOR_REVERSE:-}}"
