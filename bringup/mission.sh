@@ -161,21 +161,24 @@ clear_costmaps() {
 
 # doors <message> [open|close]
 #
-# THE SECOND ARGUMENT IS NOT DECORATION. Every call used to wait for the doors to be OPEN, including
-# "let them CLOSE, then ride" -- which would have waited 60 s for the opposite of what it wanted and
-# then killed the run, one step before the ride. In a hands-off run that is the whole trial.
+# THE SECOND ARGUMENT IS NOT DECORATION. Every call once waited for OPEN, including "let them
+# CLOSE, then ride", which would have waited for the opposite of what it wanted and then killed the
+# run one step before the ride.
 #
-# Waiting for them to CLOSE matters for its own reason: while they stand open the scan reaches out
-# into the departure floor's lobby, and the swap would hand the restarted matcher that floor's
-# geometry to reconcile against a destination-floor seed. Sealed, the scan is only the car, which
-# is the one thing both maps agree about.
+# CLEAR THE COSTMAPS WHILE WAITING, NOT AFTER SEEING THEM OPEN. This used to detect open, then
+# clear both costmaps and sleep 2 s before returning -- about five seconds of the door hold spent
+# standing still. A lift door does not hold long: measured 2026-09-06, the lidar read 3.10 m clear,
+# the clear ran, and the entry leg then aborted after 25 s with "recoveries exhausted" because by
+# then the doors were closing and the obstacle layer had re-marked the opening. The stale marks all
+# date from BEFORE the doors opened, so they can be cleared at any time during the wait -- and then
+# the instant the lidar says open there is nothing to do but drive.
 doors() {
-    local want="${2:-open}"
+    local want="${2:-open}" t0=$SECONDS last=$SECONDS
     say "DOORS -- $1"
     [ -n "$DRY" ] && return 0
+
     if [ "$want" = close ]; then
-        local end=$(( SECONDS + ${UTP_DOOR_CLOSE_WAIT:-45} ))
-        while [ "$SECONDS" -lt "$end" ]; do
+        while [ $(( SECONDS - t0 )) -lt "${UTP_DOOR_CLOSE_WAIT:-45}" ]; do
             if ! python3 "$REPO/bringup/doors_open_lidar.py" --once --quiet \
                     --clear-m "${UTP_DOOR_CLEAR:-1.6}" >/dev/null 2>&1; then
                 note "doors are shut -- the scan is only the car now"
@@ -189,36 +192,29 @@ doors() {
         clear_costmaps
         return 0
     fi
-    # WATCH THE DOORS WITH THE LIDAR, and only fall back to a clock if that cannot answer.
-    #
-    # This used to count down 15 s with no terminal and ASSUME they had opened. On 2026-09-06 that
-    # sent the robot at the car while the doors were shut: the obstacle layer had them marked as a
-    # lethal band across the opening, and the entry leg came back "ABORTED, recoveries exhausted"
-    # after 24.4 s. Assuming a door is open is the same class of error as reading an exit code
-    # instead of a result -- a claim about the world manufactured from a claim about the clock.
-    #
-    # The lidar CAN answer here, and this is the one place it could not on floor 1: at a
-    # door-facing pose the robot points AT the doorway, so the forward sector is the doors. At the
-    # ADA button pose it faced the plate, which is why that check was removed there and belongs
-    # here. Glass is opaque to the OS0 and transparent to the camera -- doors_open.py's own
-    # measurement, 85 lidar returns at 0.72 m where the VLM saw an open walkway.
-    if python3 "$REPO/bringup/doors_open_lidar.py" --timeout "${UTP_DOOR_WAIT:-60}" \
-                                                   --clear-m "${UTP_DOOR_CLEAR:-1.6}"; then
-        note "doors are open -- going"
-    elif [ -t 0 ]; then
-        echo "  lidar still sees them shut. RETURN to go anyway, Ctrl-C to stop."; read -r _ || true
-    else
-        note "lidar still sees them shut after ${UTP_DOOR_WAIT:-60}s"
-        [ "${UTP_DOORS_OVERRIDE:-0}" = "1" ] || die "the doors did not open. Nothing below may
-        drive: Nav2 has them marked as a lethal band across the opening and the leg would abort
-        into them. Set UTP_DOORS_OVERRIDE=1 to drive regardless."
-        note "UTP_DOORS_OVERRIDE=1 -- driving anyway"
+
+    clear_costmaps
+    while [ $(( SECONDS - t0 )) -lt "${UTP_DOOR_WAIT:-60}" ]; do
+        if python3 "$REPO/bringup/doors_open_lidar.py" --once --quiet \
+                --clear-m "${UTP_DOOR_CLEAR:-1.6}" >/dev/null 2>&1; then
+            note "doors are open -- going NOW (costmaps already clear)"
+            return 0
+        fi
+        if [ $(( SECONDS - last )) -ge 8 ]; then clear_costmaps >/dev/null 2>&1; last=$SECONDS; fi
+        sleep 1
+    done
+
+    if [ -t 0 ]; then
+        echo "  lidar still sees them shut. RETURN to go anyway, Ctrl-C to stop."
+        read -r _ || true
+        clear_costmaps
+        return 0
     fi
-    # CLEAR THE COSTMAPS THE INSTANT THE DOORS ARE OPEN, not before. Measured 2026-09-05: a
-    # clear at the prompt is followed by a ~21 s approach leg, and an ADA opener holds for a
-    # bounded time -- so by the time the entry leg starts the doors have shut again and the
-    # obstacle layer has re-marked them as a ~0.5 m lethal band straight across the opening, goal
-    # cell at 99. The planner then cannot terminate there and bt_navigator aborts.
+    note "lidar still sees them shut after ${UTP_DOOR_WAIT:-60}s"
+    [ "${UTP_DOORS_OVERRIDE:-0}" = "1" ] || die "the doors did not open. Nothing below may drive:
+        Nav2 has them marked as a lethal band across the opening and the leg would abort into
+        them. Set UTP_DOORS_OVERRIDE=1 to drive regardless."
+    note "UTP_DOORS_OVERRIDE=1 -- driving anyway"
     clear_costmaps
 }
 
