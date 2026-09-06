@@ -275,16 +275,26 @@ if [ -z "$DRY" ]; then
     "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go 2>&1 | tail -1 | sed 's/^/  /'
 fi
 
-# THE GOAL CHECKER DECIDES WHETHER THE ARM CAN REACH. Nav2 shipped xy_goal_tolerance 0.25 m, so
-# "arrived" meant anywhere within a quarter metre -- and the press poses were tuned by parking the
-# robot ON the waypoint. Measured 2026-09-06 in the lift car: the robot stopped 24 cm short of
-# f2_car_panel, which put the floor button 0.95 m from base_link against 0.88 m of reach, and the
-# arm refused. Retightened to 0.08 and the same leg landed 4 cm out, inside reach. This is set
-# here rather than in the params file because it is a property of THIS task -- a press needs a
-# pose, an ordinary drive does not -- and the servers are already running by now.
+# THE GOAL CHECKER IS A TRADE, AND BOTH ENDS OF IT HAVE BITTEN.
+#
+# Nav2 ships xy_goal_tolerance 0.25 m, so "arrived" meant anywhere within a quarter metre, while
+# every press pose was tuned by parking the robot ON its waypoint. Measured 2026-09-06 in the lift
+# car: the robot stopped 24 cm short of f2_car_panel, which put the floor button 0.95 m from
+# base_link against 0.88 m of reach, and the arm refused. Re-issuing the same goal at 0.08 landed
+# it 4 cm out and the press worked.
+#
+# But 0.08 is tighter than this base settles. On the very next run the f2_call_button leg sat
+# 0.10 m from its goal with /cmd_vel 101/102 nonzero and odom at 0.018 m/s -- inching, not
+# converging -- until Nav2 gave up: "ABORTED after 155.4 s, recoveries exhausted". A tolerance the
+# controller cannot reach does not make arrivals more accurate, it turns them into timeouts.
+#
+# 0.14 is the compromise: inside it the worst-case shortfall is 14 cm rather than 24, which keeps
+# a press pose inside the arm's 0.88 m reach, and it is loose enough that the controller settles.
+# If a press ever reports "NOT REACHING" by a few centimetres, re-issuing that one nav goal is the
+# cheap fix -- a second attempt from close range lands far tighter than the first.
 if [ -z "$DRY" ]; then
-    for _pp in "general_goal_checker.xy_goal_tolerance:${UTP_XY_TOL:-0.08}" \
-               "general_goal_checker.yaw_goal_tolerance:${UTP_YAW_TOL:-0.10}"; do
+    for _pp in "general_goal_checker.xy_goal_tolerance:${UTP_XY_TOL:-0.14}" \
+               "general_goal_checker.yaw_goal_tolerance:${UTP_YAW_TOL:-0.20}"; do
         timeout 25 ros2 param set /controller_server "${_pp%%:*}" "${_pp##*:}" >/dev/null 2>&1 \
             && note "goal checker ${_pp%%:*} = ${_pp##*:}" \
             || echo "    could not set ${_pp%%:*} -- arrivals may be too loose for a press" >&2
