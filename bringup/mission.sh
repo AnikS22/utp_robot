@@ -145,9 +145,36 @@ clear_costmaps() {
     sleep 2
 }
 
-doors() {   # the one thing software cannot observe until it happens
+# doors <message> [open|close]
+#
+# THE SECOND ARGUMENT IS NOT DECORATION. Every call used to wait for the doors to be OPEN, including
+# "let them CLOSE, then ride" -- which would have waited 60 s for the opposite of what it wanted and
+# then killed the run, one step before the ride. In a hands-off run that is the whole trial.
+#
+# Waiting for them to CLOSE matters for its own reason: while they stand open the scan reaches out
+# into the departure floor's lobby, and the swap would hand the restarted matcher that floor's
+# geometry to reconcile against a destination-floor seed. Sealed, the scan is only the car, which
+# is the one thing both maps agree about.
+doors() {
+    local want="${2:-open}"
     say "DOORS -- $1"
     [ -n "$DRY" ] && return 0
+    if [ "$want" = close ]; then
+        local end=$(( SECONDS + ${UTP_DOOR_CLOSE_WAIT:-45} ))
+        while [ "$SECONDS" -lt "$end" ]; do
+            if ! python3 "$REPO/bringup/doors_open_lidar.py" --once --quiet \
+                    --clear-m "${UTP_DOOR_CLEAR:-1.6}" >/dev/null 2>&1; then
+                note "doors are shut -- the scan is only the car now"
+                clear_costmaps
+                return 0
+            fi
+            sleep 2
+        done
+        note "doors still read OPEN after ${UTP_DOOR_CLOSE_WAIT:-45}s -- continuing anyway"
+        note "the seed survives an open-door swap less well; watch the fit after the ride"
+        clear_costmaps
+        return 0
+    fi
     # WATCH THE DOORS WITH THE LIDAR, and only fall back to a clock if that cannot answer.
     #
     # This used to count down 15 s with no terminal and ASSUME they had opened. On 2026-09-06 that
@@ -301,7 +328,7 @@ wait_stow
 nav   "$A_CAR_FACING_OUT"
 
 # ---------------------------------------------------------------------------- 2  the ride
-doors "let them CLOSE, then ride"
+doors "let them CLOSE, then ride" close
 say "RIDE  floor $FROM -> $TO"
 cat <<'RIDE'
   Nothing in software is true about which floor this is until the doors open again.
