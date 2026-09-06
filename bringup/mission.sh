@@ -118,9 +118,15 @@ press() {
     # evidence of a press this rig can produce, so stopping short of it is a silent no-op dressed
     # as a success. 30 mm leaves the gripper travelling into the plate rather than beside it.
     UTP_NO_STOW=1 UTP_OFFSET_PROFILE="$profile" UTP_PICK_FROM_BOTTOM="$pick" \
+    # --hold: DO NOT RETREAT TO THE START POSE. approach_target.py's success path drives the arm
+    # all the way back to wherever it began -- 407 mm of Cartesian motion at 60 mm/s, about seven
+    # seconds -- and then the caller folds it to stow anyway. The retreat exists so a press run by
+    # hand leaves the arm where it was found; inside a route it is pure cost, and it is spent
+    # while a lift door closes. Folding straight from the pressed pose is one joint-space move at
+    # SPEED_DEG_S, and stow_arm.py checks its own limit violations before committing.
     UTP_STANDOFF="${UTP_STANDOFF:-30}" \
-    UTP_STEP_MM="${UTP_STEP_MM:-1000}" UTP_REACH_SPEED="${UTP_REACH_SPEED:-60}" \
-        bash "$REPO/bringup/press_run.sh" --query "$query" 2>&1 | tee "$log"
+    UTP_STEP_MM="${UTP_STEP_MM:-1000}" UTP_REACH_SPEED="${UTP_REACH_SPEED:-90}" \
+        bash "$REPO/bringup/press_run.sh" --query "$query" --hold 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
     grep -qE "code: 31|err=31" "$log" && contact=1
     rm -f "$log"
