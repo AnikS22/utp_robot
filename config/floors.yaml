@@ -114,7 +114,25 @@ floors:
     # after several offset corrections. It is NOT interchangeable with car_facing_in even though
     # both sit "inside the car" -- car_facing_in has only ever been validated for navigation.
 
-    call_query: "the blue elevator call button"
+    # MEASURED 2026-09-06, from the live call-plate pose (captures/press_171645), against the
+    # frame that stopped two runs. "the blue elevator call button" chose the "IN CASE OF FIRE USE
+    # STAIRS" SIGN -- a 189x221 px dark square high in the frame -- at 0.464, while the real button
+    # (27x31 px, 0.09% of the image) came second at 0.418. check_press_safe.py refused both runs
+    # because that sign reads 0.654 as "an emergency stop button", which is the guard working
+    # exactly as intended: pressing it is not a failed trial, it is an evacuation.
+    #
+    # Four queries on the SAME frame, so this is a comparison and not an anecdote:
+    #   the blue elevator call button                        SIGN   0.464   (button 0.418)
+    #   the blue button on the wall plate beside the lift    button 0.512   (sign   0.283)
+    #   the round blue button                                button 0.538   (sign   0.285)
+    #   the small round blue button on the metal call plate  button 0.564   (sign   0.291)
+    #
+    # The winner does not just win, it inverts the ranking: the sign falls to 0.291, a 0.273
+    # margin, where the old query LOST to it. What did the work is naming the SIZE and the SHAPE --
+    # "small", "round" -- because the decoy's whole advantage was being large and rectangular.
+    # This does not fix "name the colour, not the object"; it extends it: the colour alone could
+    # not separate a blue button from a dark sign at this distance.
+    call_query: "the small round blue button on the metal call plate"
 
     # KNOWN-OPEN, AND THE MOST LIKELY THING TO GO WRONG IN A DEMO. A panel has one button per
     # floor and they are all the same blue. This query cannot tell them apart, and the grounder
