@@ -482,9 +482,53 @@ else
 fi
 
 # ============================================================================================
-# STAGE 3 -- preserve the raw cloud input used by the saved floor1 map
+# STAGE 3 -- match the cloud chain to the MAP being loaded
 # ============================================================================================
-record filter skip "raw /ouster/points: matches the saved floor1 mapping chain"
+# A MAP IS ONLY VALID FOR THE CHAIN THAT BUILT IT, and the two maps in this building were built
+# with DIFFERENT chains:
+#
+#   floor1   raw /ouster/points. Driven 2026-09-05 without the artifact filter.
+#   floor2   /ouster/points_clean. config/floors.yaml calls it "the CLEAN re-map, made after
+#            safety/cloud_artifact_filter.py stopped the OS0 near-field crosstalk from stamping
+#            phantom walls", and keeps the contaminated run beside it: 3467 occupied cells against
+#            2884, the 583-cell difference being the artifact.
+#
+# This stage was hardcoded to skip the filter and to SAY "matches the saved floor1 mapping chain"
+# whatever --map asked for. Localizing floor2 that way feeds the matcher a ring of phantom returns
+# 0.85-1.20 m behind the robot that its map does not contain. Measured 2026-09-06: fit 27.8% on
+# floor2 -- lost by this stack's own scale -- and the robot then grounded a decoy at the call plate
+# because it was not where it believed it was. The operator saw it first, as "the dots behind the
+# lidar that shouldn't exist came back".
+case "${UTP_CLOUD_CHAIN:-auto}" in
+  raw)      CLOUD_TOPIC=/ouster/points ;;
+  filtered) CLOUD_TOPIC=/ouster/points_clean ;;
+  *) case "$MAP_NAME" in
+       floor2|floor2.*) CLOUD_TOPIC=/ouster/points_clean ;;
+       *)               CLOUD_TOPIC=/ouster/points ;;
+     esac ;;
+esac
+if [ "$CLOUD_TOPIC" = /ouster/points ]; then
+  record filter skip "raw /ouster/points: matches the '$MAP_NAME' mapping chain"
+elif [ "$STATUS_ONLY" = 1 ]; then
+  r=$(hz /ouster/points_clean)
+  ge "$r" 1.5 && record filter ok "/ouster/points_clean ${r} Hz" \
+               || record filter FAIL "/ouster/points_clean ${r} Hz"
+elif foreign_blocked filter cloud_artifact_filter.py; then
+  r=$(hz /ouster/points_clean)
+  if ! ge "$r" 1.5; then
+    note "'$MAP_NAME' was mapped with the artifact filter -- starting it"
+    kill_ours cloud_artifact_filter.py; sleep 2
+    start_bg python3 "$REPO/safety/cloud_artifact_filter.py"
+    wait_ready 25 /ouster/points_clean 1.5 \
+      "topic:/ouster/points_clean:sensor_msgs.msg:PointCloud2:sensor"
+    r=$(hz /ouster/points_clean)
+  fi
+  ge "$r" 1.5 && record filter ok "/ouster/points_clean ${r} Hz (matches the '$MAP_NAME' chain)" \
+    || { record filter FAIL "/ouster/points_clean ${r} Hz"
+         why filter "'$MAP_NAME' was built from filtered clouds. Localizing it against raw
+              /ouster/points hands the matcher phantom near-field returns its map does not
+              contain -- measured 27.8% fit on floor2, which is lost."; }
+fi
 
 # ============================================================================================
 # STAGE 4 -- projection: /ouster/points -> /scan_filtered   (needs the mount TF)
@@ -502,13 +546,36 @@ if ! ge "$r" 1.5 && [ "$STATUS_ONLY" = 0 ]; then
     why projection "p2l subscribes to /ouster/points. Started against a silent input it is
          alive and silent forever. Fix the lidar row above first."
   elif foreign_blocked projection pointcloud_to_laserscan; then
-    note "/scan_filtered silent ($r Hz) -- starting pointcloud_to_laserscan"
+    note "/scan_filtered silent ($r Hz) -- starting pointcloud_to_laserscan on $CLOUD_TOPIC"
     kill_ours pointcloud_to_laserscan; sleep 2
     # These numbers ARE the chain: the height band and range_min decide what the map contains,
     # and a map is only valid for the chain that built it. They match the floor1 mapping session.
     # range_min 0.45: 0.70 hid a real door at 0.72 m; 0.30 exposed the packed arm at 0.31-0.36 m.
     start_bg ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node --ros-args \
-      -r cloud_in:=/ouster/points -r scan:=/scan_filtered -p target_frame:=base_link \
+      -r cloud_in:="$CLOUD_TOPIC" -r scan:=/scan_filtered -p target_frame:=base_link \
+      -p min_height:=0.20 -p max_height:=1.20 -p angle_min:=-3.14159 -p angle_max:=3.14159 \
+      -p angle_increment:=0.0061 -p range_min:=0.45 -p range_max:=40.0 -p use_inf:=true
+    wait_ready 25 /scan_filtered 1.5 "topic:/scan_filtered:sensor_msgs.msg:LaserScan:sensor"
+    r=$(hz /scan_filtered)
+  fi
+fi
+# A HEALTHY /scan_filtered IS NOT EVIDENCE IT IS THE RIGHT ONE. If p2l is already up against the
+# other cloud topic, every rate above is fine and the scans are simply wrong for this map. Read the
+# running command line rather than trusting the rate.
+if [ "$STATUS_ONLY" = 0 ] && ge "$r" 1.5; then
+  _p2l_wrong=0
+  for _p in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+    _c=$(tr '\0' ' ' < "/proc/$_p/cmdline" 2>/dev/null) || continue
+    case "$_c" in
+      *pointcloud_to_laserscan_node*)
+        case "$_c" in *"cloud_in:=$CLOUD_TOPIC"*) ;; *) _p2l_wrong=1; kill -INT "$_p" 2>/dev/null ;; esac ;;
+    esac
+  done
+  if [ "$_p2l_wrong" = 1 ]; then
+    note "pointcloud_to_laserscan was consuming the WRONG cloud for '$MAP_NAME' -- restarting on $CLOUD_TOPIC"
+    sleep 3
+    start_bg ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node --ros-args \
+      -r cloud_in:="$CLOUD_TOPIC" -r scan:=/scan_filtered -p target_frame:=base_link \
       -p min_height:=0.20 -p max_height:=1.20 -p angle_min:=-3.14159 -p angle_max:=3.14159 \
       -p angle_increment:=0.0061 -p range_min:=0.45 -p range_max:=40.0 -p use_inf:=true
     wait_ready 25 /scan_filtered 1.5 "topic:/scan_filtered:sensor_msgs.msg:LaserScan:sensor"
@@ -516,7 +583,7 @@ if ! ge "$r" 1.5 && [ "$STATUS_ONLY" = 0 ]; then
   fi
 fi
 if [ -z "${S[projection]:-}" ]; then
-  ge "$r" 1.5 && record projection ok "/scan_filtered ${r} Hz" \
+  ge "$r" 1.5 && record projection ok "/scan_filtered ${r} Hz from $CLOUD_TOPIC" \
                || { record projection FAIL "/scan_filtered ${r} Hz"
                     why projection "pointcloud_to_laserscan is not publishing. The two ways this
                          happens are (a) its input is silent -- check /ouster/points above,
