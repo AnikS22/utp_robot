@@ -196,35 +196,21 @@ else
     "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" || true
 fi
 
-say "3b GO        contact made -- lidar watches for the door, then we go"
-# THE 3D LIDAR VERIFIES THE STATE CHANGE, NOT THE CAMERA AND NOT A HUMAN.
+say "3b GO        contact made -- driving out NOW, nothing is consulted first"
+# NOTHING GATES THIS. Three versions of this step were wrong in the same way: each put a check
+# between the press and the drive, on a task whose entire problem is a door that is already
+# closing.
 #
-# Two earlier versions of this step were both wrong. A keypress made a human the slowest component
-# in a task timed by a door closer. A VLM look (bringup/doors_open.py) spent 26.5 s over five
-# looks and still said SHUT after a press that had been made -- and doors_open.py's OWN header
-# records why it would: on 2026-09-01 the camera "looked straight through them and reported an
-# open walkway with pillars" while the doors were CLOSED, on a scene where "the lidar had 85
-# returns at 0.72 m where the camera saw nothing". Glass is transparent to the camera and opaque
-# to the OS0. The sensor that was right was the one nobody was asking.
+#   operator keypress   made a human the slowest component in a timed sequence.
+#   doors_open.py (VLM) 26.5 s over five looks, and still said SHUT after a press that landed.
+#   doors_open_lidar.py measured the FORWARD sector -- but at the button pose the robot faces the
+#                       PLATE, not the doorway. It was reading the wall it had just pressed, 0.54 m
+#                       away, and would have reported SHUT no matter what the door did. A check
+#                       pointed at the wrong thing is worse than no check: it is confidently wrong.
 #
-# doors_open_lidar.py reads /scan_nav, which is already running at 10 Hz, and answers in the time
-# it takes to collect a few sweeps -- verified 2026-09-06 against a shut door at 0.46 m clear.
-# The opener starts swinging at contact, so this is watching an event already in progress.
-DOOR_WAIT="${UTP_DOOR_WAIT:-12}"
-if [ -z "$DRY" ]; then
-    if python3 "$REPO/bringup/doors_open_lidar.py" --timeout "$DOOR_WAIT"; then
-        echo "  going NOW"
-    else
-        # NOT driving blind into something the lidar can see. This is the one case where waiting
-        # beat going: a closed door is a wall, and Nav2's costmap will refuse the goal anyway.
-        echo "  the way ahead is still blocked after ${DOOR_WAIT}s."
-        if [ "${UTP_DOORS_OVERRIDE:-0}" = "1" ]; then
-            echo "  UTP_DOORS_OVERRIDE=1 -- driving anyway on the operator's word"
-        else
-            die "door never opened (lidar); set UTP_DOORS_OVERRIDE=1 to drive regardless"
-        fi
-    fi
-fi
+# The press making contact is the signal, and the opener is already swinging by the time this line
+# runs. If the door somehow has not opened, Nav2's costmap sees it as an obstacle and the leg comes
+# back blocked -- which is the honest failure, arriving from the layer that can actually see it.
 
 say "4  NAVIGATE to '$OUTSIDE_WP'"
 if [ -z "$DRY" ]; then
