@@ -1,82 +1,10 @@
 #!/usr/bin/env bash
-# ONE COMMAND. Bring the robot up in dependency order, verify every stage before starting the
-# next, and when something is wrong say WHY, with the command that fixes it.
-#
-#     bash bringup/bringup_all.sh                       # --mode nav on the default map
-#     bash bringup/bringup_all.sh --mode map            # sensing chain + slam in MAPPING mode
-#     bash bringup/bringup_all.sh --mode nav --map floor2
-#     bash bringup/bringup_all.sh --mode full           # nav + camera + arm (the press chain)
-#     bash bringup/bringup_all.sh --status              # report only; starts, kills, changes NOTHING
-#
-# Exit codes:  0 everything the mode needs is up   1 something required is down
-#              2 a human is needed before anything can start (can0, the cable)
-#
-# ---------------------------------------------------------------------------------------------
-# WHY THIS FILE EXISTS
-# ---------------------------------------------------------------------------------------------
-# Bring-up "honestly takes the most amount of time". Every failure below has cost a session, and
-# every one of them is SILENT: the node is alive, `ros2 node list` is green, nothing is printed.
-#
-#   1. ORDER.        A node started before its input exists is ALIVE AND SILENT FOREVER. It never
-#                    retries, never errors, and never appears in any log. That happened three
-#                    times in one day (the cloud filter, pointcloud_to_laserscan and both relays
-#                    were each started ahead of their input). So each stage here is VERIFIED
-#                    before the next is started, and a stage whose input is down is reported
-#                    BLOCKED rather than launched into a vacuum.
-#
-#   2. THE MOUNT TF IS THE SILENT KILLER. base_link->os_sensor is published by bringup/lidar3d.sh
-#                    from config/ouster.yaml's `mount` block -- NOT by the Ouster driver. Launch
-#                    `ros2 launch ouster_ros driver.launch.py` directly and that transform never
-#                    appears; pointcloud_to_laserscan then silently DROPS EVERY CLOUD, because it
-#                    cannot transform into target_frame base_link. /scan sits at exactly 0.00 Hz
-#                    with every node healthy and no error printed anywhere. ~30 minutes, once.
-#                    So base_link->os_lidar is verified BEFORE p2l is started, and never after.
-#
-#   3. can0 NEEDS A PASSWORD.  `sudo ip link set can0 up type can bitrate 500000` prompts, and a
-#                    bring-up script that blocks on a hidden password prompt is indistinguishable
-#                    from one that has hung. This script NEVER runs sudo. It detects can0 early,
-#                    prints the exact command and stops.
-#
-#   4. THE ARM IS NOT ALWAYS NEEDED.  session.sh's step-0 gate pings the xArm at 192.168.1.221 and
-#                    dies for EVERY session type, so a mapping or nav-only run -- where the arm is
-#                    stowed, powered off and never used -- is blocked on a device it never
-#                    touches. Here the lidar (.119) and the router (.1) stay fatal; the arm is
-#                    fatal only in --mode full (or with UTP_NEED_ARM=1).
-#
-#   5. PROBE BY RATE, NEVER BY EXISTENCE, AND NEVER WITH `ros2 topic hz`.  An advertised topic
-#                    with a dead publisher looks exactly like a live one, and `ros2 topic hz` has
-#                    reported 1.7 Hz and 10.0 Hz for the same topic minutes apart on this stack.
-#                    ONE rclpy node subscribes to EVERY topic at once, spins ~3 s so DDS
-#                    DISCOVERY COMPLETES, RESETS the counters, and only then counts over a window.
-#                    A fresh node per topic measures discovery, not rate -- that mistake produced
-#                    0.00 Hz for healthy topics twice in one day. Same reason the TF checks poll
-#                    can_transform with a budget instead of asking once: a latched /tf_static
-#                    arrives only after discovery.
-#
-#   6. LIFECYCLE NODES LIE IN `ros2 node list`.  slam_toolbox and every Nav2 server appear in the
-#                    node list, and Nav2's actions appear in `ros2 action list`, while completely
-#                    inactive. Only `ros2 lifecycle get` tells the truth, and they need an
-#                    explicit configure THEN activate. Compare the state EXACTLY: `grep -q active`
-#                    matches the substring in "inactive" and reports a dead Nav2 as healthy.
-#
-#   7. `timeout N ros2 run tf2_ros tf2_echo A B || die` CAN NEVER FAIL.  tf2_echo never exits, so
-#                    timeout always returns 124 and the check only ever "fails" -- or, written the
-#                    other way round, only ever passes. TF is checked here inside the probe node
-#                    with tf2_ros.Buffer.can_transform, which can actually answer "no".
-#
-#   8. A PROCESS STARTED FROM A SHELL THAT EXITS DIES WITH IT.  A mapping node launched with a
-#                    plain `nohup ... &` was gone minutes later. Everything here starts with
-#                    `setsid nohup ... < /dev/null &` and is disowned, so it outlives this script.
-#
-# IDEMPOTENT: a component that probes healthy is LEFT ALONE. Re-running costs a minute of probes
-# and restarts nothing. Launching a second copy of something is a failure mode, not a harmless
-# retry -- two Nav2 stacks never activate, two RealSense drivers race for the USB device, two
-# publishers on one topic interleave.
-#
-# NEVER KILLS BY A LOOSE PATTERN. Every candidate is matched on its full /proc/<pid>/cmdline AND
-# must carry this repo's UTP_ROBOT_STACK marker and this ROS_DOMAIN_ID in its environment (both
-# exported by bringup/env.sh). A frame-name match once killed 22 of the sim campaign's TF
-# publishers. A matching process that is NOT ours is reported, never killed, and never stacked on.
+# Canonical robot startup. Read docs/STARTUP.md for modes, saving and shutdown.
+#   bash bringup/bringup_all.sh --mode map
+#   SEED_POSE=x,y,yaw bash bringup/bringup_all.sh --mode nav --map floor1
+#   bash bringup/bringup_all.sh --mode map --status
+#   bash bringup/bringup_all.sh --mode inputs   # sensors, camera, arm readback; no SLAM/Nav2
+# Healthy components are retained; motion gates remain enforced.
 set -uo pipefail          # NOT -e: the whole job of this script is to survive a failure and report
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -94,24 +22,60 @@ NEED_ARM="${UTP_NEED_ARM:-0}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --mode)   MODE="${2:-}"; shift 2 ;;
+    --mode)   [ "$#" -ge 2 ] || { echo "--mode requires a value" >&2; exit 2; }; MODE="$2"; shift 2 ;;
     --mode=*) MODE="${1#*=}"; shift ;;
-    --map)    MAP_NAME="${2:-}"; shift 2 ;;
+    --map)    [ "$#" -ge 2 ] || { echo "--map requires a value" >&2; exit 2; }; MAP_NAME="$2"; shift 2 ;;
     --map=*)  MAP_NAME="${1#*=}"; shift ;;
     --status) STATUS_ONLY=1; shift ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,6p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1  (see --help)" >&2; exit 2 ;;
   esac
 done
 case "$MODE" in
-  map|nav|full) ;;
-  *) echo "--mode must be map, nav or full (got '${MODE}')" >&2; exit 2 ;;
+  inputs|map|nav|full) ;;
+  *) echo "--mode must be inputs, map, nav or full (got '${MODE}')" >&2; exit 2 ;;
 esac
-[ "$MODE" = full ] && NEED_ARM=1
+[ "$STATUS_ONLY" = 1 ] && PROBE_ERROR_LOG=/dev/null
+case "$MAP_NAME" in
+  ''|*[!a-zA-Z0-9_.-]*|.|..) echo "--map must be a bare map name" >&2; exit 2 ;;
+esac
+if [ -n "${SEED_POSE:-}" ]; then
+  # VALIDATE **AND NORMALISE TO FLOATS**. Not cosmetic: ROS types a parameter from the literal it
+  # is given, so map_start_pose:=[0,0,0] arrives as an integer_array while slam_toolbox declares
+  # the parameter double_array, and configure dies with
+  #   "parameter {map_start_pose} is of type {double_array}, setting it to {integer_array}
+  #    is not allowed"
+  # Four failed configure transitions and then a segfault, reported by this script as the useless
+  # "lifecycle=absent, /map seen=0". Measured 2026-09-06 with SEED_POSE=0,0,0 -- the most natural
+  # thing anyone would type. The same seed written 0.0,0.0,0.0 works, which is exactly the kind of
+  # difference no operator should have to know about.
+  SEED_POSE="$(python3 - "$SEED_POSE" <<'PYSEED'
+import math, sys
+try:
+    values = [float(v) for v in sys.argv[1].split(',')]
+    assert len(values) == 3 and all(math.isfinite(v) for v in values)
+except (ValueError, AssertionError):
+    print('SEED_POSE must contain three finite numbers: x,y,yaw', file=sys.stderr)
+    raise SystemExit(2)
+print(','.join(repr(float(v)) for v in values))
+PYSEED
+)" || exit 2
+fi
+{ [ "$MODE" = full ] || [ "$MODE" = inputs ]; } && NEED_ARM=1
 WANT_NAV=0; [ "$MODE" = nav ] || [ "$MODE" = full ] && WANT_NAV=1
-WANT_CAMERA=0; [ "$MODE" = full ] && [ "${UTP_NO_CAMERA:-0}" != "1" ] && WANT_CAMERA=1
+WANT_CAMERA=0; { [ "$MODE" = full ] || [ "$MODE" = inputs ]; } && [ "${UTP_NO_CAMERA:-0}" != "1" ] && WANT_CAMERA=1
+
+if [ "$WANT_NAV" = 1 ] && [ "$STATUS_ONLY" = 0 ]; then
+  for ext in pgm yaml posegraph data; do
+    [ -s "$REPO/maps/$MAP_NAME.$ext" ] || {
+      echo "Missing or empty maps/$MAP_NAME.$ext; no components started." >&2
+      exit 2
+    }
+  done
+fi
 
 # ---------------------------------------------------------------- report plumbing
+START_SECONDS=$SECONDS
 RESULT=()   # "name|state|detail"
 WHY=()      # "name|cause, fix, and what the symptom looks like downstream"
 declare -A S    # stage -> state, so a later stage can ask whether its input actually came up
@@ -153,24 +117,9 @@ _is_ours() {
 #     them at any nesting depth.
 #   * an EMPTY pattern, which would make `case "$a" in *""*)` match every process on the machine.
 pids_matching() {
-  local pat="${1:-}" pid a p self skip=" $$ $BASHPID "
-  [ -n "$pat" ] || { note "pids_matching: empty pattern refused (it would match every process)"; return 1; }
-  self="$( { tr '\0' ' ' < "/proc/$$/cmdline"; } 2>/dev/null )"
-  p="$PPID"
-  while [ -n "${p:-}" ] && [ "$p" -gt 1 ] 2>/dev/null; do
-    skip="$skip$p "
-    p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
-  done
-  for pid in $(ps -eo pid --no-headers); do
-    case "$skip" in *" $pid "*) continue ;; esac
-    # The 2>/dev/null must wrap the REDIRECTION, not just tr: a pid that exits between `ps` and
-    # this read makes the shell itself print "No such file or directory", on essentially every run.
-    a="$( { tr '\0' ' ' < "/proc/$pid/cmdline"; } 2>/dev/null )" || continue
-    [ -n "$a" ] || continue                 # kernel threads and zombies have no command line
-    [ "$a" = "$self" ] && continue
-    case "$a" in *"$pat"*) printf '%s\n' "$pid" ;; esac
-  done
+  python3 "$REPO/bringup/startup_processes.py" "${1:-}"
 }
+
 pids_ours()     { local p; while read -r p; do [ -n "$p" ] && _is_ours "$p" && printf '%s\n' "$p"; done < <(pids_matching "$1"); }
 pids_foreign()  { local p; while read -r p; do [ -n "$p" ] && ! _is_ours "$p" && printf '%s\n' "$p"; done < <(pids_matching "$1"); }
 count_ours()    { pids_ours "$1" | wc -l; }
@@ -226,140 +175,24 @@ foreign_blocked() {   # foreign_blocked <component> <pattern>
 
 # ---------------------------------------------------------------- the probe
 # ONE node, EVERY topic, discovery first, counters reset, then count. See trap 5 in the header.
-SETTLE=3.0; WINDOW=4.0; TF_BUDGET=10
+SETTLE=3.0; WINDOW=4.0; TF_BUDGET=3
 declare -A P
 probe() {
   local out lim
-  # Hard ceiling. rclpy.init() against a sick DDS can block forever, and a bring-up script that
-  # hangs on a probe is indistinguishable from one that is working. Generous on purpose: a
-  # truncated probe reads as "everything is down", which is the safe direction but a waste of a
-  # session if it fires spuriously. Every TF edge can cost the full budget if none ever resolves.
-  lim=$(LC_ALL=C awk -v s="$SETTLE" -v w="$WINDOW" -v t="$TF_BUDGET" -v n="$#" \
-        'BEGIN{v=s+w+n*t+60; if (v>150) v=150; printf "%d", v}')
-  P=()
-  out="$(timeout "$lim" python3 - "$SETTLE" "$WINDOW" "$TF_BUDGET" "$@" <<'PY' 2>/dev/null
-import importlib, json, sys, time
-try:
-    import rclpy
-    from rclpy.node import Node
-    from rclpy.qos import (qos_profile_sensor_data, QoSProfile, ReliabilityPolicy,
-                           HistoryPolicy, DurabilityPolicy)
-except Exception as exc:                       # a probe that cannot run must say so, not read 0 Hz
-    print(f"err|rclpy unavailable: {exc}")
-    raise SystemExit(0)
-
-settle, window, tf_budget = float(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3])
-topics, tfs, gate_topic = [], [], None
-for spec in sys.argv[4:]:
-    part = spec.split(":")
-    if part[0] == "topic":  topics.append((part[1], part[2], part[3], part[4]))
-    elif part[0] == "tf":   tfs.append((part[1], part[2]))
-    elif part[0] == "gates": gate_topic = part[1]
-
-RELIABLE = QoSProfile(depth=5, reliability=ReliabilityPolicy.RELIABLE,
-                      history=HistoryPolicy.KEEP_LAST)
-# /map is LATCHED and published only when it changes, so it must be counted as "ever arrived",
-# never as a rate: a transient-local message lands once, during discovery.
-LATCHED = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
-                     durability=DurabilityPolicy.TRANSIENT_LOCAL, history=HistoryPolicy.KEEP_LAST)
-
-def qos_for(kind):
-    if kind == "reliable": return RELIABLE
-    if kind == "latched":  return LATCHED
-    return qos_profile_sensor_data          # BEST_EFFORT: compatible with any publisher
-
-rclpy.init()
-node = Node("utp_bringup_probe")
-count, seen = {}, {}
-for (topic, mod, cls, kind) in topics:
-    try:
-        msg = getattr(importlib.import_module(mod), cls)
-    except Exception as exc:
-        print(f"err|{topic}: {exc}")
-        continue
-    count[topic] = 0
-    seen[topic] = 0
-    def make(name):
-        def cb(_m):
-            count[name] += 1
-            seen[name] += 1
-        return cb
-    node.create_subscription(msg, topic, make(topic), qos_for(kind))
-
-gates, status = {}, {"n": 0}
-if gate_topic:
-    from std_msgs.msg import String
-    def on_status(m):
-        try:
-            st = json.loads(m.data)
-        except Exception:
-            return
-        status["n"] += 1
-        for k, v in (st.get("gates") or {}).items():
-            gates[k] = gates.get(k, 0) + (1 if v else 0)
-    node.create_subscription(String, gate_topic, on_status, qos_profile_sensor_data)
-
-buf = None
-if tfs:
-    try:
-        from tf2_ros import Buffer, TransformListener
-        buf = Buffer()
-        TransformListener(buf, node, spin_thread=False)
-    except Exception as exc:
-        print(f"err|tf2_ros unavailable: {exc}")
-
-# PHASE 1 -- discovery. Spin without believing anything counted here.
-t0 = time.time()
-while time.time() - t0 < settle:
-    rclpy.spin_once(node, timeout_sec=0.02)
-# PHASE 2 -- reset, then measure. `seen` is deliberately NOT reset: it carries the latched
-# messages that can only ever have arrived during discovery.
-for k in count:
-    count[k] = 0
-gates.clear()
-status["n"] = 0
-t1 = time.time()
-while time.time() - t1 < window:
-    rclpy.spin_once(node, timeout_sec=0.02)
-el = max(time.time() - t1, 1e-6)
-
-for topic in count:
-    print(f"hz:{topic}|{count[topic]/el:.2f}")
-    print(f"seen:{topic}|{seen[topic]}")
-if gate_topic:
-    print(f"gaten|{status['n']}")
-    for k, v in gates.items():
-        print(f"gate:{k}|{(100.0 * v / status['n']) if status['n'] else 0:.0f}")
-
-# TF, asked so that it can come back "no". can_transform with a ZERO timeout measures this node's
-# own subscription setup, not availability -- a latched /tf_static arrives only after discovery
-# completes. Poll with a budget instead; once one edge resolves, discovery is done and the rest
-# are cheap.
-if buf is not None:
-    from rclpy.time import Time
-    budget = tf_budget
-    for (a, b) in tfs:
-        deadline = time.time() + budget
-        good = False
-        while time.time() < deadline:
-            try:
-                if buf.can_transform(a, b, Time()):
-                    good = True
-                    break
-            except Exception:
-                pass
-            rclpy.spin_once(node, timeout_sec=0.05)
-        print(f"tf:{a}>{b}|{'ok' if good else 'MISSING'}")
-        if good:
-            # One edge resolving proves discovery is done; the rest cannot need ten seconds.
-            budget = min(budget, 3.0)
-node.destroy_node()
-try:
-    rclpy.shutdown()
-except Exception:
-    pass
-PY
-)"
+  lim="${PROBE_LIMIT:-30}"
+  # Preserve unrelated observations; invalidate every requested field before probing.
+  unset 'P[err]'
+  local spec kind x y rest
+  for spec in "$@"; do
+    IFS=: read -r kind x y rest <<< "$spec"
+    case "$kind" in
+      topic) P["hz:$x"]=0; P["seen:$x"]=0 ;;
+      tf) P["tf:$x>$y"]=MISSING ;;
+      gates) P[gaten]=0; unset 'P[gate:arm_stowed]' 'P[gate:estop_latched]' ;;
+    esac
+  done
+  out="$(timeout "$lim" python3 "$REPO/bringup/startup_probe.py" \
+    "$SETTLE" "$WINDOW" "$TF_BUDGET" "$@" 2>>"${PROBE_ERROR_LOG:-$LOG}")" || P[err]="probe failed or timed out"
   while IFS='|' read -r k v; do
     [ -n "${k:-}" ] || continue
     P["$k"]="$v"
@@ -380,11 +213,12 @@ lc_state() {
 }
 lc_active() { [ "$(lc_state "$1")" = "active" ]; }
 
+source "$REPO/bringup/startup_helpers.sh"
+
 # ---------------------------------------------------------------- the topics this mode cares about
 SPEC=(
   "topic:/odom:nav_msgs.msg:Odometry:sensor"
   "topic:/ouster/points:sensor_msgs.msg:PointCloud2:sensor"
-  "topic:/ouster/points_clean:sensor_msgs.msg:PointCloud2:sensor"
   "topic:/scan_filtered:sensor_msgs.msg:LaserScan:sensor"
   # /scan and /scan_nav are probed RELIABLE ON PURPOSE, matching their consumers. A BEST_EFFORT
   # subscriber would read them green even if the relay were publishing BEST_EFFORT -- and then
@@ -394,12 +228,11 @@ SPEC=(
   "topic:/scan_nav:sensor_msgs.msg:LaserScan:reliable"
   "topic:/safety/status:std_msgs.msg:String:sensor"
   "gates:/safety/status"
-  "topic:/map:nav_msgs.msg:OccupancyGrid:latched"
   "tf:odom:base_link"
   "tf:base_link:os_sensor"
   "tf:base_link:os_lidar"
-  "tf:map:odom"
 )
+[ "$MODE" = inputs ] || SPEC+=("topic:/map:nav_msgs.msg:OccupancyGrid:latched" "tf:map:odom")
 [ "$WANT_CAMERA" = 1 ] && SPEC+=("topic:/mast_cam/color/camera_info:sensor_msgs.msg:CameraInfo:sensor")
 
 echo
@@ -459,9 +292,8 @@ else
        NOT fatal here (session.sh's step-0 gate dies on it for every session type, which is the
        trap this replaces). Two consequences to know about: nothing can press anything, and the
        arm_stowed safety gate has no MEASURED evidence, so it fails closed and the base will not
-       accept autonomous twists. If the arm is physically absent or off and you accept that,
-       start the safety layer with UTP_ARM_BACKEND=absent -- and record that against any trial,
-       because a gate satisfied by DECLARATION is not a gate satisfied by MEASUREMENT."
+       accept autonomous twists. Restore the arm connection and verify its stow pose before
+       requesting software motion."
 fi
 
 # TRAP 3. can0 needs a password. Detect, print the command, STOP. Never run sudo from here: the
@@ -492,17 +324,20 @@ else
   sleep 1
   _r2=$(cat /sys/class/net/can0/statistics/rx_packets 2>/dev/null || echo 0)
   _rx=$(( _r2 - _r1 ))
-  if [ "$_rx" -gt 50 ]; then record can0 ok "up, ~${_rx} frames/s"
+  _can_state=$(ip -j -details link show can0 | python3 -c 'import json,sys; print(json.load(sys.stdin)[0].get("linkinfo",{}).get("info_data",{}).get("state","UNKNOWN"))')
+  if [ "$_rx" -gt 50 ] && [ "$_can_state" = ERROR-ACTIVE ]; then
+    record can0 ok "$_can_state, ~${_rx} frames/s"
   else
-    record can0 WARN "up but only ~${_rx} frames/s from the chassis"
-    why can0 "can0 is up and almost nothing is arriving on it. The interface is fine; the far end
-         is not. The rover is powered off, or the CAN cable is adrift. /odom may still publish at
+    HUMAN_NEEDED=1
+    record can0 FAIL "$_can_state, only ~${_rx} received frames/s; odometry is not verified"
+    why can0 "can0 is configured but the bus is not delivering healthy chassis feedback. Check
+         Ranger power and the CAN cable at both ends; ERROR-PASSIVE indicates bus errors. /odom may still publish at
          full rate carrying nothing but zeros, which is indistinguishable from a stationary robot
          until you command a motion that never happens."
   fi
 fi
 
-if [ "$HUMAN_NEEDED" = 1 ] && [ "$STATUS_ONLY" = 0 ]; then
+if [ "$HUMAN_NEEDED" = 1 ] && [ "$STATUS_ONLY" = 0 ] && [ "$MODE" != inputs ]; then
   echo
   printf '  %-14s %-7s %s\n' COMPONENT STATE DETAIL
   printf '  %-14s %-7s %s\n' "--------------" "-------" "------------------------------------------"
@@ -526,11 +361,21 @@ fi
 # ============================================================================================
 note "probing (one node, every topic, ~$(LC_ALL=C awk -v s="$SETTLE" -v w="$WINDOW" 'BEGIN{printf "%.0f", s+w}') s plus TF) ..."
 probe "${SPEC[@]}"
-[ -n "${P[err]:-}" ] && note "probe warning: ${P[err]}"
+if [ -n "${P[err]:-}" ]; then
+  echo "Probe failed: ${P[err]}. No components restarted; see $LOG." >&2
+  exit 1
+fi
+if [ "$WANT_NAV" = 1 ] && [ "$STATUS_ONLY" = 0 ] && [ "$(seen /map)" -eq 0 ] && [ -z "${SEED_POSE:-}" ]; then
+  echo "Cold localization needs SEED_POSE=x,y,yaw in '$MAP_NAME'. No components started." >&2
+  exit 2
+fi
 
 # ============================================================================================
 # STAGE 1 -- chassis: /odom and odom->base_link
 # ============================================================================================
+if [ "$MODE" = inputs ] && ! up can0; then
+  record chassis BLOCKED "can0 is down; other inputs can still start"
+else
 r=$(hz /odom)
 if ! ge "$r" 5 && [ "$STATUS_ONLY" = 0 ]; then
   if foreign_blocked chassis ranger_base_node; then
@@ -539,8 +384,8 @@ if ! ge "$r" 5 && [ "$STATUS_ONLY" = 0 ]; then
     # publish_odom_tf:=true is NOT the launch default, and everything downstream needs
     # odom->base_link. Without it slam_toolbox and Nav2 both come up and neither works.
     start_bg ros2 launch ranger_bringup ranger_mini_v3.launch.py publish_odom_tf:=true
-    sleep 18
-    probe "${SPEC[@]}"; r=$(hz /odom)
+    wait_ready 30 /odom 5 "topic:/odom:nav_msgs.msg:Odometry:sensor" "tf:odom:base_link"
+    r=$(hz /odom)
   fi
 fi
 if [ "${S[chassis]:-}" != "FAIL" ]; then
@@ -569,6 +414,8 @@ if [ "${S[chassis]:-}" != "FAIL" ]; then
   fi
 fi
 
+fi
+
 # ============================================================================================
 # STAGE 2 -- lidar: the mount TF *and* the driver, from bringup/lidar3d.sh, in that order
 # ============================================================================================
@@ -582,8 +429,8 @@ if { ! ge "$r" 1.5 || ! tfok base_link os_lidar; } && [ "$STATUS_ONLY" = 0 ]; th
     kill_ours "--child-frame-id os_sensor"        # our own mount publisher only; see _is_ours
     sleep 4
     start_bg bash "$REPO/bringup/lidar3d.sh"
-    sleep 40
-    probe "${SPEC[@]}"; r=$(hz /ouster/points)
+    wait_ready 55 /ouster/points 1.5 "topic:/ouster/points:sensor_msgs.msg:PointCloud2:sensor" "tf:base_link:os_sensor" "tf:base_link:os_lidar"
+    r=$(hz /ouster/points)
   fi
 fi
 
@@ -635,36 +482,12 @@ else
 fi
 
 # ============================================================================================
-# STAGE 3 -- cloud artifact filter: /ouster/points -> /ouster/points_clean
+# STAGE 3 -- preserve the raw cloud input used by the saved floor1 map
 # ============================================================================================
-r=$(hz /ouster/points_clean)
-if ! ge "$r" 1.5 && [ "$STATUS_ONLY" = 0 ]; then
-  if ! up lidar; then
-    record filter BLOCKED "not started: /ouster/points is down"
-    why filter "the filter subscribes to /ouster/points. Started against a silent input it comes
-         up ALIVE AND SILENT FOREVER -- it never retries, never errors, and never appears in any
-         log, so the fault presents two stages downstream as a dead /scan. Fix the lidar first;
-         this script will start the filter on the next run."
-  elif foreign_blocked filter cloud_artifact_filter.py; then
-    note "/ouster/points_clean silent ($r Hz) -- starting the cloud artifact filter"
-    kill_ours cloud_artifact_filter.py; sleep 2
-    start_bg python3 "$REPO/safety/cloud_artifact_filter.py"
-    sleep 8
-    probe "${SPEC[@]}"; r=$(hz /ouster/points_clean)
-  fi
-fi
-if [ -z "${S[filter]:-}" ]; then
-  ge "$r" 1.5 && record filter ok "/ouster/points_clean ${r} Hz" \
-               || { record filter FAIL "/ouster/points_clean ${r} Hz"
-                    why filter "safety/cloud_artifact_filter.py is not delivering. It drops
-                         near-field crosstalk (range < 1.4 m AND reflectivity <= 1) that would
-                         otherwise become lethal costmap cells wrapped around the footprint.
-                         Read $LOG. If /ouster/points above is healthy, the filter itself is the
-                         problem; if it is not, the fault is upstream."; }
-fi
+record filter skip "raw /ouster/points: matches the saved floor1 mapping chain"
 
 # ============================================================================================
-# STAGE 4 -- projection: /ouster/points_clean -> /scan_filtered   (needs the mount TF)
+# STAGE 4 -- projection: /ouster/points -> /scan_filtered   (needs the mount TF)
 # ============================================================================================
 r=$(hz /scan_filtered)
 if ! ge "$r" 1.5 && [ "$STATUS_ONLY" = 0 ]; then
@@ -674,29 +497,29 @@ if ! ge "$r" 1.5 && [ "$STATUS_ONLY" = 0 ]; then
          Without base_link->os_lidar it drops all of them and publishes NOTHING, with no error,
          while looking perfectly healthy in 'ros2 node list'. Starting it now would manufacture
          exactly that state, so it was not started. See the mount_tf row above."
-  elif ! up filter; then
-    record projection BLOCKED "not started: /ouster/points_clean is down"
-    why projection "p2l subscribes to /ouster/points_clean. Started against a silent input it is
-         alive and silent forever. Fix the filter row above first."
+  elif ! up lidar; then
+    record projection BLOCKED "not started: /ouster/points is down"
+    why projection "p2l subscribes to /ouster/points. Started against a silent input it is
+         alive and silent forever. Fix the lidar row above first."
   elif foreign_blocked projection pointcloud_to_laserscan; then
     note "/scan_filtered silent ($r Hz) -- starting pointcloud_to_laserscan"
     kill_ours pointcloud_to_laserscan; sleep 2
     # These numbers ARE the chain: the height band and range_min decide what the map contains,
-    # and a map is only valid for the chain that built it. They match bringup/sensing_chain.sh.
+    # and a map is only valid for the chain that built it. They match the floor1 mapping session.
     # range_min 0.45: 0.70 hid a real door at 0.72 m; 0.30 exposed the packed arm at 0.31-0.36 m.
     start_bg ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node --ros-args \
-      -r cloud_in:=/ouster/points_clean -r scan:=/scan_filtered -p target_frame:=base_link \
+      -r cloud_in:=/ouster/points -r scan:=/scan_filtered -p target_frame:=base_link \
       -p min_height:=0.20 -p max_height:=1.20 -p angle_min:=-3.14159 -p angle_max:=3.14159 \
       -p angle_increment:=0.0061 -p range_min:=0.45 -p range_max:=40.0 -p use_inf:=true
-    sleep 10
-    probe "${SPEC[@]}"; r=$(hz /scan_filtered)
+    wait_ready 25 /scan_filtered 1.5 "topic:/scan_filtered:sensor_msgs.msg:LaserScan:sensor"
+    r=$(hz /scan_filtered)
   fi
 fi
 if [ -z "${S[projection]:-}" ]; then
   ge "$r" 1.5 && record projection ok "/scan_filtered ${r} Hz" \
                || { record projection FAIL "/scan_filtered ${r} Hz"
                     why projection "pointcloud_to_laserscan is not publishing. The two ways this
-                         happens are (a) its input is silent -- check /ouster/points_clean above,
+                         happens are (a) its input is silent -- check /ouster/points above,
                          and (b) it cannot transform into base_link, which drops every cloud with
                          no error at all. Check the mount_tf row: that failure produces exactly
                          0.00 Hz here with every node reporting healthy."; }
@@ -721,12 +544,14 @@ if ! ge "$r" 1.5 && [ "$STATUS_ONLY" = 0 ]; then
     why scan "the relay subscribes to /scan_filtered. Started against a silent input it is alive
          and silent forever, and slam_toolbox then sits there matching nothing while every node
          in the graph reports healthy. Fix the projection row first."
-  elif foreign_blocked scan "UTP_RELAY_ROLE=slam"; then
+  elif [ "$(count_ours 'UTP_RELAY_ROLE=nav')" -gt 0 ] || [ "$(count_foreign 'UTP_RELAY_ROLE=nav')" -gt 0 ]; then
+    record scan FAIL "alternate nav relay is running; inspect the sensor profile before repair"
+  elif foreign_blocked scan scan_relay.py; then
     note "/scan silent ($r Hz) -- starting the slam relay (mask 0.90 m)"
-    kill_ours "UTP_RELAY_ROLE=slam"; sleep 2
+    kill_ours scan_relay.py; sleep 2
     start_relay slam /scan 0.90
-    sleep 8
-    probe "${SPEC[@]}"; r=$(hz /scan)
+    wait_ready 25 /scan 1.5 "topic:/scan:sensor_msgs.msg:LaserScan:reliable"
+    r=$(hz /scan)
   fi
 fi
 if [ -z "${S[scan]:-}" ]; then
@@ -754,35 +579,23 @@ fi
 
 r=$(hz /scan_nav)
 if ! ge "$r" 1.5 && [ "$STATUS_ONLY" = 0 ]; then
-  if ! up projection; then
-    record scan_nav BLOCKED "not started: /scan_filtered is down"
-    why scan_nav "same as /scan: started against a silent input it would be alive and silent
-         forever, and Nav2's costmaps would simply never mark or clear anything."
-  elif [ "$(count_ours scan_temporal_filter.py)" -gt 0 ] || [ "$(count_foreign scan_temporal_filter.py)" -gt 0 ]; then
-    record scan_nav FAIL "/scan_nav ${r} Hz with safety/scan_temporal_filter.py running"
-    why scan_nav "something is already responsible for /scan_nav: safety/scan_temporal_filter.py
-         (which bringup/stack.sh and bringup/session.sh start) publishes the same topic from
-         /scan. This script uses the bringup/sensing_chain.sh definition instead -- a second
-         scan_relay off /scan_filtered with a 1.30 m rear mask -- and TWO PUBLISHERS ON ONE TOPIC
-         interleave, which is a failure mode and not a harmless retry. Pick one. It is running
-         but silent, which means it is wedged or its own input is down; stop it, then re-run:
-           kill -INT \$(pgrep -f scan_temporal_filter.py)"
-  elif foreign_blocked scan_nav "UTP_RELAY_ROLE=nav"; then
-    note "/scan_nav silent ($r Hz) -- starting the nav relay (mask 1.30 m)"
-    kill_ours "UTP_RELAY_ROLE=nav"; sleep 2
-    start_relay nav /scan_nav 1.30
-    sleep 8
-    probe "${SPEC[@]}"; r=$(hz /scan_nav)
+  if ! up scan; then
+    record scan_nav BLOCKED "not started: /scan is down"
+  elif foreign_blocked scan_nav scan_temporal_filter.py; then
+    # A second relay from older startup attempts must not share /scan_nav.
+    if [ "$(count_ours 'UTP_RELAY_ROLE=nav')" -gt 0 ] || [ "$(count_foreign 'UTP_RELAY_ROLE=nav')" -gt 0 ]; then
+      record scan_nav FAIL "another nav relay owns /scan_nav; inspect it before restarting"
+    else
+      kill_ours scan_temporal_filter.py
+      start_bg python3 "$REPO/safety/scan_temporal_filter.py"
+      wait_ready 25 /scan_nav 1.5 "topic:/scan_nav:sensor_msgs.msg:LaserScan:reliable"
+      r=$(hz /scan_nav)
+    fi
   fi
 fi
 if [ -z "${S[scan_nav]:-}" ]; then
-  ge "$r" 1.5 && record scan_nav ok "/scan_nav ${r} Hz (rear mask 1.30 m)" \
-               || { record scan_nav FAIL "/scan_nav ${r} Hz"
-                    why scan_nav "Nav2's costmaps read /scan_nav, NOT /scan: the two differ only
-                         in rear mask radius, because slam needs the far returns a lift car's
-                         side walls give at 1.00-1.15 m astern, while a costmap that sees the
-                         robot's own tail can never reverse into anything. Without this topic
-                         Nav2 comes up, plans, and refuses to avoid obstacles it cannot see."; }
+  ge "$r" 1.5 && record scan_nav ok "/scan_nav ${r} Hz (temporal filter from /scan)" \
+    || record scan_nav FAIL "/scan_nav ${r} Hz; check scan_temporal_filter.py"
 fi
 
 # ============================================================================================
@@ -794,8 +607,8 @@ if ! ge "$r" 5 && [ "$STATUS_ONLY" = 0 ]; then
     note "/safety/status silent ($r Hz) -- starting the mux and the arm monitor"
     kill_ours twist_mux_node.py; kill_ours arm_monitor_node.py; sleep 3
     start_bg bash "$REPO/bringup/safety.sh"
-    sleep 10
-    probe "${SPEC[@]}"; r=$(hz /safety/status)
+    wait_ready 25 /safety/status 5 "topic:/safety/status:std_msgs.msg:String:sensor" "gates:/safety/status"
+    r=$(hz /safety/status)
   fi
 fi
 if [ -z "${S[safety]:-}" ]; then
@@ -803,15 +616,14 @@ if [ -z "${S[safety]:-}" ]; then
     _stow="${P[gate:arm_stowed]:-}"; _estop="${P[gate:estop_latched]:-}"
     record safety ok "/safety/status ${r} Hz, arm_stowed ${_stow:-?}%, estop_latched ${_estop:-?}%"
     if [ -n "$_stow" ] && [ "$_stow" -lt 99 ] 2>/dev/null; then
-      record safety_gate FAIL "arm_stowed permits only ${_stow}% of ticks"
+      _gate_level=FAIL; [ "$MODE" = map ] && _gate_level=WARN
+      record safety_gate "$_gate_level" "arm_stowed permits only ${_stow}% of ticks; motion blocked"
       why safety_gate "the arm_stowed gate is fail-closed and it is BLOCKING. Every autonomous
            twist is being discarded by the mux, so Nav2 will plan a perfect path, publish it, and
            the robot will not move -- for the full leg timeout, and then report 'leg timed out':
            a navigation symptom for an interlock cause. Days have gone into the planner for this.
-           Either stow the arm (python3 bringup/stow_arm.py --go) so the monitor MEASURES the
-           stow pose, or, if no arm is fitted or powered, restart the safety layer declaring it
-           absent: UTP_ARM_BACKEND=absent bash bringup/safety.sh -- and record that against any
-           trial, because a gate satisfied by declaration is not one satisfied by measurement.
+           Restore the arm connection and verify its measured stow pose before software motion.
+           Starting a mapping recorder does not open this gate.
            A gate that FLAPS is the expensive case: sampled once it looks fine and still blocks
            most ticks, which is why this is a duty cycle over ${P[gaten]:-0} messages."
     elif [ -n "$_estop" ] && [ "$_estop" -ge 1 ] 2>/dev/null; then
@@ -841,8 +653,8 @@ if [ "$WANT_CAMERA" = 1 ]; then
       note "camera silent ($r Hz) -- restarting camera.sh"
       kill_ours realsense2_camera_node; kill_ours "$REPO/bringup/camera.sh"; sleep 3
       start_bg bash "$REPO/bringup/camera.sh"
-      sleep 25
-      probe "${SPEC[@]}"; r=$(hz /mast_cam/color/camera_info)
+      wait_ready 40 /mast_cam/color/camera_info 10 "topic:/mast_cam/color/camera_info:sensor_msgs.msg:CameraInfo:sensor"
+      r=$(hz /mast_cam/color/camera_info)
     fi
   fi
   if [ -z "${S[camera]:-}" ]; then
@@ -919,6 +731,7 @@ slam_live_map() {
   v="${v##*: }"; v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"; printf '%s\n' "${v##*/}"
 }
 
+if [ "$MODE" != inputs ]; then
 _map_seen=$(seen /map)
 _slam_state="$(lc_state /slam_toolbox)"
 
@@ -927,12 +740,12 @@ if [ "$MODE" = map ]; then
   _live="$(slam_live_mode)"
   if [ "$_map_seen" -ge 1 ] && [ "$_slam_state" = active ] && [ "$_live" = mapping ]; then
     record slam ok "MAPPING, lifecycle active, /map published"
-  elif [ "$_map_seen" -ge 1 ] && [ "$_live" = localization ]; then
+  elif [ "$_live" = localization ]; then
     record slam FAIL "a slam_toolbox is running in LOCALIZATION mode, not mapping"
     why slam "something is already publishing /map in localization mode on '$(slam_live_map)'.
          Starting a mapping session on top of it gives two publishers of /map and of map->odom,
          and EXACTLY ONE source may own each. Stop it first: bash bringup/session.sh down"
-  elif [ "$_slam_state" = active ]; then
+  elif [ "$_slam_state" = active ] || [ "$_live" = mapping ]; then
     # NEVER restart an active slam_toolbox in mapping mode on a partial reading. The pose graph
     # lives in RAM and is serialized only on request, so an unnecessary restart costs the walk.
     record slam WARN "ACTIVE but not fully confirmed (mode='${_live:-unreadable}', /map seen=$_map_seen) -- NOT restarted"
@@ -964,12 +777,9 @@ if [ "$MODE" = map ]; then
     # keeping).
     start_bg ros2 launch slam_toolbox online_async_launch.py \
       use_sim_time:=false slam_params_file:="$REPO/config/slam_os0.yaml"
-    sleep 12
-    timeout 20 ros2 lifecycle set /slam_toolbox configure >/dev/null 2>&1
-    sleep 3
-    timeout 90 ros2 lifecycle set /slam_toolbox activate  >/dev/null 2>&1
-    sleep 8
-    probe "${SPEC[@]}"; _map_seen=$(seen /map); _slam_state="$(lc_state /slam_toolbox)"
+    ensure_active /slam_toolbox 90 || note "SLAM activation failed; see $LOG"
+      wait_ready 30 /map latched "topic:/map:nav_msgs.msg:OccupancyGrid:latched" "tf:map:odom"
+      _map_seen=$(seen /map); _slam_state="$(lc_state /slam_toolbox)"
     if [ "$_map_seen" -ge 1 ] && [ "$_slam_state" = active ]; then
       record slam ok "MAPPING, lifecycle active, /map published"
     else
@@ -985,8 +795,8 @@ if [ "$MODE" = map ]; then
 else
   # ---- LOCALIZATION ----------------------------------------------------------------------
   _miss=""
-  for f in yaml posegraph data; do
-    [ -f "$REPO/maps/$MAP_NAME.$f" ] || _miss="$_miss .$f"
+  for f in pgm yaml posegraph data; do
+    [ -s "$REPO/maps/$MAP_NAME.$f" ] || _miss="$_miss .$f"
   done
   if [ -n "$_miss" ]; then
     record slam FAIL "maps/$MAP_NAME missing$_miss -- cannot relocalize into it"
@@ -1049,6 +859,10 @@ else
       why slam "without odom->base_link slam_toolbox cannot publish map->odom, and the failure
            surfaces three layers away as 'localization is wrong in RViz'."
     elif foreign_blocked slam slam_toolbox; then
+      if [ -z "${SEED_POSE:-}" ]; then
+        echo "Set SEED_POSE=x,y,yaw to the robot's known pose in '$MAP_NAME'; refusing the stale config seed." >&2
+        exit 2
+      fi
       note "starting slam_toolbox in LOCALIZATION mode on '$MAP_NAME'"
       kill_ours slam_toolbox; sleep 4
       # Same params file as mapping -- a map built with one set of scan-matcher settings and
@@ -1056,13 +870,10 @@ else
       # --ros-args after --params-file wins, so the override is the last word.
       start_bg ros2 run slam_toolbox localization_slam_toolbox_node --ros-args \
         --params-file "$REPO/config/slam_os0.yaml" -p use_sim_time:=false -p mode:=localization \
-        -p map_file_name:="$REPO/maps/$MAP_NAME"
-      sleep 15
-      timeout 20 ros2 lifecycle set /slam_toolbox configure >/dev/null 2>&1
-      sleep 3
-      timeout 90 ros2 lifecycle set /slam_toolbox activate  >/dev/null 2>&1
-      sleep 10
-      probe "${SPEC[@]}"; _map_seen=$(seen /map); _slam_state="$(lc_state /slam_toolbox)"
+        -p map_file_name:="$REPO/maps/$MAP_NAME" -p map_start_pose:="[$SEED_POSE]"
+      ensure_active /slam_toolbox 90 || note "SLAM activation failed; see $LOG"
+      wait_ready 30 /map latched "topic:/map:nav_msgs.msg:OccupancyGrid:latched" "tf:map:odom"
+      _map_seen=$(seen /map); _slam_state="$(lc_state /slam_toolbox)"
       if [ "$_map_seen" -ge 1 ] && [ "$_slam_state" = active ]; then
         if tfok map odom; then record slam ok "localizing in '$MAP_NAME', lifecycle active, map->odom present"
         else
@@ -1082,20 +893,54 @@ else
   fi
 fi
 
+else
+  record slam skip "inputs-only: no mapping or localization"
+fi
+
+# Named waypoint commands require provenance from this actual localization session.
+if [ "$WANT_NAV" = 1 ] && [ "$STATUS_ONLY" = 0 ] && up slam && tfok map odom; then
+  if timeout 12 python3 "$REPO/bringup/startup_mark_map.py" "$MAP_NAME"; then
+    record map_session ok "saved map matched to the live SLAM session"
+  else
+    record slam FAIL "could not verify live map provenance; Nav2 startup blocked"
+  fi
+fi
+
 # ============================================================================================
 # STAGE 9 -- Nav2. Every server is a lifecycle node, and the action is advertised BEFORE
 # activation, so neither the node list nor the action list can see this failure.
 # ============================================================================================
 if [ "$WANT_NAV" = 1 ]; then
+  # KEEPOUT MASK -- opt-in by FILE EXISTENCE, never by a flag. maps/<map>_keepout.yaml is the
+  # operator's hand-painted "the planner may not route through here"; it is the half of the
+  # 2026-09-06 runaway that allow_unknown: false cannot cover, because the areas that must be
+  # forbidden are MAPPED FREE (docs/KEEPOUT.md). Two extra lifecycle nodes serve it.
+  #
+  # It has to be off when the file is absent, and off in a way that cannot half-work: the
+  # lifecycle manager waits on a bond from every name it is given, so a mask server that is named
+  # but not launched does not degrade navigation, it HANGS the whole activation and leaves the
+  # robot with no planner at all. ranger_nav.launch.py derives both the node list and the launch
+  # conditions from one os.path.isfile on this same path, so the two cannot disagree.
+  KEEPOUT="$REPO/maps/${MAP_NAME}_keepout.yaml"
+  [ -f "$KEEPOUT" ] || KEEPOUT=""
   nav_probe() {
     _act=$(timeout 12 ros2 action list 2>/dev/null | grep -c navigate_to_pose)
     _bt=$(lc_state /bt_navigator); _pl=$(lc_state /planner_server)
     _ct=$(lc_state /controller_server); _bh=$(lc_state /behavior_server)
+    _km=$(lc_state /filter_mask_server); _ki=$(lc_state /costmap_filter_info_server)
     _dups=$(count_ours bt_navigator); _pdups=$(count_ours planner_server)
     [ "$_pdups" -gt "$_dups" ] && _dups="$_pdups"
     return 0
   }
   nav_healthy() {
+    # The keepout servers are checked ONLY when a mask exists, and they are checked on lifecycle
+    # STATE like everything else here: a map_server that loaded no image still appears in
+    # `ros2 node list` and still advertises, so the node name proves nothing. A mask that is
+    # present on disk but not ACTIVE is the dangerous case -- the operator painted a forbidden
+    # area, the run looks healthy, and the planner routes straight through it.
+    if [ -n "$KEEPOUT" ] && { [ "$_km" != active ] || [ "$_ki" != active ]; }; then
+      return 1
+    fi
     [ "${_act:-0}" -ge 1 ] && [ "${_dups:-0}" -le 1 ] \
       && [ "$_bt" = active ] && [ "$_pl" = active ] && [ "$_ct" = active ] && [ "$_bh" = active ]
   }
@@ -1126,7 +971,8 @@ if [ "$WANT_NAV" = 1 ]; then
       # Tear down the NODES, not just the launch wrapper: killing `ros2 launch` alone orphans the
       # servers it started, and those orphans are exactly what the next launch stacks on top of.
       for _p in ranger_nav.launch bt_navigator planner_server controller_server behavior_server \
-                smoother_server velocity_smoother waypoint_follower lifecycle_manager; do
+                smoother_server velocity_smoother waypoint_follower lifecycle_manager \
+                filter_mask_server costmap_filter_info_server; do
         kill_ours "$_p"
       done
       sleep 4
@@ -1140,19 +986,44 @@ if [ "$WANT_NAV" = 1 ]; then
              at a sim checkout. Unresolved, bt_navigator loads NO tree, the lifecycle manager
              aborts, and Nav2 comes up looking healthy while navigate_to_pose never works."
       else
+        if [ -n "$KEEPOUT" ]; then
+          note "keepout mask maps/${MAP_NAME}_keepout.yaml -- filter_mask_server + costmap_filter_info_server join the Nav2 lifecycle group"
+        else
+          note "no maps/${MAP_NAME}_keepout.yaml -- no keepout filter; nothing on this floor is forbidden"
+        fi
         start_bg ros2 launch "$REPO/nav2_bringup/ranger_nav.launch.py" \
-          params_file:="$RUNTIME" localization:=slam
-        sleep 45
-        nav_probe
+          params_file:="$RUNTIME" localization:=slam keepout:="$KEEPOUT"
+        _nav_deadline=$((SECONDS + 60))
+        while :; do
+          nav_probe
+          nav_healthy && break
+          [ "$SECONDS" -ge "$_nav_deadline" ] && break
+          note "waiting for Nav2 lifecycle activation"
+          sleep 1
+        done
       fi
     fi
   fi
   if [ -z "${S[nav2]:-}" ]; then
     if nav_healthy; then
-      record nav2 ok "navigate_to_pose + bt_navigator/planner/controller/behavior ACTIVE"
+      if [ -n "$KEEPOUT" ]; then
+        record nav2 ok "navigate_to_pose + bt_navigator/planner/controller/behavior ACTIVE, keepout mask '${MAP_NAME}_keepout' ACTIVE"
+      else
+        record nav2 ok "navigate_to_pose + bt_navigator/planner/controller/behavior ACTIVE, no keepout mask"
+      fi
     else
-      record nav2 FAIL "action=$_act bt=$_bt planner=$_pl controller=$_ct behavior=$_bh procs=$_dups"
-      if [ "${_dups:-0}" -gt 1 ]; then
+      record nav2 FAIL "action=$_act bt=$_bt planner=$_pl controller=$_ct behavior=$_bh keepout=$_km/$_ki procs=$_dups"
+      if [ -n "$KEEPOUT" ] && { [ "$_km" != active ] || [ "$_ki" != active ]; }; then
+        why nav2 "maps/${MAP_NAME}_keepout.yaml EXISTS, so the operator has painted areas the
+             planner must not enter, but filter_mask_server=$_km and
+             costmap_filter_info_server=$_ki -- they are not both active, so the KeepoutFilter in
+             both costmaps is receiving nothing and every painted area is being planned through as
+             ordinary free floor. This is a fail-OPEN direction: navigation will look completely
+             healthy. Read $LOG for the map_server load error (a mask whose .pgm is missing or
+             whose header GIMP rewrote unreadably fails HERE, in configure), then
+               python3 bringup/keepout_mask.py --check
+             which compares the mask on disk to the live /map."
+      elif [ "${_dups:-0}" -gt 1 ]; then
         why nav2 "there are $_dups bt_navigator/planner_server processes: TWO NAV2 STACKS are
              running, from repeated 'ros2 launch' calls. Two lifecycle_manager instances contend
              for the same nodes, the activation NEVER COMPLETES, and every goal comes back
@@ -1188,9 +1059,13 @@ if [ "$NEED_ARM" = 1 ]; then
   if [ "${S[net_arm]:-}" != "ok" ]; then
     record arm FAIL "192.168.1.221 unreachable"
   elif [ -x "$REPO/.venv-arm/bin/python" ]; then
-    _arm="$(timeout 40 "$REPO/.venv-arm/bin/python" "$REPO/bringup/arm_tool.py" 2>&1 | tr '\n' ' ')"
-    record arm ok "reachable; $(printf '%s' "$_arm" | cut -c1-90)"
-    note "arm reported, NOT set -- the hand-eye calibration assumes tcp_offset ZERO"
+    if _arm="$(timeout 15 "$REPO/.venv-arm/bin/python" "$REPO/bringup/arm_tool.py" 2>&1 | tr '\n' ' ')"; then
+      record arm ok "SDK tool readback succeeded; details in log"
+    else
+      record arm FAIL "SDK tool readback failed or tool differs from arm_tool.py expectations"
+    fi
+    [ "$STATUS_ONLY" = 1 ] || printf '%s\n' "$_arm" >> "$LOG"
+    note "arm tool reported only; no offset or load changed"
   else
     record arm WARN "reachable but .venv-arm/bin/python is missing, cannot read its state"
     why arm "the xArm SDK lives in its own venv (no rclpy, no system site-packages) and it is not
@@ -1226,6 +1101,7 @@ if [ ${#WHY[@]} -gt 0 ]; then
   done
 fi
 
+echo "  elapsed: $((SECONDS - START_SECONDS)) seconds"
 if [ $((bad + blocked)) -gt 0 ]; then
   echo "  $bad component(s) DOWN, $blocked not started because their input was down."
   echo "  A stage is never launched into a silent input: a node started before its input exists"
@@ -1238,6 +1114,7 @@ fi
 
 echo "  everything --mode $MODE needs is up. Next:"
 case "$MODE" in
+  inputs) echo "  Inputs checked. No SLAM, localization or Nav2 started." ;;
   map)
     echo "      bash bringup/map_insurance.sh start <name>   # START THIS BEFORE THE DRIVE."
     echo "        slam_toolbox holds the pose graph in RAM and serializes only on request; a"
