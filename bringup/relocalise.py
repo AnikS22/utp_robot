@@ -20,6 +20,13 @@ recorded at 51% is indistinguishable in the file from one recorded at 88%, and s
 wall.
 """
 import argparse, math, sys, time
+
+# Search resolution. LATTICE_M is the spacing of the global candidate grid and also the span the
+# first refine pass sweeps, so every pose is within half a step of a candidate and the refine
+# closes the rest. 0.20 m over floor1 is ~12,700 candidates x 72 headings, about a second.
+LATTICE_M = 0.20
+YAW_STEP_DEG = 5
+BEAMS = 120          # was 70; more beams separate a real match from a plausible one
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ros_env import require_ros
@@ -75,7 +82,7 @@ def main() -> int:
         aa = ang; ang += sc.angle_increment
         if r == r and sc.range_min < r < 15:
             rs.append(r); angs.append(aa)
-    st = max(1, len(rs) // 70)
+    st = max(1, len(rs) // BEAMS)
     rs = np.array(rs[::st]); angs = np.array(angs[::st])
 
     def fit(px, py, yw):
@@ -96,23 +103,44 @@ def main() -> int:
     if a.check:
         return 0
 
-    free = np.argwhere(grid == 0)
-    cand = free[:: max(1, len(free) // 4000)]
+    # GLOBAL SEARCH. Candidates come from a LATTICE over the free cells, not from `free[::step]`.
+    #
+    # The old line was `cand = free[:: max(1, len(free)//4000)]`. np.argwhere returns cells in
+    # raster order, so striding it walks along rows: on floor1's 186,858 free cells that is every
+    # 46th cell, leaving candidates ~2.3 m apart ALONG A ROW while the refine stage below only
+    # searches +/-0.4 m around the winner. A true pose landing between two candidates cannot be
+    # found at any score, and the tool reports "lost" for a robot sitting in plain view. Measured
+    # 2026-09-06 on floor1: raster striding returned 40.5% and picked the arbitrary seed it was
+    # given; the lattice below returned the real pose, and a later sweep of 831,312 poses could
+    # not beat it -- which is what a converged global search is supposed to look like.
+    #
+    # Uniform in x AND y, so the worst-case distance from any pose to the nearest candidate is
+    # bounded by the lattice step and the refine span can be sized against it honestly.
+    step = max(1, int(round(LATTICE_M / res)))          # cells
+    cj, ci = np.where(grid[::step, ::step] == 0)
+    cj = (cj * step).astype(np.int32); ci = (ci * step).astype(np.int32)
+    print(f"  searching {len(ci)} free cells on a {step*res:.2f} m lattice x "
+          f"{len(range(0,360,YAW_STEP_DEG))} headings = {len(ci)*len(range(0,360,YAW_STEP_DEG)):,} poses")
+
+    # Scored a heading at a time, all candidates at once. The per-candidate Python loop it
+    # replaces is what made a dense search unaffordable and forced the sparse stride in the
+    # first place.
     best = (fit(cx, cy, cw), cx, cy, cw)
-    for yd in range(0, 360, 10):
+    for yd in range(0, 360, YAW_STEP_DEG):
         yw = math.radians(yd)
-        dx = rs * np.cos(angs + yw) / res; dy = rs * np.sin(angs + yw) / res
-        for cj, ci in cand:
-            ii = (ci + dx).astype(np.int32); jj = (cj + dy).astype(np.int32)
-            m = (ii >= 0) & (ii < W) & (jj >= 0) & (jj < H)
-            if not m.any():
-                continue
-            s = int(occ[jj[m], ii[m]].sum())
-            if s > best[0]:
-                best = (s, ox + (ci + 0.5) * res, oy + (cj + 0.5) * res, yw)
+        di = rs * np.cos(angs + yw) / res
+        dj = rs * np.sin(angs + yw) / res
+        ii = (ci[:, None] + di[None, :]).astype(np.int32)
+        jj = (cj[:, None] + dj[None, :]).astype(np.int32)
+        inb = (ii >= 0) & (ii < W) & (jj >= 0) & (jj < H)
+        np.clip(ii, 0, W - 1, out=ii); np.clip(jj, 0, H - 1, out=jj)
+        sc_ = (occ[jj, ii] & inb).sum(axis=1)
+        k = int(sc_.argmax())
+        if sc_[k] > best[0]:
+            best = (int(sc_[k]), ox + (ci[k] + 0.5) * res, oy + (cj[k] + 0.5) * res, yw)
     s, bx, by, bw = best
     print(f"  coarse  ({bx:+.2f},{by:+.2f},{math.degrees(bw):+.0f}deg) fit {100*s/len(rs):.1f}%")
-    for span, stp, yr in ((0.4, 0.08, range(-12, 13, 3)), (0.12, 0.04, range(-4, 5))):
+    for span, stp, yr in ((LATTICE_M, 0.05, range(-6, 7)), (0.08, 0.02, range(-3, 4))):
         b = (s, bx, by, bw)
         rr = [i * stp for i in range(-int(span / stp), int(span / stp) + 1)]
         for ddx in rr:

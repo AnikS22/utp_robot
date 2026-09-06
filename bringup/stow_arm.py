@@ -84,7 +84,16 @@ TOL_DEG = 5.0
 # riser, and the faster the wrist slews the more the whole mast rings. 45 is roughly a quarter of
 # the xArm6's rated joint speed and stays well inside it. If a fold ever faults, this is the first
 # number to put back, not the last.
-SPEED_DEG_S = 45.0
+# 2026-09-06: 45 -> 80. The operator asked for a faster retract on both floors, and this same
+# constant drives BOTH arm moves in the press chain -- stow_arm.py --ready (the wrist to the press
+# orientation, the largest of which was measured at J5 by 66 deg) and the fold afterwards. At 45
+# that pair cost ~1.5 s + ~2.4 s; at 80 it is ~0.8 s + ~1.3 s.
+#
+# Still conservative against the hardware: the note below puts 45 at roughly a quarter of the
+# xArm6's rated joint speed, so 80 is under half. The limit here is the mast ringing, not torque --
+# a 0.82 kg gripper on a 0.74 m riser -- so if a fold ever faults or the mast visibly oscillates
+# after a move, THIS is the first number to put back, before anything is changed in the reach.
+SPEED_DEG_S = 80.0
 
 
 def main() -> int:

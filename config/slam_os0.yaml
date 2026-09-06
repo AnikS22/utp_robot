@@ -114,7 +114,12 @@ slam_toolbox:
     minimum_time_interval: 0.15
     transform_timeout: 0.2
     tf_buffer_duration: 30.0
-    stack_size_to_use: 40000000 #// program needs a larger stack size to serialize large maps
+    # 40000000 (the upstream default) SEGFAULTS on floor1. Measured 2026-09-06: the node loads
+    # the graph to completion -- "Finished serializing Dataset", "Registering sensor" -- and then
+    # dies in the Ceres solve, so the crash looks like a corrupt map and is not one. floor2 has a
+    # 2.8 MB .data and fits; floor1 has 9.7 MB and does not. Raised with headroom for a bigger
+    # building, not just for this one. Costs nothing until used: it is a stack RESERVATION.
+    stack_size_to_use: 400000000
     enable_interactive_mode: true
 
     # General Parameters

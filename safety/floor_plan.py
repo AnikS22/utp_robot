@@ -72,7 +72,8 @@ DOORS = "doors"      # wait for the doors -- operator, or bringup/doors_open.py
 RIDE = "ride"        # the robot is carried; nothing in software is true during this
 SWAP = "swap"        # restart localization on the destination floor's map, seeded in the car
 VERIFY = "verify"    # score the live scan against the destination map, DOORS OPEN
-KINDS = (NAV, PRESS, DOORS, RIDE, SWAP, VERIFY)
+EGRESS = "egress"    # drive straight out of the car OPEN-LOOP -- no map, no goal, no pose needed
+KINDS = (NAV, PRESS, DOORS, RIDE, SWAP, VERIFY, EGRESS)
 
 # Waypoint roles every floor must define. These are ROLES, not names: the name on floor 2 will not
 # be the name on floor 1, because both live in maps/waypoints.yaml and the store is flat.
@@ -89,6 +90,19 @@ REQUIRED_ROLES = ("call_button", "door_reverse", "car_facing_out", "car_panel", 
 # how a check stops meaning anything: it would still pass, while naming a pose whose heading is
 # 176 deg from the one the name promises.
 FORWARD_ENTRY_ROLES = ("door_facing", "car_facing_in")
+
+# A TASK FLOOR IS NOT A LIFT FLOOR. Floor 1 is where the ride ENDS: the robot steps out of the car
+# and does the ADA task -- drive to the plate, press it, drive outside. It never calls the lift from
+# floor 1 and never selects a floor from inside on floor 1, so call_button, door_reverse and
+# car_panel name controls that DO NOT EXIST there.
+#
+# The old config listed all five lift roles for floor 1 anyway, and --check dutifully demanded five
+# waypoints that nobody should ever record. Recording them to satisfy the schema is how a checker
+# stops meaning anything: five poses on disk, three of them pointing at nothing, and a green check.
+#
+# Localization on a task floor is GLOBAL, not seeded from an in-car pose: the robot exits the lift
+# and bringup/relocalise.py finds it on the map. That is why there is no car_facing_out here.
+TASK_ROLES = ("task_button", "task_exit")
 
 # A map you can relocalize into is all four files or it is a picture -- the same rule
 # bringup/map_persist.sh enforces on the way in, restated here so a config referencing a
@@ -154,6 +168,8 @@ class Floor:
     waypoints: dict          # role -> waypoint name
     call_query: str          # the plate OUTSIDE that calls the car to this floor
     select_query: str        # the button INSIDE the car that sends it to this floor
+    kind: str = "lift"       # "lift" (the robot calls and boards here) or "task" (the ride ends)
+    task_query: str = ""     # a task floor's own control, e.g. the ADA plate. Not a lift control.
     description: str = ""
     extra: dict = field(default_factory=dict)
 
@@ -176,26 +192,43 @@ def floors_of(cfg: dict) -> dict[str, Floor]:
         key = str(fid)
         if not isinstance(spec, dict):
             raise ValueError(f"floor '{key}' is not a mapping")
-        missing = [k for k in ("map", "waypoints", "call_query", "select_query") if not spec.get(k)]
+        kind = str(spec.get("kind", "lift")).lower()
+        if kind not in ("lift", "task"):
+            raise ValueError(f"floor '{key}' has unknown kind '{kind}' (expected lift or task)")
+        # select_query names the button INSIDE the car for this floor. A task floor never presses
+        # one, so requiring it would force an invented string into a config safety code reads.
+        # select_query is required on BOTH kinds and for the same reason: it names the button
+        # INSIDE the car that sends it to THIS floor, and that button is pressed from the floor the
+        # robot departs. Floor 1 is a task floor and its "1" button is still pressed on the way
+        # down. call_query -- the plate outside that calls a car TO this floor -- is what a task
+        # floor genuinely lacks, and task_query is the control it has instead.
+        need = ["map", "waypoints", "select_query"]
+        need += ["task_query"] if kind == "task" else ["call_query"]
+        missing = [k for k in need if not spec.get(k)]
         if missing:
             raise ValueError(f"floor '{key}' is missing: {', '.join(missing)}")
         wps = spec["waypoints"]
         if not isinstance(wps, dict):
             raise ValueError(f"floor '{key}' waypoints is not a mapping")
-        required = list(REQUIRED_ROLES)
-        if all(wps.get(r) for r in FORWARD_ENTRY_ROLES):
-            required.remove("door_reverse")     # forward entry: nothing ever reverses in
+        if kind == "task":
+            required = list(TASK_ROLES)
+        else:
+            required = list(REQUIRED_ROLES)
+            if all(wps.get(r) for r in FORWARD_ENTRY_ROLES):
+                required.remove("door_reverse")   # forward entry: nothing ever reverses in
         absent = [r for r in required if not wps.get(r)]
         if absent:
             raise ValueError(f"floor '{key}' has no waypoint for role(s): {', '.join(absent)}")
         out[key] = Floor(id=key, map=str(spec["map"]),
                          waypoints={r: str(wps[r]) for r in wps},
-                         call_query=str(spec["call_query"]),
+                         call_query=str(spec.get("call_query", "")),
                          select_query=str(spec["select_query"]),
+                         kind=kind,
+                         task_query=str(spec.get("task_query", "")),
                          description=str(spec.get("description", "")),
                          extra={k: v for k, v in spec.items()
                                 if k not in ("map", "waypoints", "call_query", "select_query",
-                                             "description")})
+                                             "kind", "task_query", "description")})
     return out
 
 
@@ -349,6 +382,13 @@ def plan_ride(cfg: dict, itinerary) -> list[Step]:
     steps: list[Step] = []
     for here_id, there_id in zip(seq, seq[1:]):
         here, there = floors[here_id], floors[there_id]
+        # A task floor is where a ride ENDS. It has no call plate and no boarding poses, so a ride
+        # departing from one cannot be planned -- and silently planning a shorter one would be
+        # worse than refusing, because the missing steps are the ones that get the robot into a car.
+        if here.kind == "task":
+            raise ValueError(
+                f"floor {here_id} is a task floor: the robot does not call the lift from there. "
+                f"Rides depart from a lift floor; check the itinerary order.")
         w = here.waypoints
         steps += [
             Step(NAV, w["call_button"], here_id, "outside the lift, facing the call plate"),
@@ -360,9 +400,13 @@ def plan_ride(cfg: dict, itinerary) -> list[Step]:
             # artifact (a ring of returns 0.85-1.20 m behind the robot with nothing there) straight
             # into the doorway it is trying to enter. Nose-first costs a 1.1 deg turn and points
             # the artifact away. Every rotation then happens inside the car, doors shut, no clock.
-            Step(NAV, w.get("door_facing", w["door_reverse"]), here_id,
+            # NOT dict.get(k, default): Python evaluates the default EAGERLY, so
+            # w.get("door_facing", w["door_reverse"]) raises KeyError on any floor that has
+            # door_facing and no door_reverse -- which is every forward-entry floor, including
+            # floor 2, the floor the robot actually departs from. The fallback has to be lazy.
+            Step(NAV, w["door_facing"] if "door_facing" in w else w["door_reverse"], here_id,
                  "line up square with the doorway"),
-            Step(NAV, w.get("car_facing_in", w["car_facing_out"]), here_id,
+            Step(NAV, w["car_facing_in"] if "car_facing_in" in w else w["car_facing_out"], here_id,
                  "straight in through the doorway"),
             Step(NAV, w["car_panel"], here_id, "square to the button panel"),
             Step(PRESS, there.select_query, here_id, f"select floor {there_id}"),
@@ -370,16 +414,42 @@ def plan_ride(cfg: dict, itinerary) -> list[Step]:
                                                     "localized in a map the robot is really in"),
             Step(DOORS, "closed", here_id, "sealed, the scan is only the car -- the one thing "
                                            "both maps agree about"),
-            Step(SWAP, there_id, there_id, f"restart localization on '{there.map}', seeded at "
-                                           f"'{there.waypoints['car_facing_out']}'. Overlaps the "
-                                           f"ride, so it does not spend the door hold"),
-            Step(RIDE, there_id, there_id, "nothing in software is true about the FLOOR until the "
-                                           "doors open, however good the fit looks"),
-            Step(DOORS, "open", there_id, "the floor is not observable until they do"),
-            Step(VERIFY, there_id, there_id, "score the live scan against the destination map, "
-                                             "DOORS OPEN. This is the gate"),
-            Step(NAV, there.waypoints["exit"], there_id, "out"),
         ]
+        # ---- arrival. A LIFT destination is seeded from its in-car pose; a TASK destination is
+        # not seeded at all, because it has no in-car pose and should not have one invented.
+        if there.kind == "task":
+            steps += [
+                Step(SWAP, there_id, there_id,
+                     f"restart localization on '{there.map}' UNSEEDED. A task floor has no "
+                     f"car_facing_out and must not be given a made-up one: the robot localizes "
+                     f"AFTER it is out, by global search"),
+                Step(RIDE, there_id, there_id, "nothing in software is true about the FLOOR until "
+                                               "the doors open, however good the fit looks"),
+                Step(DOORS, "open", there_id, "the floor is not observable until they do"),
+                # Not a NAV. A NAV needs a pose in the destination map and there is not one yet --
+                # that is the whole point of an unseeded swap. Straight out, open-loop, on the one
+                # fact that needs no map: the doors are in front of the robot and it is facing them.
+                Step(EGRESS, there_id, there_id,
+                     "drive straight out of the car, open-loop -- no map, no goal, no pose"),
+                Step(VERIFY, there_id, there_id,
+                     "NOW localize: bringup/relocalise.py searches every free cell x 72 headings. "
+                     "This is the gate -- nothing below runs until it passes"),
+                Step(NAV, there.waypoints["task_button"], there_id, "square to the plate"),
+                Step(PRESS, there.task_query, there_id, "the task press"),
+                Step(NAV, there.waypoints["task_exit"], there_id, "out"),
+            ]
+        else:
+            steps += [
+                Step(SWAP, there_id, there_id, f"restart localization on '{there.map}', seeded at "
+                                               f"'{there.waypoints['car_facing_out']}'. Overlaps "
+                                               f"the ride, so it does not spend the door hold"),
+                Step(RIDE, there_id, there_id, "nothing in software is true about the FLOOR until "
+                                               "the doors open, however good the fit looks"),
+                Step(DOORS, "open", there_id, "the floor is not observable until they do"),
+                Step(VERIFY, there_id, there_id, "score the live scan against the destination map, "
+                                                 "DOORS OPEN. This is the gate"),
+                Step(NAV, there.waypoints["exit"], there_id, "out"),
+            ]
     return steps
 
 

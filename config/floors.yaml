@@ -25,74 +25,52 @@ floors:
 
   # -------------------------------------------------------------------------------------------
   "1":
+    kind: task
     description: >
-      Ground floor lift lobby AND the ADA door area, in ONE map: maps/floor1.*, recorded
-      2026-09-05 as a single continuous drive. SAVED 2026-09-05: 836x829, 9918 occupied cells, with a full
-      27 MB posegraph and 9.5 MB .data -- a MAP, not a picture. Nothing from the old floor 1 is
-      used any more. The five f1_ poses below are NOT YET RECORDED, so --check fails until they
-      are; that is correct fail-closed behaviour, not something to work around.
-
-    # WHY FLOOR 1 IS BEING RE-MAPPED, AND WHY IT HAD TO BE ONE CONTINUOUS DRIVE.
-    #
-    # Floor 1 used to be TWO maps and neither of them could do the job on its own:
-    #
-    #   maps/elevator.*  the lift lobby. All four files, a real pose graph, relocalizable. This is
-    #                    what this entry named until now and what elevator_route.sh drives.
-    #   maps/atrium.*    the ADA door area, where the ADA-button task waypoints were recorded.
-    #                    ONLY .pgm and .yaml. No .posegraph, no .data.
-    #
-    # A .pgm/.yaml pair is a PICTURE, not a map you can localize into. slam_toolbox's localization
-    # mode deserializes the .posegraph; handed only a grid it does not error -- it silently starts
-    # a NEW, EMPTY graph whose origin is wherever the robot is standing, publishes /map, reports
-    # ACTIVE, and looks completely healthy. So the ADA map could never localize, and every
-    # waypoint recorded in it names a coordinate in a frame that no longer exists.
-    #
-    # Nor could the two be merged. A slam_toolbox pose graph comes from ONE continuous drive, and
-    # there has never been a drive linking the lift lobby to the ADA door -- there is no chain of
-    # scan matches between them to merge along. Stitching two grids by hand would produce exactly
-    # the thing described above: a picture. The only fix is to drive both areas in one session so
-    # one graph covers both, which is what maps/floor1.* is.
-    #
-    # THE OLD MAPS ARE KEPT ON DISK, NOT DELETED. maps/elevator.* and maps/atrium.* stay exactly
-    # where they are as backup -- elevator.* is still the only floor-1 map that has ever been
-    # driven, and until floor1 is recorded, saved and checked it is the only one that works.
+      GROUND FLOOR, WHERE THE RIDE ENDS. The robot arrives here inside the car, steps out, and does
+      the ADA task: drive to the plate, press it, drive outside. It is NOT a lift floor -- it never
+      calls the lift from here and never selects a floor from inside the car here.
+      Map maps/floor1.* recorded 2026-09-05 as one continuous drive covering the lobby and the ADA
+      door: 836x829 at 0.05 m, 9918 occupied cells, 27.9 MB posegraph and 9.7 MB .data -- a MAP,
+      not a picture. The two waypoints below were recorded 2026-09-06 in that map's own
+      localization session.
     map: floor1
 
-    # ALL FIVE RE-RECORDED UNDER f1_ NAMES. The old unsuffixed floor-1 waypoints -- call_button,
-    # car_facing_out, car_panel, lift_door, lift_door_reverse -- belong to the OLD `elevator` map
-    # and are being DELETED from maps/waypoints.yaml, not renamed: their coordinates are in
-    # elevator's frame and floor1 has an unrelated origin, so carrying the numbers across would
-    # name a different physical place. Re-record them in floor1's own localization session.
+    # ONLY TWO WAYPOINTS, AND THAT IS THE WHOLE FLOOR. This block used to list five lift roles --
+    # call_button, door_reverse, car_facing_out, car_panel, exit -- and none of them was ever
+    # recorded, because on floor 1 three of them name controls THAT DO NOT EXIST. There is no call
+    # plate to press here and no in-car floor button to select. Recording five poses to turn
+    # --check green would have put three poses on disk pointing at nothing.
     #
-    # ROLE NAMES COME FROM safety/floor_plan.py, not from taste: REQUIRED_ROLES is
-    # (call_button, door_reverse, car_facing_out, car_panel, exit). door_reverse is waived only
-    # for a floor that enters nose-first and therefore defines BOTH of FORWARD_ENTRY_ROLES
-    # (door_facing, car_facing_in) -- that is floor 2, not floor 1. Floor 1 REVERSES INTO the car,
-    # which is why f1_lift_door_reverse is on this list and must be recorded too: five names, one
-    # for each of the five being deleted.
+    # NO car_facing_out, DELIBERATELY. That role is a SEED pose: on a lift floor it tells
+    # slam_toolbox where the robot is sitting when the doors open. Floor 1 does not seed. The robot
+    # drives out of the car and bringup/relocalise.py finds it GLOBALLY -- a lattice over every free
+    # cell x 72 headings, which on this map is 831,312 poses and about a second. Verified
+    # 2026-09-06: from a deliberately wrong seed it recovered the true pose, and a second sweep
+    # could not beat what it found.
     waypoints:
-      call_button:     f1_call_button        # outside the lift, facing the call plate
-      door_reverse:    f1_lift_door_reverse  # outside, BACK to the doors -- we reverse in, because
-                                             # rotating inside a 2 m car is what confused Nav2 first
-      car_facing_out:  f1_car_facing_out     # inside the car, facing the doors. THE SEED POSE
-      car_panel:       f1_car_panel          # inside, square to the button panel
-      exit:            f1_lift_door          # back outside the doors
+      task_button:  f1_ada_button   # square to the ADA plate  (+8.051,+3.377)  +31.8
+      task_exit:    f1_outside      # finish pose, outside      (+10.772,+3.410) +34.0
 
-    # NAME THE COLOUR, NOT THE OBJECT. Measured 2026-09-03: "the elevator call button on the wall"
-    # grounded the SILVER PANEL at 0.3859 -- inside the band where every known-bad grounding in
-    # this project sits (fire-alarm cover 0.397, arm-in-frame 0.381). The blue tape is the only
-    # saturated colour in an all-grey lobby. "the blue elevator button" 0.443 beat "the elevator
-    # button marked with blue tape" 0.267, so name the colour and stop there.
-    call_query: "the blue elevator call button"
+    # NAME THE COLOUR OR THE FUNCTION, NOT THE HARDWARE. Measured 2026-09-06 from the live route:
+    # 'the accessible door push button' scored 0.408 and beat four decoys, with the fire-alarm
+    # family correctly rejected by press_veto.py (best forbidden hit 0.585, landing elsewhere).
+    task_query: "the accessible door push button"
 
-    # The button INSIDE the car that sends it to THIS floor. See the warning under floor 2.
+    # NO call_query. That field names the plate OUTSIDE that calls a car TO this floor, and the
+    # robot never calls the lift from floor 1 -- the ride ends here. safety/floor_plan.py requires
+    # call_query only for kind: lift, and task_query instead.
+
+    # select_query IS required here, and it is not a contradiction. It names the button INSIDE the
+    # car that sends the car to THIS floor -- the "1" -- and that button is pressed from floor 2 on
+    # the way down. It belongs to the floor it selects, not to the floor you press it on.
     select_query: "the blue elevator button"
 
     # OPERATOR NOTE 2026-09-05, verbatim: "we are trying to hit the 1st floor button so #0.33 for
-    # the arm". Recorded here rather than acted on -- 0.33 has not been tied to a named parameter
-    # yet, and guessing which one it is (a z offset, a reach, a joint target) is how a wrong number
-    # ends up in a config that safety code reads. Confirm the unit against the panel at press time,
-    # then replace this comment with the actual field.
+    # the arm". That belongs to the IN-CAR press on the ride down, which is floor 2's select_query
+    # chain, not to anything on this floor. Kept here because this is where it was said, and 0.33
+    # has still not been tied to a named parameter -- guessing which one it is (a z offset, a reach,
+    # a joint target) is how a wrong number ends up in a config that safety code reads.
 
   # -------------------------------------------------------------------------------------------
   "2":

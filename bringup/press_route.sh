@@ -19,6 +19,15 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO/bringup/env.sh"
 DRY=""; [ "${1:-}" = "--dry-run" ] && DRY="--dry-run"
 
+# WAYPOINT NAMES. Were the bare 'button' and 'outside', recorded 2026-09-01 in the atrium map.
+# That map was only ever a .pgm/.yaml pair -- a picture, never localizable -- so those two names
+# were deleted with the rest of the old floor 1 and this script has been driving names that are
+# not in maps/waypoints.yaml. Re-recorded 2026-09-06 in maps/floor1.* as f1_ada_button and
+# f1_outside, in floor1's own localization session. Overridable so the next floor does not need
+# this file edited again.
+BUTTON_WP="${UTP_BUTTON_WP:-f1_ada_button}"
+OUTSIDE_WP="${UTP_OUTSIDE_WP:-f1_outside}"
+
 say() { echo; echo "=============================================================="; echo " $*"; \
         echo "=============================================================="; }
 die() { echo "STOP: $*" >&2; exit 1; }
@@ -42,11 +51,11 @@ print("  gates:", json.dumps(g))
 sys.exit(0 if (g["arm_stowed"] and not g["estop_latched"]) else 1)
 PY
 
-say "1  NAVIGATE to 'button'"
+say "1  NAVIGATE to '$BUTTON_WP'"
 if [ -z "$DRY" ]; then
-    python3 "$REPO/bringup/nav2_goto.py" button --go || die "could not reach 'button'"
+    python3 "$REPO/bringup/nav2_goto.py" "$BUTTON_WP" --go || die "could not reach '$BUTTON_WP'"
 else
-    python3 "$REPO/bringup/nav2_goto.py" button || true
+    python3 "$REPO/bringup/nav2_goto.py" "$BUTTON_WP" || true
 fi
 
 # press_run.sh grounds with the arm parked, THEN moves it to the press orientation, THEN reaches.
@@ -54,17 +63,31 @@ fi
 say "2  PRESS  (ground with the arm parked, then reach)"
 bash "$REPO/bringup/press_run.sh" $DRY || die "press chain failed"
 
-say "3  RETRACT to the packed pose"
+say "3  RETRACT  (overlapped with the drive out)"
+# WHY THE BASE NO LONGER WAITS FOR THE FOLD. This used to be two blocking waits in a row -- a
+# stow_arm.py with wait=True, then up to 10 s watching /safety/status for arm_stowed to go true --
+# and only then the nav goal. Both sat on the critical path and neither is load-bearing any more:
+# config/safety.yaml sets require_arm_stowed: false, so the mux does NOT veto /cmd_vel on the arm's
+# pose. The base was waiting on a gate that had already been opened.
+#
+# THE OVERLAP IS CONDITIONAL ON THAT FLAG, read at run time rather than assumed. If anyone sets
+# require_arm_stowed back to true -- which the config tells you to do for anything unattended --
+# the old blocking behaviour returns automatically. Without that read this script would issue a
+# goal the mux silently discards and then report a drive that never happened.
+#
+# The fold is still waited on, just at the END: `wait` on its PID after the drive, so a retract
+# that fails still fails the route instead of disappearing.
+REQUIRE_STOW="$(python3 -c "import yaml,sys; print(str(yaml.safe_load(open(sys.argv[1])).get('require_arm_stowed', True)).lower())" "$REPO/config/safety.yaml" 2>/dev/null || echo true)"
+STOW_PID=""
 if [ -z "$DRY" ]; then
-    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go || die "arm would not retract"
-else
-    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" || true
-fi
-
-# The base cannot move until the mux SEES the arm stowed -- it reads measured joint angles, not
-# the script's belief that it just stowed one.
-if [ -z "$DRY" ]; then
-    python3 - <<'PY' || die "arm_stowed never went true; the base will not be allowed to move"
+    if [ "$REQUIRE_STOW" = "false" ]; then
+        "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go &
+        STOW_PID=$!
+        echo "  folding in the background -- require_arm_stowed is false, so the base does not wait"
+    else
+        echo "  require_arm_stowed is TRUE: folding to completion before any base motion"
+        "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go || die "arm would not retract"
+        python3 - <<'PYSTOW' || die "arm_stowed never went true; the base will not be allowed to move"
 import rclpy, json, time, sys
 from rclpy.node import Node
 from std_msgs.msg import String
@@ -76,14 +99,23 @@ while time.time() - t0 < 10:
     if got and json.loads(got[-1])["gates"]["arm_stowed"]:
         print("  arm_stowed confirmed by the mux"); sys.exit(0)
 print("  arm_stowed still false"); sys.exit(1)
-PY
+PYSTOW
+    fi
+else
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" || true
 fi
 
-say "4  NAVIGATE to 'outside'"
+say "4  NAVIGATE to '$OUTSIDE_WP'"
 if [ -z "$DRY" ]; then
-    python3 "$REPO/bringup/nav2_goto.py" outside --go || die "could not reach 'outside'"
+    python3 "$REPO/bringup/nav2_goto.py" "$OUTSIDE_WP" --go || die "could not reach '$OUTSIDE_WP'"
 else
-    python3 "$REPO/bringup/nav2_goto.py" outside || true
+    python3 "$REPO/bringup/nav2_goto.py" "$OUTSIDE_WP" || true
+fi
+
+# Collect the fold that has been running underneath the drive. Late, but never skipped.
+if [ -n "${STOW_PID:-}" ]; then
+    wait "$STOW_PID" || die "the arm did not retract (it was folding while the base drove out)"
+    echo "  arm fold completed during the drive"
 fi
 
 say "ROUTE COMPLETE"
