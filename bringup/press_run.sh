@@ -150,8 +150,14 @@ echo "=============================================================="
 # before the doors close.
 # UNSET, THIS IS BYTE-IDENTICAL TO THE ADA CHAIN. Set UTP_STEP_MM=1000 for a single move.
 STEP_ARG=""; [ -n "${UTP_STEP_MM:-}" ] && STEP_ARG="--step-mm $UTP_STEP_MM"
+# UTP_REACH_SPEED: Cartesian mm/s, default 25 in approach_target.py. Raising it shortens the reach
+# on a task timed by a door closer. It is NOT free -- approach_target's own --speed help says
+# raising it "raises the current the joints draw against contact, which is what error 31 reads" --
+# so a faster reach trips the contact detector earlier and harder. That is acceptable HERE, where
+# contact is the success signal, and would not be on a fragile target.
+SPEED_ARG=""; [ -n "${UTP_REACH_SPEED:-}" ] && SPEED_ARG="--speed $UTP_REACH_SPEED"
 python3 "$REPO/bringup/approach_target.py" --capture "$CAP" $MODE \
-        --min-standoff "$STANDOFF" $STEP_ARG $EXTRA
+        --min-standoff "$STANDOFF" $STEP_ARG $SPEED_ARG $EXTRA
 
 # UTP_NO_STOW=1 -- THE CALLER OWNS THE FOLD.
 #

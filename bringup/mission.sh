@@ -87,7 +87,12 @@ press() {
     say "PRESS  '$query'${profile:+   [offset profile: $profile]}"
     [ -n "$DRY" ] && { UTP_OFFSET_PROFILE="$profile" bash "$REPO/bringup/press_run.sh" --dry-run --query "$query" || true; return 0; }
     log="$(mktemp)"
+    # ONE MOTION, AND FASTER. approach_target.py splits the reach into 60 mm segments so a fault
+    # stops at a known pose and joint headroom is re-checked before each commit -- worth it while
+    # the chain was being debugged, and pure cost now that it works: four commanded moves and four
+    # settles on a task timed by a door closer. UTP_STEP_MM=1000 collapses it to a single move.
     UTP_NO_STOW=1 UTP_OFFSET_PROFILE="$profile" \
+    UTP_STEP_MM="${UTP_STEP_MM:-1000}" UTP_REACH_SPEED="${UTP_REACH_SPEED:-60}" \
         bash "$REPO/bringup/press_run.sh" --query "$query" 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
     grep -qE "code: 31|err=31" "$log" && contact=1
@@ -233,15 +238,19 @@ localize_on "$A_MAP"
 [ -n "${A_DOOR_FACING:-}" ] && nav "$A_DOOR_FACING"
 nav   "$A_CALL_BUTTON"
 press "$A_CALL_QUERY"
-doors "hold them OPEN for the entry"
 
 # Forward entry where the floor defines it, else the original reverse.
 ENTRY_APPROACH="${A_DOOR_FACING:-${A_DOOR_REVERSE:-}}"
 ENTRY_POSE="${A_CAR_FACING_IN:-${A_CAR_FACING_OUT:-}}"
 [ -n "$ENTRY_APPROACH" ] || die "floor $FROM defines neither door_facing nor door_reverse"
+# GO TO THE DOOR-FACING POSE FIRST, THEN LOOK AT THE DOORS. The check used to run right after the
+# press, where the robot is square to the CALL PLATE -- so the forward sector was the wall it had
+# just pressed, 0.59 m away, and it reported the doors shut for 60 s while they were beside it.
+# Same error as at the ADA plate on floor 1. A door check is only meaningful from a pose that
+# faces the door, and ENTRY_APPROACH is that pose by definition.
 wait_stow
 nav   "$ENTRY_APPROACH"
-doors "they must be open AT THIS INSTANT, not when you last looked"
+doors "waiting for the car -- the lidar is watching the doorway now"
 nav   "$ENTRY_POSE"
 nav   "$A_CAR_PANEL"
 
