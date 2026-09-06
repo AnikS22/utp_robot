@@ -113,7 +113,46 @@ fi
 # press_run.sh grounds with the arm parked, THEN moves it to the press orientation, THEN reaches.
 # That order is load-bearing: grounding after the arm moves photographs the arm (2026-09-01).
 say "2  PRESS  (ground with the arm parked, then reach)"
-bash "$REPO/bringup/press_run.sh" $DRY || die "press chain failed"
+# ERROR 31 IS CONTACT, NOT A FAILURE.
+#
+# There is no force sensor on this rig: get_ft_sensor_data answers zeros. The ONLY thing that
+# reports the gripper meeting the plate is the controller's abnormal-joint-current trip, which the
+# SDK raises as ControllerError 31 -- see approach_target.py --speed, whose help says raising the
+# Cartesian speed "raises the current the joints draw against contact, which is what error 31
+# reads". So the press touching the button and the press faulting are THE SAME EVENT observed from
+# the only sensor that can see it.
+#
+# Treating it as a failure meant the route stopped, standing in front of a door it had just
+# pressed, while the opener swung and then timed out. Measured 2026-09-06: three runs in a row.
+#
+# WHAT THIS DOES NOT DO: it does not treat every arm fault as success. Only 31. A kinematic
+# failure (21), a self-collision (22), a joint limit (23) or a speed limit (24) are not contact
+# and still stop the route -- those say the arm never got there, which is a different claim.
+PRESS_LOG="$(mktemp)"
+set +e
+# UTP_NO_STOW=1: press_run.sh must NOT fold and wait. Stage 3 below folds in the background
+# while the base drives out -- see there for why the wait was never load-bearing.
+UTP_NO_STOW=1 bash "$REPO/bringup/press_run.sh" $DRY 2>&1 | tee "$PRESS_LOG"
+PRESS_RC=${PIPESTATUS[0]}
+set -e 2>/dev/null || true
+CONTACT=0
+grep -qE "code: 31|err=31" "$PRESS_LOG" && CONTACT=1
+if [ "$PRESS_RC" -ne 0 ] && [ "$CONTACT" != "1" ]; then
+    rm -f "$PRESS_LOG"; die "press chain failed with no contact detected"
+fi
+if [ "$CONTACT" = "1" ]; then
+    echo
+    echo "  CONTACT (controller error 31) -- the gripper met the plate. Clearing the fault so the"
+    echo "  arm can fold, and going. The opener is already swinging."
+    "$REPO/.venv-arm/bin/python" - <<'PYCLR' || true
+from xarm.wrapper import XArmAPI
+a = XArmAPI("192.168.1.221", is_radian=False)
+a.clean_error(); a.clean_warn(); a.motion_enable(True); a.set_mode(0); a.set_state(0)
+print(f"    arm cleared: state={a.state} error={a.error_code}")
+a.disconnect()
+PYCLR
+fi
+rm -f "$PRESS_LOG"
 
 say "3  RETRACT  (overlapped with the drive out)"
 # WHY THE BASE NO LONGER WAITS FOR THE FOLD. This used to be two blocking waits in a row -- a
@@ -157,32 +196,32 @@ else
     "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" || true
 fi
 
-say "3b DOORS     did the press work? the doors answer that, and start a clock"
-# THE DOORS ARE THE CONFIRMATION, AND THEY ARE ALSO THE DEADLINE.
+say "3b GO        contact made -- lidar watches for the door, then we go"
+# THE 3D LIDAR VERIFIES THE STATE CHANGE, NOT THE CAMERA AND NOT A HUMAN.
 #
-# The previous version of this step waited for an operator to press RETURN. That was the wrong
-# instrument twice over. Nothing in the arm chain can see whether the plate actuated -- the arm
-# reports reaching a pose, which is a different claim -- but the DOORS OPENING is direct evidence
-# that it did. And an ADA opener holds for a bounded time and then shuts, so every second spent
-# confirming is a second off the drive out. A human keypress is slower than the thing it confirms.
+# Two earlier versions of this step were both wrong. A keypress made a human the slowest component
+# in a task timed by a door closer. A VLM look (bringup/doors_open.py) spent 26.5 s over five
+# looks and still said SHUT after a press that had been made -- and doors_open.py's OWN header
+# records why it would: on 2026-09-01 the camera "looked straight through them and reported an
+# open walkway with pillars" while the doors were CLOSED, on a scene where "the lidar had 85
+# returns at 0.72 m where the camera saw nothing". Glass is transparent to the camera and opaque
+# to the OS0. The sensor that was right was the one nobody was asking.
 #
-# doors_open.py exits 0 the moment they open, 1 if still shut, 2 if it could not tell (which it
-# treats as shut, because the glass fooled both the camera and the lidar on 2026-09-01).
-DOORS_TIMEOUT="${UTP_DOORS_TIMEOUT:-20}"
+# doors_open_lidar.py reads /scan_nav, which is already running at 10 Hz, and answers in the time
+# it takes to collect a few sweeps -- verified 2026-09-06 against a shut door at 0.46 m clear.
+# The opener starts swinging at contact, so this is watching an event already in progress.
+DOOR_WAIT="${UTP_DOOR_WAIT:-12}"
 if [ -z "$DRY" ]; then
-    if python3 "$REPO/bringup/doors_open.py" --timeout "$DOORS_TIMEOUT"; then
-        echo "  DOORS OPEN -- going now, before they shut"
+    if python3 "$REPO/bringup/doors_open_lidar.py" --timeout "$DOOR_WAIT"; then
+        echo "  going NOW"
     else
-        rc=$?
-        echo
-        echo "  doors did NOT open within ${DOORS_TIMEOUT}s (doors_open.py exit $rc)."
-        echo "  That is the press failing, not the drive. Not driving into a closed door."
-        # UTP_DOORS_OVERRIDE=1 for an operator who can see they are open and disagrees with the
-        # detector -- glass has fooled it before, in both directions.
+        # NOT driving blind into something the lidar can see. This is the one case where waiting
+        # beat going: a closed door is a wall, and Nav2's costmap will refuse the goal anyway.
+        echo "  the way ahead is still blocked after ${DOOR_WAIT}s."
         if [ "${UTP_DOORS_OVERRIDE:-0}" = "1" ]; then
-            echo "  UTP_DOORS_OVERRIDE=1 -- continuing anyway on the operator's word"
+            echo "  UTP_DOORS_OVERRIDE=1 -- driving anyway on the operator's word"
         else
-            die "doors never opened; set UTP_DOORS_OVERRIDE=1 to drive out regardless"
+            die "door never opened (lidar); set UTP_DOORS_OVERRIDE=1 to drive regardless"
         fi
     fi
 fi

@@ -153,7 +153,24 @@ STEP_ARG=""; [ -n "${UTP_STEP_MM:-}" ] && STEP_ARG="--step-mm $UTP_STEP_MM"
 python3 "$REPO/bringup/approach_target.py" --capture "$CAP" $MODE \
         --min-standoff "$STANDOFF" $STEP_ARG $EXTRA
 
-if [ -z "$EXTRA" ]; then
+# UTP_NO_STOW=1 -- THE CALLER OWNS THE FOLD.
+#
+# This step folds the arm and WAITS for it, on the stated grounds that "config/safety.yaml gates
+# ALL base motion on measured joint angles, so without this the very next leg is refused". That
+# has not been true since require_arm_stowed was set false: safety/arbiter.py only blocks on
+# `not arm_stowed and self.require_arm_stowed`, so the base is free to move with the arm out and
+# this wait buys nothing. It costs, though -- it is on the critical path of a task whose whole
+# problem is getting through a door that is already closing.
+#
+# It is not simply deleted, because approach_target.py retreats to its START pose, not to stow, so
+# something must fold the arm and a route that forgot would leave it extended. Instead the caller
+# says "I will do it", and press_route.sh does exactly that: one fold, started in the background,
+# waited on after the drive rather than before it. Two folds would mean two SDK connections
+# commanding the same arm at once.
+if [ -z "$EXTRA" ] && [ "${UTP_NO_STOW:-0}" = "1" ]; then
+    echo
+    echo " 6/6  STOW      SKIPPED -- UTP_NO_STOW=1, the caller folds the arm while the base drives"
+elif [ -z "$EXTRA" ]; then
     echo
     echo "=============================================================="
     echo " 6/6  STOW      folding the arm so the base may move again"
