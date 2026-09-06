@@ -32,14 +32,6 @@ WAYPOINTS = REPO / "maps" / "waypoints.yaml"
 LOADED_MAP = REPO / "maps" / ".loaded_map"
 
 
-def loaded_map_name() -> str | None:
-    try:
-        parts = LOADED_MAP.read_text().split()
-    except OSError:
-        return None
-    return parts[0] if parts else None
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--all", action="store_true",
@@ -57,14 +49,23 @@ def main() -> int:
     from geometry_msgs.msg import Point
 
     store = yaml.safe_load(WAYPOINTS.read_text()) or {}
-    live = loaded_map_name()
-    if not a.all and live is None:
-        print("no maps/.loaded_map -- cannot tell which map is loaded; use --all to draw everything",
-              file=sys.stderr)
-        return 2
 
     rclpy.init()
     node = Node("utp_waypoint_markers")
+
+    # pose_source.current_map_name, NOT a private read of .loaded_map. It is the same function
+    # waypoints.py and nav2_goto.py trust, and it does the part a plain file read misses: it also
+    # compares the SLAM session the map was loaded into against the one running now, and returns
+    # None when they differ. A restarted SLAM has a new map-frame origin, so a name alone would
+    # keep asserting 'floor1' over a frame whose origin has moved -- and these arrows would be
+    # drawn in the wrong physical place while looking entirely correct.
+    from pose_source import current_map_name
+    live = current_map_name(node)
+    if not a.all and live is None:
+        print("no certified loaded map (missing maps/.loaded_map, or SLAM restarted since it was "
+              "written). Use --all to draw everything anyway.", file=sys.stderr)
+        rclpy.shutdown()
+        return 2
     qos = QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST,
                      reliability=QoSReliabilityPolicy.RELIABLE,
                      durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
@@ -78,10 +79,16 @@ def main() -> int:
         if wp.get("frame") != "map":
             skipped.append(f"{name} (frame={wp.get('frame')})")
             continue
-        mp = wp.get("map_name")
-        mine = (mp == live)
-        if not mine and not a.all:
-            skipped.append(f"{name} (map={mp})")
+        # THE PROVENANCE FILTER. 2026-09-04: RViz opened on a fresh floor-2 map showed floor 1's
+        # five elevator waypoints painted across it. Nothing was broken -- the store is flat and
+        # shared, and this drew all of it. Two maps' origins are unrelated, so those arrows named
+        # physical places they do not occupy, with real numbers and correct-looking headings.
+        # This module already refused odom-frame waypoints on that exact argument; this is the
+        # same argument one level up.
+        wp_map = wp.get("map_name")
+        mine = not (wp_map != live)
+        if wp_map != live and not a.all:
+            skipped.append(f"{name} (map={wp_map})")
             continue
         x, y = float(wp["x"]), float(wp["y"])
         yaw = float(wp.get("yaw", 0.0))
@@ -112,7 +119,7 @@ def main() -> int:
         t.scale.z = 0.28
         t.color.a = 1.0
         t.color.r, t.color.g, t.color.b = (1.0, 1.0, 1.0) if mine else (0.6, 0.6, 0.6)
-        t.text = name if mine else f"{name} [{mp}]"
+        t.text = name if mine else f"{name} [{wp_map}]"
         arr.markers.append(t); mid += 1
         drawn.append(f"{name} ({x:+.2f},{y:+.2f}) {math.degrees(yaw):+.1f} deg")
 
