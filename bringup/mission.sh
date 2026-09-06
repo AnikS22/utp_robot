@@ -1,0 +1,247 @@
+#!/usr/bin/env bash
+# THE WHOLE RUN, AS ONE COMMAND.
+#
+#     bash bringup/mission.sh                 # floor 2 -> floor 1, press the ADA plate, drive out
+#     bash bringup/mission.sh --dry-run       # every stage runs, nothing moves
+#     bash bringup/mission.sh --from 2 --to 1
+#
+# WHY THIS EXISTS. Every piece of this run already worked, and the run still needed a human typing
+# the next command each time -- claim CAN, clear an arm fault, stow, load a map, seed a pose,
+# relocalise, then the legs. That is not a robot doing a task, it is a person doing a task with a
+# robot. Worse, the operator was the only thing holding the ordering constraints, and they are not
+# obvious: localize before driving, fold before grounding, swap while the car moves, relocalise
+# only once the doors are open.
+#
+# WHAT IT FIGURES OUT ITSELF, rather than being told:
+#   * CAN authority. The chassis silently discards every command in CONTROL_MODE_RC or STANDBY
+#     while odom, the mux and /cmd_vel all look perfectly healthy. Claimed automatically.
+#   * Arm faults. ControllerError 31 latches state=4 and the arm then refuses to move. Cleared.
+#   * WHERE IT IS. No SEED_POSE argument anywhere. relocalise.py searches every free cell of the
+#     map x 72 headings -- 831,312 poses in about a second on floor1 -- so the mission never asks
+#     a human for a coordinate it can measure.
+#
+# WHAT IT STILL WAITS FOR: the doors, twice. A lift door is not observable from software until it
+# moves, and nothing here pretends otherwise.
+set -uo pipefail
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$REPO/bringup/env.sh" >/dev/null 2>&1 || { echo "env.sh failed" >&2; exit 1; }
+
+FROM=2; TO=1; DRY=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY="--dry-run"; shift ;;
+    --from) FROM="$2"; shift 2 ;;
+    --to)   TO="$2";   shift 2 ;;
+    *) echo "usage: bash bringup/mission.sh [--dry-run] [--from N] [--to N]" >&2; exit 2 ;;
+  esac
+done
+
+say()  { echo; echo "=============================================================="; \
+         echo " $*"; echo "=============================================================="; }
+die()  { echo; echo "STOP: $*" >&2; exit 1; }
+note() { echo "  $*"; }
+
+# ---------------------------------------------------------------------------- config
+eval "$(python3 - "$REPO" "$FROM" "$TO" <<'PY'
+import sys, shlex, yaml
+sys.path.insert(0, sys.argv[1] + "/safety")
+from floor_plan import floors_of
+repo, a, b = sys.argv[1], sys.argv[2], sys.argv[3]
+fl = floors_of(yaml.safe_load(open(repo + "/config/floors.yaml")))
+for tag, fid in (("A", a), ("B", b)):
+    if fid not in fl:
+        sys.stderr.write(f"unknown floor {fid}\n"); raise SystemExit(1)
+    f = fl[fid]
+    for role, name in f.waypoints.items():
+        print(f"{tag}_{role.upper()}={shlex.quote(name)}")
+    print(f"{tag}_MAP={shlex.quote(f.map)}")
+    print(f"{tag}_KIND={shlex.quote(f.kind)}")
+    print(f"{tag}_CALL_QUERY={shlex.quote(f.call_query)}")
+    print(f"{tag}_SELECT_QUERY={shlex.quote(f.select_query)}")
+    print(f"{tag}_TASK_QUERY={shlex.quote(f.task_query)}")
+PY
+)" || die "could not read config/floors.yaml for floors $FROM and $TO"
+
+# ---------------------------------------------------------------------------- helpers
+# ARRIVAL IS NOT AN EXIT CODE. nav2_goto.py returns 0 for BOTH "arrived" and "blocked" -- a
+# documented contract with RosWorld, which reads the JSON RESULT line. Reading the exit code here
+# is how a drive that aborted after 158 s was treated as an arrival on 2026-09-06, and the arm was
+# then commanded at a plate 5 m away.
+nav() {
+    local wp="$1" out status
+    say "NAVIGATE  '$wp'"
+    [ -n "$DRY" ] && { python3 "$REPO/bringup/nav2_goto.py" "$wp" || true; return 0; }
+    out="$(mktemp)"
+    python3 "$REPO/bringup/nav2_goto.py" "$wp" --go --timeout "${UTP_NAV_TIMEOUT:-180}" 2>&1 | tee "$out"
+    status="$(sed -n 's/^RESULT //p' "$out" | tail -1 | python3 -c \
+        'import sys,json; d=sys.stdin.read().strip(); print(json.loads(d).get("status","") if d else "")' 2>/dev/null)"
+    rm -f "$out"
+    [ "$status" = "arrived" ] || die "leg to '$wp' came back '${status:-no RESULT}', not an arrival"
+}
+
+# CONTACT IS THE PRESS SUCCEEDING. There is no force sensor -- get_ft_sensor_data answers zeros --
+# so the controller's abnormal-current trip (ControllerError 31) is the only thing that can report
+# the gripper meeting the plate. Only 31: 21/22/23/24 mean the arm never got there.
+press() {
+    local query="$1" profile="${2:-}" log rc contact=0
+    say "PRESS  '$query'${profile:+   [offset profile: $profile]}"
+    [ -n "$DRY" ] && { UTP_OFFSET_PROFILE="$profile" bash "$REPO/bringup/press_run.sh" --dry-run --query "$query" || true; return 0; }
+    log="$(mktemp)"
+    UTP_NO_STOW=1 UTP_OFFSET_PROFILE="$profile" \
+        bash "$REPO/bringup/press_run.sh" --query "$query" 2>&1 | tee "$log"
+    rc=${PIPESTATUS[0]}
+    grep -qE "code: 31|err=31" "$log" && contact=1
+    rm -f "$log"
+    if [ "$contact" = 1 ]; then
+        note "CONTACT (controller error 31) -- the gripper met the plate"
+        arm_clear
+    elif [ "$rc" -ne 0 ]; then
+        die "press chain failed on '$query' with no contact detected"
+    fi
+    # Fold in the BACKGROUND. config/safety.yaml sets require_arm_stowed: false, so the arbiter
+    # does not gate base motion on the arm -- waiting for the fold buys nothing and costs it.
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go >/dev/null 2>&1 &
+    STOW_PID=$!
+}
+
+arm_clear() {
+    [ -n "$DRY" ] && return 0
+    "$REPO/.venv-arm/bin/python" - <<'PY' 2>/dev/null | sed 's/^/  /'
+from xarm.wrapper import XArmAPI
+a = XArmAPI("192.168.1.221", is_radian=False)
+a.clean_error(); a.clean_warn(); a.motion_enable(True); a.set_mode(0); a.set_state(0)
+print(f"arm cleared: state={a.state} error={a.error_code}")
+a.disconnect()
+PY
+}
+
+wait_stow() { [ -n "${STOW_PID:-}" ] && { wait "$STOW_PID" 2>/dev/null; STOW_PID=""; }; return 0; }
+
+doors() {   # the one thing software cannot observe until it happens
+    say "DOORS -- $1"
+    [ -n "$DRY" ] && return 0
+    if [ -t 0 ]; then
+        echo "  press RETURN when they are open and held"; read -r _ || true
+    else
+        for i in $(seq "${UTP_DOOR_HOLD:-15}" -1 1); do
+            printf "\r  no terminal; assuming they open in %2ds  " "$i"; sleep 1
+        done; echo
+    fi
+    # CLEAR THE COSTMAPS THE INSTANT THE DOORS ARE OPEN, not before. Measured 2026-09-05: a
+    # clear at the prompt is followed by a ~21 s approach leg, and an ADA opener holds for a
+    # bounded time -- so by the time the entry leg starts the doors have shut again and the
+    # obstacle layer has re-marked them as a ~0.5 m lethal band straight across the opening, goal
+    # cell at 99. The planner then cannot terminate there and bt_navigator aborts.
+    for s_ in /global_costmap/clear_entirely_global_costmap \
+              /local_costmap/clear_entirely_local_costmap; do
+        timeout 20 ros2 service call "$s_" nav2_msgs/srv/ClearEntireCostmap "{}" >/dev/null 2>&1 \
+            && note "cleared $s_" || echo "    FAIL $s_" >&2
+    done
+    sleep 2
+}
+
+# LOAD A MAP AND FIND OURSELVES ON IT. No seed argument: relocalise.py's global search is what
+# replaces the human with a coordinate. The 0,0,0 handed to bringup_all is only there because cold
+# localization refuses to start without SOMETHING; it is the map's own drive origin, guaranteed
+# free, and is corrected by the search immediately afterwards.
+localize_on() {
+    local map="$1" fit
+    say "LOCALIZE on '$map'"
+    [ -n "$DRY" ] && return 0
+    local pat; pat=$(printf 'slam_%s' 'toolbox')
+    local live=""
+    [ -f "$REPO/maps/.loaded_map" ] && live="$(awk '{print $1}' "$REPO/maps/.loaded_map")"
+    if [ "$live" != "$map" ]; then
+        for p in $(ls /proc | grep -E '^[0-9]+$'); do
+            [ "$(cat /proc/$p/comm 2>/dev/null)" = "bash" ] && continue
+            local c; c=$(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null) || continue
+            case "$c" in *"$pat"*) kill -INT "$p" 2>/dev/null ;; esac
+        done
+        sleep 5
+        rm -f "$REPO/maps/.loaded_map"
+        SEED_POSE=0,0,0 bash "$REPO/bringup/bringup_all.sh" --mode nav --map "$map" \
+            || die "could not bring the stack up on '$map'"
+    else
+        note "already localizing in '$map'"
+    fi
+    note "global search for the robot on '$map' ..."
+    python3 "$REPO/bringup/relocalise.py" || true
+    sleep 3
+    fit="$(python3 "$REPO/bringup/relocalise.py" --check 2>&1 | sed -n 's/.*fit \([0-9.]*\)%.*/\1/p' | tail -1)"
+    [ -n "$fit" ] || die "could not score the localization fit on '$map'"
+    note "fit ${fit}%"
+    awk -v f="$fit" 'BEGIN{exit !(f < 40)}' && die "fit ${fit}% on '$map' -- the robot does not
+        know where it is. Nothing below may drive."
+    python3 "$REPO/bringup/startup_mark_map.py" "$map" >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------------------- 0  PREP
+say "0  PREP   authority, arm, stack"
+if [ -z "$DRY" ]; then
+    python3 "$REPO/bringup/claim_can.py" 2>&1 | tail -2 | sed 's/^/  /'
+    python3 "$REPO/bringup/chassis_mode.py" >/dev/null 2>&1 \
+        || die "the chassis is not taking commands from the computer. Flip SWB UP on the
+        transmitter, then re-run. Until then every command is discarded in firmware while odom,
+        the mux and /cmd_vel all look healthy."
+    arm_clear
+    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go 2>&1 | tail -1 | sed 's/^/  /'
+fi
+
+# ---------------------------------------------------------------------------- 1  floor FROM
+localize_on "$A_MAP"
+
+# DOORS FIRST, THEN THE PLATE -- the operator's stated order for floor 2. It also puts the robot
+# where it can see the lift before it asks for it, so a failed call is visible immediately rather
+# than after a drive.
+[ -n "${A_DOOR_FACING:-}" ] && nav "$A_DOOR_FACING"
+nav   "$A_CALL_BUTTON"
+press "$A_CALL_QUERY"
+doors "hold them OPEN for the entry"
+
+# Forward entry where the floor defines it, else the original reverse.
+ENTRY_APPROACH="${A_DOOR_FACING:-${A_DOOR_REVERSE:-}}"
+ENTRY_POSE="${A_CAR_FACING_IN:-${A_CAR_FACING_OUT:-}}"
+[ -n "$ENTRY_APPROACH" ] || die "floor $FROM defines neither door_facing nor door_reverse"
+wait_stow
+nav   "$ENTRY_APPROACH"
+doors "they must be open AT THIS INSTANT, not when you last looked"
+nav   "$ENTRY_POSE"
+nav   "$A_CAR_PANEL"
+
+# The in-car button belongs to the DESTINATION floor, and gets the offset measured on it.
+wait_stow
+press "$B_SELECT_QUERY" lift_car_select
+
+# Face the doors NOW, while still localized in a map the robot is genuinely in.
+wait_stow
+nav   "$A_CAR_FACING_OUT"
+
+# ---------------------------------------------------------------------------- 2  the ride
+doors "let them CLOSE, then ride"
+say "RIDE  floor $FROM -> $TO"
+cat <<'RIDE'
+  Nothing in software is true about which floor this is until the doors open again.
+  The scan inside the car matches every floor equally well, and would match just as
+  well if the lift were stuck.
+RIDE
+doors "the car has arrived -- they must be OPEN before anything below runs"
+
+# ---------------------------------------------------------------------------- 3  floor TO
+# RELOCALIZE WITH THE DOORS OPEN, AND ONLY THEN. seed_pose's docstring is right that a global
+# search inside a CLOSED car is four blank walls and would anchor on any doorway-sized gap. With
+# the doors open the scan reaches out into this floor's lobby, and a lift car with a lobby beyond
+# it is not a shape that repeats -- which is exactly what the search needs and cannot get sealed in.
+localize_on "$B_MAP"
+
+if [ "$B_KIND" = "task" ]; then
+    nav   "$B_TASK_BUTTON"
+    press "$B_TASK_QUERY"
+    # NOTHING between the press and the drive. The opener is already swinging; a check here is a
+    # check against a closing door, and all three that were tried were slower than the event.
+    nav   "$B_TASK_EXIT"
+else
+    nav   "$B_EXIT"
+fi
+
+wait_stow
+say "MISSION COMPLETE -- floor $FROM to floor $TO"
