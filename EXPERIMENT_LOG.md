@@ -2223,3 +2223,50 @@ mounting.
 NO force or pressure sensor is fitted (`get_ft_sensor_data` answers zeros) and
 `collision_sensitivity` is 0. There is also NO live getter for the TCP in SDK 1.18.4 -- the
 `tcp_offset` property is a local cache, so the zeros I read all evening proved nothing either way.
+
+## 2026-09-05 17:24 — Floor-1 mapping startup and save verification
+
+Started SLAM in mapping mode; lifecycle reports active. Existing lidar, scan and odometry streams were present. session.sh map stopped at health because xArm .221 is unreachable and arm_stowed is false; started only the SLAM launch, leaving motion gates intact. No motion commanded. map_watch observed live scans and a stationary robot. Backup bag recording remains active in runs/mapbags/floor1_20260905T212247Z. Verified map_persist save floor1_checkpoint_20260905_1723 produced nonempty .pgm, .yaml, .posegraph and .data; grid 495x202 at 0.05 m, 218 occupied cells. This is a startup checkpoint, not a completed floor map. SLAM and bag recording left running. Final drive save: bash bringup/map_persist.sh save floor1 while SLAM remains running.
+
+## 2026-09-05T17:30:38 — Floor-1 remap saved
+
+Operator reported mapping complete after live reset. map_persist.sh save floor1 succeeded and verified all four nonempty files: floor1.pgm, floor1.yaml, floor1.posegraph, floor1.data. Grid 836 x 829 at 0.05 m, 9918 occupied cells; extent 41.8 x 41.5 m. Backup recorder stopped after successful save; SLAM left running. Physical accuracy and loop closure not independently verified.
+
+## 2026-09-05 — Saved floor1, stopped the robot, consolidated startup
+
+User requested shutdown before unplugging. Paused measurements (readback true), saved
+floor1_frozen_20260905, and verified its PGM, posegraph and data SHA-256 hashes match floor1.
+Both maps contain 836 x 829 cells at 0.05 m, with 9918 occupied cells. All eight map files were
+verified again against maps/floor1_saved_checksums.json, copied to
+/home/weim/utp_backups/floor1_verified_20260905.tar.gz, and the archive contents checked against
+those hashes. Both floor1 recording directories have metadata.yaml. Stopped 24 owned hardware
+processes using SIGINT then SIGTERM (detached recorders ignored SIGINT); no survivors. Removed
+live-map provenance after shutdown. A later check stopped one remaining ROS utility process.
+User then reported all hardware unplugged; subsequent work was offline.
+
+Startup now has one documented entry: bringup/bringup_all.sh, with BOOTUP.md and docs/STARTUP.md
+linked from CLAUDE.md and README.md. Replaced fixed startup sleeps with bounded stage readiness
+checks; extracted a shared probe and TF deadline helper; replaced per-PID shell subprocesses
+with one Python process scan. Read-only benchmark: previous process scan 0.560 s, new 0.023 s
+(one run each; this is NOT a cold-start benchmark). Restored the raw-cloud projection and
+scan_temporal_filter chain observed on the saved floor1 drive. Cold localization requires an
+explicit valid seed and records verified live-map provenance. Added scoped stop_stack.py;
+saving remains a separate prerequisite. Kept existing safety interlocks.
+
+Validation: 13 startup regression tests pass; shell syntax, Python compilation and diff whitespace
+checks pass. Broader map/startup checks: 33 passed, 3 skipped, 1 expected failure, 1 failure in
+unchanged test_the_default_map_name_is_the_map_the_waypoints_were_recorded_in: session.sh now
+defaults to floor1 but only floor2 waypoints are on disk. That default/waypoint change was already
+committed by the other agent before this edit. Do not fabricate floor1 coordinates to pass it;
+record them on the next hardware visit. Actual cold-start latency and sensor readiness after
+these changes remain unmeasured with the hardware disconnected.
+
+## 2026-09-06T14:00:40 — Inputs-only startup on reconnected hardware
+
+User requested all inputs checked with no localization in an unseen room. Added --mode inputs and bringup/inputs.sh up|check, documented in BOOTUP.md and docs/STARTUP.md. No SLAM, localization, Nav2, goals, authority requests, arm moves or tool writes were made. CAN was initially down; user enabled it with sudo. The powered-off Ranger then caused ERROR-PASSIVE and zero chassis feedback despite 50 Hz synthetic driver odometry. User powered the base on; CAN recovered to ERROR-ACTIVE, ~917 frames/s. Chassis readback NORMAL, STANDBY, 50.5 V, error 0. Stow gate 100%, estop clear, outgoing twists all zero.
+
+Cold startup took 108 s. Healthy repeated startup took ~9 s; ranger_base PID 998853 was retained. Fixed false arm-tool failures by waiting for a fresh SDK report rather than reading startup placeholder zeros; actual TCP offset [0,0,172,0,0,0], load 0.82 kg at [0,0,48]. Input audit samples RGB, aligned depth and point clouds individually, checks lightweight streams by rate, checks CAN reception, transforms, duplicate publishers and no localization/navigation.
+
+Final up+audit exited 0. Report: /home/weim/utp_robot/captures/input_checks/20260906T175943Z/inputs.json. Hardware input validity passed; warnings: /scan: 3.0 Hz, below the 6 Hz scan target; /scan_nav: 3.0 Hz, below the 6 Hz scan target. Fresh RGB and aligned depth were 1280x720; no sustained image throughput claim is made. Saved floor1 hashes were rechecked unchanged. Multi-floor offline preflight still reports five missing f1_* waypoints; no coordinates invented. Robot left running inputs only in STANDBY.
+
+Validation: 22 startup regression tests passed, bash syntax and Python compilation passed, git diff --check passed. Full navigation/pressing not tested; scan rate below the 6 Hz target remains a performance issue to address before a navigation run.

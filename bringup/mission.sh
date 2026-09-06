@@ -135,6 +135,16 @@ PY
 
 wait_stow() { [ -n "${STOW_PID:-}" ] && { wait "$STOW_PID" 2>/dev/null; STOW_PID=""; }; return 0; }
 
+clear_costmaps() {
+    [ -n "$DRY" ] && return 0
+    for s_ in /global_costmap/clear_entirely_global_costmap \
+              /local_costmap/clear_entirely_local_costmap; do
+        timeout 20 ros2 service call "$s_" nav2_msgs/srv/ClearEntireCostmap "{}" >/dev/null 2>&1 \
+            && note "cleared $s_" || echo "    FAIL $s_" >&2
+    done
+    sleep 2
+}
+
 doors() {   # the one thing software cannot observe until it happens
     say "DOORS -- $1"
     [ -n "$DRY" ] && return 0
@@ -168,13 +178,9 @@ doors() {   # the one thing software cannot observe until it happens
     # bounded time -- so by the time the entry leg starts the doors have shut again and the
     # obstacle layer has re-marked them as a ~0.5 m lethal band straight across the opening, goal
     # cell at 99. The planner then cannot terminate there and bt_navigator aborts.
-    for s_ in /global_costmap/clear_entirely_global_costmap \
-              /local_costmap/clear_entirely_local_costmap; do
-        timeout 20 ros2 service call "$s_" nav2_msgs/srv/ClearEntireCostmap "{}" >/dev/null 2>&1 \
-            && note "cleared $s_" || echo "    FAIL $s_" >&2
-    done
-    sleep 2
+    clear_costmaps
 }
+
 
 # LOAD A MAP AND FIND OURSELVES ON IT. No seed argument: relocalise.py's global search is what
 # replaces the human with a coordinate. The 0,0,0 handed to bringup_all is only there because cold
@@ -311,6 +317,16 @@ fi
 # the doors open the scan reaches out into this floor's lobby, and a lift car with a lobby beyond
 # it is not a shape that repeats -- which is exactly what the search needs and cannot get sealed in.
 localize_on "$B_MAP"
+
+# CLEAR BEFORE THE FIRST LEG ON THE NEW FLOOR, ALWAYS. The obstacle layer still holds the lift
+# doors as a lethal band across the only way out -- they were shut for the whole ride, and the
+# costmap has been marking them the entire time. Measured 2026-09-06: without this the first leg
+# aborted twice with "recoveries exhausted" from inside the car; with it, Nav2 planned its own
+# route out of the car and across the lobby and arrived in 25.1 s.
+#
+# This used to happen inside doors(), which --arrival-only skips -- so the resume path was missing
+# the one thing that makes the first leg possible.
+clear_costmaps
 
 if [ "$B_KIND" = "task" ]; then
     nav   "$B_TASK_BUTTON"

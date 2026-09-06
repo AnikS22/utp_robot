@@ -66,6 +66,20 @@ TCP_LOAD_CENTRE_MM = [0.0, 0.0, 48.0]
 TOL_MM = 0.5
 
 
+def read_tool_state(arm, timeout=3.0):
+    """Wait for a controller report; SDK properties initially contain placeholder zeros."""
+    from threading import Event
+    ready = Event()
+    callback = lambda report: ready.set()
+    arm.register_report_callback(callback)
+    try:
+        if not ready.wait(timeout):
+            raise TimeoutError('no xArm report received; tool state is unconfirmed')
+        return list(arm.tcp_offset), list(arm.tcp_load)
+    finally:
+        arm.release_report_callback(callback)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -77,7 +91,12 @@ def main() -> int:
     from xarm.wrapper import XArmAPI
     arm = XArmAPI(os.environ.get("UTP_XARM_IP", a.ip), is_radian=True)
 
-    off, load = arm.tcp_offset, arm.tcp_load
+    try:
+        off, load = read_tool_state(arm)
+    except TimeoutError as exc:
+        print(str(exc), file=sys.stderr)
+        arm.disconnect()
+        return 1
     print(f"  tcp_offset : {off}")
     print(f"  tcp_load   : {load}")
     ok = (off and all(abs(float(off[i]) - TCP_OFFSET_MM[i]) <= TOL_MM for i in range(6)))
@@ -113,7 +132,12 @@ def main() -> int:
     # the arm keeps its old value is exactly the failure class this repo keeps meeting.
     arm.disconnect()
     arm2 = XArmAPI(os.environ.get("UTP_XARM_IP", a.ip), is_radian=True)
-    off2, load2 = arm2.tcp_offset, arm2.tcp_load
+    try:
+        off2, load2 = read_tool_state(arm2)
+    except TimeoutError as exc:
+        print(str(exc), file=sys.stderr)
+        arm2.disconnect()
+        return 1
     arm2.disconnect()
     print(f"  readback offset: {off2}")
     print(f"  readback load  : {load2}")

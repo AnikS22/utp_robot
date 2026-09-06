@@ -1,5 +1,10 @@
 # CLAUDE.md
 
+**Startup tasks: read [BOOTUP.md](BOOTUP.md), then [docs/STARTUP.md](docs/STARTUP.md).**
+Use `bringup/bringup_all.sh` as the startup entry point. These instructions supersede
+the older `stack.sh` / `session.sh` startup recipes below. Do not reread the whole
+project history for routine bringup. Save the map first; shut down using `python3 bringup/stop_stack.py`.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 # utp_robot — read this first

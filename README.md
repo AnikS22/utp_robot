@@ -177,17 +177,19 @@ version this suite is written against and otherwise stops pytest from starting a
 
 ### Bring-up: one command
 
+Read [BOOTUP.md](BOOTUP.md) and [the startup runbook](docs/STARTUP.md).
+
 ```bash
-bash bringup/stack.sh            # brings everything up, restarts what is wedged
-bash bringup/stack.sh --status   # check only, starts nothing
-bash bringup/stack.sh --no-nav   # sensors + safety + slam only
+bash bringup/inputs.sh up       # sensors, camera, arm/safety; no localization
+bash bringup/inputs.sh check    # read-only audit and saved report
+bash bringup/bringup_all.sh --mode map
+# Navigation: supply the robot's actual pose in the selected map.
+SEED_POSE='X,Y,YAW' bash bringup/bringup_all.sh --mode nav --map floor1
 ```
 
-`session.sh` brings the layers up in order and **stops at the first gate that fails**, so a morning
-with four stale components is four serial fix-and-re-run cycles. `stack.sh` starts everything it can
-in one pass, and probes each piece by **measured topic rate** with a counting subscriber rather than
-by whether a node exists — which is the check that missed both of 2026-09-04's faults. Anything
-publishing nothing is killed by verified PID and restarted.
+`bringup_all.sh` probes the required components, retains healthy processes and waits for
+new components to produce data. See the runbook for mode selection, localization seeds,
+map saving and shutdown. The older scripts remain for historical workflows.
 
 It ends with a table of every component and, underneath it, a `WHY` block that names the actual
 cause rather than the layer the symptom appeared in — "there is no `odom->base_link`, so slam cannot
