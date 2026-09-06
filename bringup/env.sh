@@ -44,6 +44,22 @@ source /opt/ros/jazzy/setup.bash
 UTP_ROBOT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ---------------------------------------------------------------------------------------------
+# DDS TRANSPORT -- the 3.1 MB point cloud does not fit in a default shared-memory segment
+# ---------------------------------------------------------------------------------------------
+# Fast DDS ships a 512 KB SHM segment. /ouster/points is 3.1 MB, so most clouds were being
+# dropped between os_driver and pointcloud_to_laserscan with every kernel and NIC counter
+# reading zero: /scan_nav ran at 1.79 Hz against a sensor doing 10. config/fastdds_big_messages.xml
+# raises the segment to 64 MB. See that file for the measurements.
+#
+# This is exported here, not in a launch script, ON PURPOSE. The segment size is a property of
+# the PARTICIPANT, so a publisher and a subscriber must BOTH have it -- restarting p2l alone
+# with the profile and leaving os_driver on the default fixes nothing. Anything that sources
+# env.sh gets it, which is the only way the two ends stay in agreement.
+if [ -f "$UTP_ROBOT_REPO/config/fastdds_big_messages.xml" ]; then
+    export FASTRTPS_DEFAULT_PROFILES_FILE="$UTP_ROBOT_REPO/config/fastdds_big_messages.xml"
+fi
+
+# ---------------------------------------------------------------------------------------------
 # OWNERSHIP MARKER -- how preflight tells our processes from someone else's
 # ---------------------------------------------------------------------------------------------
 # Every process launched from a shell that sourced this file inherits UTP_ROBOT_STACK in its
