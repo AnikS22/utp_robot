@@ -120,12 +120,30 @@ wait_stow() { [ -n "${STOW_PID:-}" ] && { wait "$STOW_PID" 2>/dev/null; STOW_PID
 doors() {   # the one thing software cannot observe until it happens
     say "DOORS -- $1"
     [ -n "$DRY" ] && return 0
-    if [ -t 0 ]; then
-        echo "  press RETURN when they are open and held"; read -r _ || true
+    # WATCH THE DOORS WITH THE LIDAR, and only fall back to a clock if that cannot answer.
+    #
+    # This used to count down 15 s with no terminal and ASSUME they had opened. On 2026-09-06 that
+    # sent the robot at the car while the doors were shut: the obstacle layer had them marked as a
+    # lethal band across the opening, and the entry leg came back "ABORTED, recoveries exhausted"
+    # after 24.4 s. Assuming a door is open is the same class of error as reading an exit code
+    # instead of a result -- a claim about the world manufactured from a claim about the clock.
+    #
+    # The lidar CAN answer here, and this is the one place it could not on floor 1: at a
+    # door-facing pose the robot points AT the doorway, so the forward sector is the doors. At the
+    # ADA button pose it faced the plate, which is why that check was removed there and belongs
+    # here. Glass is opaque to the OS0 and transparent to the camera -- doors_open.py's own
+    # measurement, 85 lidar returns at 0.72 m where the VLM saw an open walkway.
+    if python3 "$REPO/bringup/doors_open_lidar.py" --timeout "${UTP_DOOR_WAIT:-60}" \
+                                                   --clear-m "${UTP_DOOR_CLEAR:-1.6}"; then
+        note "doors are open -- going"
+    elif [ -t 0 ]; then
+        echo "  lidar still sees them shut. RETURN to go anyway, Ctrl-C to stop."; read -r _ || true
     else
-        for i in $(seq "${UTP_DOOR_HOLD:-15}" -1 1); do
-            printf "\r  no terminal; assuming they open in %2ds  " "$i"; sleep 1
-        done; echo
+        note "lidar still sees them shut after ${UTP_DOOR_WAIT:-60}s"
+        [ "${UTP_DOORS_OVERRIDE:-0}" = "1" ] || die "the doors did not open. Nothing below may
+        drive: Nav2 has them marked as a lethal band across the opening and the leg would abort
+        into them. Set UTP_DOORS_OVERRIDE=1 to drive regardless."
+        note "UTP_DOORS_OVERRIDE=1 -- driving anyway"
     fi
     # CLEAR THE COSTMAPS THE INSTANT THE DOORS ARE OPEN, not before. Measured 2026-09-05: a
     # clear at the prompt is followed by a ~21 s approach leg, and an ADA opener holds for a
@@ -152,12 +170,26 @@ localize_on() {
     local live=""
     [ -f "$REPO/maps/.loaded_map" ] && live="$(awk '{print $1}' "$REPO/maps/.loaded_map")"
     if [ "$live" != "$map" ]; then
-        for p in $(ls /proc | grep -E '^[0-9]+$'); do
-            [ "$(cat /proc/$p/comm 2>/dev/null)" = "bash" ] && continue
-            local c; c=$(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null) || continue
-            case "$c" in *"$pat"*) kill -INT "$p" 2>/dev/null ;; esac
+        # KILL AND THEN VERIFY. A slam_toolbox that segfaulted mid-configure leaves a process
+        # behind that no longer carries this repo's env markers, and bringup_all.sh then refuses
+        # to touch it -- correctly, since it cannot prove whose it is -- and refuses to start a
+        # second copy. The run dies with "1 process(es) matching 'slam_toolbox' are NOT ours".
+        # So escalate INT -> TERM and confirm the field is clear before handing over.
+        local tries
+        for tries in 1 2 3; do
+            local found=0
+            for p in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+                [ "$(cat /proc/$p/comm 2>/dev/null)" = "bash" ] && continue
+                local c; c=$(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null) || continue
+                case "$c" in
+                    *"$pat"*) found=1
+                              if [ "$tries" = 1 ]; then kill -INT "$p" 2>/dev/null
+                              else kill -TERM "$p" 2>/dev/null; fi ;;
+                esac
+            done
+            [ "$found" = 0 ] && break
+            sleep 4
         done
-        sleep 5
         rm -f "$REPO/maps/.loaded_map"
         SEED_POSE=0,0,0 bash "$REPO/bringup/bringup_all.sh" --mode nav --map "$map" \
             || die "could not bring the stack up on '$map'"
