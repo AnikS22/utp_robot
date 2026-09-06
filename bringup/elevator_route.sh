@@ -125,9 +125,18 @@ nav() {
 # is why an early elevator run grounded a fire-alarm cover 3.9 m away. Always pass the query here.
 press() {
     local query="$1"
-    say "PRESS  '$query'"
+    # SECOND ARGUMENT: which target offset to use, and why it is per-press.
+    # calib/handeye.json's default correction was measured on the elevator CALL button and then
+    # improved the ADA plate unchanged -- two unrelated targets, so it is a property of the rig.
+    # The 25 mm floor-select button INSIDE the car needed a further correction that was never
+    # re-checked against either of them. For a while that in-car value was the default, so it was
+    # being applied to every press this rig makes; on 2026-09-06 the ADA press landed off with it
+    # active. It now travels with the press that earned it and nothing else.
+    local profile="${2:-}"
+    say "PRESS  '$query'${profile:+  [offset profile: $profile]}"
     event press_start "$query"
-    bash "$REPO/bringup/press_run.sh" $DRY --query "$query" || die "press chain failed on '$query'"
+    UTP_OFFSET_PROFILE="$profile" \
+        bash "$REPO/bringup/press_run.sh" $DRY --query "$query" || die "press chain failed on '$query'"
     event press_done "$query"
 
     # RETRACT WHILE DRIVING, instead of standing still until the arm is home.
@@ -252,7 +261,7 @@ nav   f1_lift_door_reverse   # back to the doors, so we reverse in rather than t
 nav   f1_car_panel           # into the car and square to the panel, one leg
 
 wait_stow
-press "the blue elevator button"
+press "the blue elevator button" lift_car_select
 
 nav   f1_lift_door           # out
 

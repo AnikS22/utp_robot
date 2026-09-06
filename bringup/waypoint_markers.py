@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import math
 import pathlib
+import time
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -59,7 +60,18 @@ def main() -> int:
     # None when they differ. A restarted SLAM has a new map-frame origin, so a name alone would
     # keep asserting 'floor1' over a frame whose origin has moved -- and these arrows would be
     # drawn in the wrong physical place while looking entirely correct.
-    from pose_source import current_map_name
+    from pose_source import current_map_name, slam_session_id
+    # SPIN BEFORE ASKING. current_map_name identifies the running SLAM by the DDS GID of the /map
+    # publisher, and a node created a moment ago has not finished discovery -- get_publishers_info
+    # returns nothing, the session reads as "not the one the map was loaded into", and this
+    # reports a restarted SLAM on a stack that has been up for an hour. Measured here on the first
+    # run of this file. Poll for the publisher with a real budget; success exits immediately, so
+    # the budget is only ever spent on the failing path.
+    _end = time.monotonic() + 12.0
+    while rclpy.ok() and time.monotonic() < _end:
+        rclpy.spin_once(node, timeout_sec=0.05)
+        if slam_session_id(node) is not None:
+            break
     live = current_map_name(node)
     if not a.all and live is None:
         print("no certified loaded map (missing maps/.loaded_map, or SLAM restarted since it was "

@@ -108,9 +108,18 @@ nav() {
 
 press() {
     local query="$1"
-    say "PRESS  '$query'"
+    # SECOND ARGUMENT: which target offset to use, and why it is per-press.
+    # calib/handeye.json's default correction was measured on the elevator CALL button and then
+    # improved the ADA plate unchanged -- two unrelated targets, so it is a property of the rig.
+    # The 25 mm floor-select button INSIDE the car needed a further correction that was never
+    # re-checked against either of them. For a while that in-car value was the default, so it was
+    # being applied to every press this rig makes; on 2026-09-06 the ADA press landed off with it
+    # active. It now travels with the press that earned it and nothing else.
+    local profile="${2:-}"
+    say "PRESS  '$query'${profile:+  [offset profile: $profile]}"
     event press_start "$query"
-    bash "$REPO/bringup/press_run.sh" $DRY --query "$query" || die "press chain failed on '$query'"
+    UTP_OFFSET_PROFILE="$profile" \
+        bash "$REPO/bringup/press_run.sh" $DRY --query "$query" || die "press chain failed on '$query'"
     event press_done "$query"
     # RETRACT WHILE DRIVING. The arm interlock is off for this task (config/safety.yaml
     # require_arm_stowed: false), so waiting for the fold buys nothing and costs ~2.4 s on a task
@@ -264,7 +273,7 @@ nav   "$ENTRY_POSE"        # straight in through the doorway
 nav   "$A_CAR_PANEL"       # square to the panel
 
 wait_stow
-press "$B_SELECT_QUERY"    # the in-car button for the DESTINATION floor
+press "$B_SELECT_QUERY" lift_car_select   # the in-car button for the DESTINATION floor
 
 # FACE THE DOORS NOW, NOT AFTER THE RIDE. The robot is at car_panel, about 53 degrees off the
 # doors. Turning is the one manoeuvre that hurts on this stack -- settle.py's whole reason -- and
