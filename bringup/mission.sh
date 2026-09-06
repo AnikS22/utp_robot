@@ -225,23 +225,29 @@ doors() {
 }
 
 
-# LOAD A MAP AND FIND OURSELVES ON IT. No seed argument: relocalise.py's global search is what
-# replaces the human with a coordinate. The 0,0,0 handed to bringup_all is only there because cold
-# localization refuses to start without SOMETHING; it is the map's own drive origin, guaranteed
-# free, and is corrected by the search immediately afterwards.
-localize_on() {
-    local map="$1" fit
-    say "LOCALIZE on '$map'"
+# load_map <name> -- THE SLOW HALF. Restart slam_toolbox on the map and verify the sensing chain.
+#
+# Measured 2026-09-06: 80 seconds. Deserializing a building-sized pose graph, waiting for map->odom
+# and re-probing every stage is tens of seconds however it is arranged.
+#
+# WHERE IT MUST NOT RUN: after the doors open on the destination floor. That was mission.sh's
+# original shape and it is why exiting the lift kept failing -- the robot sat in the car through
+# the whole bring-up while the doors, which hold for a bounded time, closed again and the obstacle
+# layer re-marked the opening. multifloor_route.sh already had this right and I did not carry it
+# over: "It is free there. Restarting the node... is tens of seconds; the ride is tens of seconds
+# during which the robot must not move anyway."
+load_map() {
+    local map="$1"
+    say "LOAD MAP '$map'"
     [ -n "$DRY" ] && return 0
     local pat; pat=$(printf 'slam_%s' 'toolbox')
     local live=""
     [ -f "$REPO/maps/.loaded_map" ] && live="$(awk '{print $1}' "$REPO/maps/.loaded_map")"
     if [ "$live" != "$map" ]; then
-        # KILL AND THEN VERIFY. A slam_toolbox that segfaulted mid-configure leaves a process
-        # behind that no longer carries this repo's env markers, and bringup_all.sh then refuses
-        # to touch it -- correctly, since it cannot prove whose it is -- and refuses to start a
-        # second copy. The run dies with "1 process(es) matching 'slam_toolbox' are NOT ours".
-        # So escalate INT -> TERM and confirm the field is clear before handing over.
+        # KILL AND THEN VERIFY. A slam_toolbox that segfaulted mid-configure leaves a process that
+        # no longer carries this repo's env markers; bringup_all.sh then refuses to touch it --
+        # correctly, it cannot prove whose it is -- and refuses to start a second copy, so the run
+        # dies with "1 process(es) matching 'slam_toolbox' are NOT ours".
         local tries
         for tries in 1 2 3; do
             local found=0
@@ -259,25 +265,38 @@ localize_on() {
         done
         rm -f "$REPO/maps/.loaded_map"
     else
-        note "already localizing in '$map' -- not restarting SLAM"
+        note "already on '$map' -- not restarting SLAM"
     fi
-    # RUN THE BRING-UP EITHER WAY. It is idempotent and will not restart anything healthy, but it
-    # is also the only thing that checks the SENSING CHAIN matches the map: floor2 was built from
-    # /ouster/points_clean and floor1 from raw points, and localizing one against the other's chain
-    # cost 27.8% fit on 2026-09-06. Skipping this when .loaded_map already named the map would skip
-    # exactly that check, which is how the wrong chain survived a swap in the first place.
+    # EITHER WAY. bringup_all is idempotent, and it is the only thing that checks the SENSING CHAIN
+    # matches the map: floor2 was built from /ouster/points_clean and floor1 from raw points, and
+    # localizing one against the other's chain cost 27.8% fit.
     SEED_POSE="${SEED_POSE:-0.0,0.0,0.0}" bash "$REPO/bringup/bringup_all.sh" \
         --mode nav --map "$map" || die "could not bring the stack up on '$map'"
-    note "global search for the robot on '$map' ..."
+    python3 "$REPO/bringup/startup_mark_map.py" "$map" >/dev/null 2>&1 || true
+}
+
+# find_self <name> -- THE FAST HALF. Global search, about a second, and it is the ONLY part that
+# has to happen after the doors open.
+#
+# It cannot be moved earlier for the same reason the swap can: a global search inside a CLOSED car
+# scores against four blank walls. seed_pose's docstring is explicit that it "would happily anchor
+# on some other doorway-sized gap metres away", and it did -- 12 m out, measured 2026-09-06. With
+# the doors open the scan reaches into the lobby and a car with a lobby beyond it is not a shape
+# that repeats.
+find_self() {
+    local map="$1" fit
+    say "FIND SELF on '$map'"
+    [ -n "$DRY" ] && return 0
     python3 "$REPO/bringup/relocalise.py" || true
-    sleep 3
+    sleep 2
     fit="$(python3 "$REPO/bringup/relocalise.py" --check 2>&1 | sed -n 's/.*fit \([0-9.]*\)%.*/\1/p' | tail -1)"
     [ -n "$fit" ] || die "could not score the localization fit on '$map'"
     note "fit ${fit}%"
     awk -v f="$fit" 'BEGIN{exit !(f < 40)}' && die "fit ${fit}% on '$map' -- the robot does not
         know where it is. Nothing below may drive."
-    python3 "$REPO/bringup/startup_mark_map.py" "$map" >/dev/null 2>&1 || true
 }
+
+localize_on() { load_map "$1"; find_self "$1"; }
 
 # ---------------------------------------------------------------------------- 0  PREP
 say "0  PREP   authority, arm, stack"
@@ -361,6 +380,20 @@ nav   "$A_CAR_FACING_OUT"
 
 # ---------------------------------------------------------------------------- 2  the ride
 doors "let them CLOSE, then ride" close
+
+# SWAP THE MAP NOW, WHILE THE CAR MOVES. This is the whole reason exiting the lift kept failing:
+# load_map takes ~80 s (measured), and it used to run AFTER the doors opened on the destination
+# floor -- so the robot sat in the car through the entire bring-up while the doors, which hold for
+# a bounded time, closed again and the obstacle layer re-marked the opening. The leg out then
+# aborted with "recoveries exhausted" and it read as a navigation fault.
+#
+# Here it is free. The ride is tens of seconds in which the robot must not move anyway, and the
+# doors are shut so the scan is only the car -- the one thing both maps agree about. Nothing is
+# seeded: a task floor has no in-car pose and must not be given an invented one. The robot does
+# not know where it is until find_self runs with the doors open, and nothing below drives until
+# then.
+load_map "$B_MAP"
+
 say "RIDE  floor $FROM -> $TO"
 cat <<'RIDE'
   Nothing in software is true about which floor this is until the doors open again.
@@ -375,7 +408,18 @@ fi
 # search inside a CLOSED car is four blank walls and would anchor on any doorway-sized gap. With
 # the doors open the scan reaches out into this floor's lobby, and a lift car with a lobby beyond
 # it is not a shape that repeats -- which is exactly what the search needs and cannot get sealed in.
-localize_on "$B_MAP"
+# ONLY THE FAST HALF HERE. The map was loaded during the ride; all that is left is the global
+# search, about a second, which is the one thing that genuinely cannot happen until the doors open.
+# THE RESUME PATH NEEDS BOTH HALVES, AND IN THIS ORDER. --arrival-only skips the floor-FROM block,
+# so nothing has loaded the destination map and nothing has waited for the doors. Running find_self
+# first would be the exact failure seed_pose warns about: a global search inside a CLOSED car is
+# four blank walls, and it anchored 12 m away when we tried it on 2026-09-06. Load the map (slow,
+# but the robot is parked anyway), THEN wait for the doors, THEN search.
+if [ "$ARRIVAL_ONLY" = 1 ]; then
+    load_map "$B_MAP"
+    doors "the car is on floor $TO -- they must be OPEN before the search"
+fi
+find_self "$B_MAP"
 
 # CLEAR BEFORE THE FIRST LEG ON THE NEW FLOOR, ALWAYS. The obstacle layer still holds the lift
 # doors as a lethal band across the only way out -- they were shut for the whole ride, and the
