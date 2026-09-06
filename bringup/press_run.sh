@@ -22,6 +22,9 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO/bringup/env.sh"
 VENV="$HOME/unlocking-the-path/env/.venv/bin/python"
 
+# Defined HERE, not beside the reach: the GROUNDING stage uses it, and grounding runs first.
+PICK_ARG=""; [ -n "${UTP_PICK_FROM_BOTTOM:-}" ] && PICK_ARG="--pick-from-bottom $UTP_PICK_FROM_BOTTOM"
+
 STANDOFF=60          # mm, measured to the MARKER on the flange, not the tool tip.
                      # 60 was confirmed by the operator on 2026-08-25 to reach the plate.
 NAME="press_$(date +%H%M%S)"
@@ -72,7 +75,11 @@ echo "=============================================================="
 # arm does not move. Free consistency test on odom + calibration, every press.
 PT="$REPO/captures/press_target.json"
 if [ -n "$QUERY" ]; then
-    "$VENV" "$REPO/bringup/detect_frame.py" "$CAP" --query "$QUERY"
+    # UTP_PICK_FROM_BOTTOM: geometry picks the button, language only finds the panel. Needed
+    # inside the lift car, where "1" and "2" are the same blue 34 px apart and seven phrasings all
+    # scored 0.28-0.35 with the ranking reshuffling between frames -- twice choosing the floor the
+    # robot was already on, which presses nothing and reads as a miss.
+    "$VENV" "$REPO/bringup/detect_frame.py" "$CAP" --query "$QUERY" $PICK_ARG
     if [ -f "$CAP/detection.json" ] && [ -f "$PT" ] && python3 -c "import json,sys,time; d=json.load(open('$PT')); sys.exit(0 if time.time()-d.get('written_at',0) < 300 else 1)"; then
         python3 - "$CAP/detection.json" "$PT" <<'EOF' || { echo "[press] REFUSED -- direct grounding and reprojected target disagree" >&2; exit 1; }
 import json, math, sys
@@ -84,7 +91,7 @@ EOF
     fi
 
 else
-    "$VENV" "$REPO/bringup/detect_frame.py" "$CAP"
+    "$VENV" "$REPO/bringup/detect_frame.py" "$CAP" $PICK_ARG
 fi
 # The last gate before the ARM moves. reach_control checks too, but this is the one that matters:
 # it is the only check between a grounded box and a fingertip on it, and press_run is runnable on

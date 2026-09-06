@@ -59,6 +59,7 @@ for tag, fid in (("A", a), ("B", b)):
     print(f"{tag}_CALL_QUERY={shlex.quote(f.call_query)}")
     print(f"{tag}_SELECT_QUERY={shlex.quote(f.select_query)}")
     print(f"{tag}_TASK_QUERY={shlex.quote(f.task_query)}")
+    print(f"{tag}_SELECT_INDEX={shlex.quote(str(f.extra.get('select_index_from_bottom', '')))}")
 PY
 )" || die "could not read config/floors.yaml for floors $FROM and $TO"
 
@@ -83,15 +84,23 @@ nav() {
 # so the controller's abnormal-current trip (ControllerError 31) is the only thing that can report
 # the gripper meeting the plate. Only 31: 21/22/23/24 mean the arm never got there.
 press() {
-    local query="$1" profile="${2:-}" log rc contact=0
-    say "PRESS  '$query'${profile:+   [offset profile: $profile]}"
-    [ -n "$DRY" ] && { UTP_OFFSET_PROFILE="$profile" bash "$REPO/bringup/press_run.sh" --dry-run --query "$query" || true; return 0; }
+    local query="$1" profile="${2:-}" pick="${3:-}" log rc contact=0
+    say "PRESS  '$query'${profile:+   [offset: $profile]}${pick:+   [button ${pick} from bottom]}"
+    # FOLD BEFORE GROUNDING, ALWAYS. press_run.sh grounds with the arm parked and only then moves
+    # it to the press orientation, because grounding after the arm moves PHOTOGRAPHS THE ARM --
+    # its header records a run where the detector, handed a picture of the robot's own arm, chose
+    # a corner of the fire alarm. A press that refused on reach leaves the arm at `ready`, so the
+    # NEXT press in the same run starts with the arm in frame. Measured 2026-09-06 in the lift car:
+    # the second attempt grounded at 1.29 m, off the panel entirely, for exactly this reason.
+    [ -n "$DRY" ] || "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go >/dev/null 2>&1
+    [ -n "$DRY" ] && { UTP_OFFSET_PROFILE="$profile" UTP_PICK_FROM_BOTTOM="$pick" \
+        bash "$REPO/bringup/press_run.sh" --dry-run --query "$query" || true; return 0; }
     log="$(mktemp)"
     # ONE MOTION, AND FASTER. approach_target.py splits the reach into 60 mm segments so a fault
     # stops at a known pose and joint headroom is re-checked before each commit -- worth it while
     # the chain was being debugged, and pure cost now that it works: four commanded moves and four
     # settles on a task timed by a door closer. UTP_STEP_MM=1000 collapses it to a single move.
-    UTP_NO_STOW=1 UTP_OFFSET_PROFILE="$profile" \
+    UTP_NO_STOW=1 UTP_OFFSET_PROFILE="$profile" UTP_PICK_FROM_BOTTOM="$pick" \
     UTP_STEP_MM="${UTP_STEP_MM:-1000}" UTP_REACH_SPEED="${UTP_REACH_SPEED:-60}" \
         bash "$REPO/bringup/press_run.sh" --query "$query" 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
@@ -229,6 +238,22 @@ if [ -z "$DRY" ]; then
     "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go 2>&1 | tail -1 | sed 's/^/  /'
 fi
 
+# THE GOAL CHECKER DECIDES WHETHER THE ARM CAN REACH. Nav2 shipped xy_goal_tolerance 0.25 m, so
+# "arrived" meant anywhere within a quarter metre -- and the press poses were tuned by parking the
+# robot ON the waypoint. Measured 2026-09-06 in the lift car: the robot stopped 24 cm short of
+# f2_car_panel, which put the floor button 0.95 m from base_link against 0.88 m of reach, and the
+# arm refused. Retightened to 0.08 and the same leg landed 4 cm out, inside reach. This is set
+# here rather than in the params file because it is a property of THIS task -- a press needs a
+# pose, an ordinary drive does not -- and the servers are already running by now.
+if [ -z "$DRY" ]; then
+    for _pp in "general_goal_checker.xy_goal_tolerance:${UTP_XY_TOL:-0.08}" \
+               "general_goal_checker.yaw_goal_tolerance:${UTP_YAW_TOL:-0.10}"; do
+        timeout 25 ros2 param set /controller_server "${_pp%%:*}" "${_pp##*:}" >/dev/null 2>&1 \
+            && note "goal checker ${_pp%%:*} = ${_pp##*:}" \
+            || echo "    could not set ${_pp%%:*} -- arrivals may be too loose for a press" >&2
+    done
+fi
+
 # ---------------------------------------------------------------------------- 1  floor FROM
 localize_on "$A_MAP"
 
@@ -256,7 +281,7 @@ nav   "$A_CAR_PANEL"
 
 # The in-car button belongs to the DESTINATION floor, and gets the offset measured on it.
 wait_stow
-press "$B_SELECT_QUERY" lift_car_select
+press "$B_SELECT_QUERY" lift_car_select "${B_SELECT_INDEX:-}"
 
 # Face the doors NOW, while still localized in a map the robot is genuinely in.
 wait_stow

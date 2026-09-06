@@ -74,12 +74,58 @@ def annotate(rgb, det, out_path, ranked):
     return out_path
 
 
+def _relift(det, cand, depth, cam):
+    """Move ``det`` onto ``cand``'s box and recompute its 3D point from depth.
+
+    The grounder lifted only the box IT chose. Once geometry picks a different one, the old
+    point3d belongs to the old box -- and approach_target.py reads point3d, not the bbox, so
+    leaving it would aim the arm at the button we deliberately did not choose. That is the same
+    class of error as the hardcoded target found on 2026-08-25: a handoff that looks right and
+    points somewhere else.
+
+    Median over the middle of the box, ignoring non-finite and zero depth, because a button's box
+    catches some of the panel behind it.
+    """
+    import numpy as _np
+    x0, y0, x1, y1 = [float(v) for v in cand["bbox"]]
+    det.bbox = (x0, y0, x1, y1)
+    det.score = float(cand.get("score", det.score))
+    h, w = depth.shape[:2]
+    cx0, cy0 = int(max(0, x0 + 0.25 * (x1 - x0))), int(max(0, y0 + 0.25 * (y1 - y0)))
+    cx1, cy1 = int(min(w, x1 - 0.25 * (x1 - x0))), int(min(h, y1 - 0.25 * (y1 - y0)))
+    if cx1 <= cx0 or cy1 <= cy0:
+        cx0, cy0, cx1, cy1 = int(x0), int(y0), int(min(w, x1)), int(min(h, y1))
+    patch = _np.asarray(depth[cy0:cy1, cx0:cx1], dtype=float)
+    if patch.dtype.kind in "iu" or patch.max(initial=0) > 100:
+        patch = patch / 1000.0                      # 16UC1 millimetres
+    good = patch[_np.isfinite(patch) & (patch > 0.05)]
+    if good.size == 0:
+        det.point3d = None
+        return det
+    z = float(_np.median(good))
+    K = cam["K"]
+    fx, fy = float(K[0]), float(K[4])
+    ppx, ppy = float(K[2]), float(K[5])
+    ux, uy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+    det.point3d = ((ux - ppx) * z / fx, (uy - ppy) * z / fy, z)
+    return det
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("capture_dir")
     ap.add_argument("--query", default=DEFAULT_QUERY)
     ap.add_argument("--backend", default="gdino", choices=["gdino", "owlv2"])
+    # Geometry, for panels where language cannot separate identical buttons. See the block in
+    # main() for the measurements that forced this.
+    ap.add_argument("--pick-from-bottom", type=int, default=0, metavar="N",
+                    help="ignore the language ranking and take the Nth button-sized candidate "
+                         "from the BOTTOM of the panel column (1 = lowest). 0 disables.")
+    ap.add_argument("--max-button-area", type=float, default=0.6, metavar="PCT",
+                    help="a candidate larger than this %% of the image is not a button (default 0.6)")
+    ap.add_argument("--column-px", type=float, default=60.0,
+                    help="horizontal tolerance for treating candidates as one panel column")
     ap.add_argument("--device", default="cuda:0")
     a = ap.parse_args()
 
@@ -158,6 +204,50 @@ def main() -> int:
         print("  3D     none -- depth had no valid return inside the box")
 
     ranked = det.candidates or [{"bbox": list(det.bbox), "score": det.score}]
+
+    # SPATIAL SELECTION, for panels where language cannot separate the buttons.
+    #
+    # config/floors.yaml has said this was coming since 2026-09-05: "A panel has one button per
+    # floor and they are all the same blue. This query cannot tell them apart, and the grounder
+    # will return whichever it likes best... the honest fix is a spatial one -- the panel's buttons
+    # are vertically ordered and their order is known -- and that is a geometry question for the
+    # grounder's output, not a better sentence."
+    #
+    # Measured 2026-09-06 in the floor-2 car: the "1" and "2" buttons are 34 px apart, identical
+    # blue, and SEVEN phrasings all scored 0.28-0.35 with the ranking reshuffling between frames.
+    # Twice the grounder chose "2" -- the floor the robot was already on, so the press did nothing
+    # and looked like a miss. No sentence fixes that, because the two buttons are not linguistically
+    # different; they are only spatially different.
+    #
+    # So: keep the language for finding the PANEL, and use geometry to pick the BUTTON. Candidates
+    # are filtered to button-sized boxes, clustered by x to one panel column, ordered bottom-up,
+    # and the Nth taken. Floor order is a property of the building, and the caller passes it.
+    if a.pick_from_bottom:
+        H, W = rgb.shape[0], rgb.shape[1]
+        btn = [c for c in ranked
+               if 0.02 <= 100 * ((c["bbox"][2]-c["bbox"][0]) * (c["bbox"][3]-c["bbox"][1]))
+                                / float(H*W) <= a.max_button_area]
+        if len(btn) >= a.pick_from_bottom:
+            xs = sorted((c["bbox"][0]+c["bbox"][2])/2 for c in btn)
+            xmed = xs[len(xs)//2]
+            col = [c for c in btn if abs((c["bbox"][0]+c["bbox"][2])/2 - xmed) <= a.column_px]
+            col.sort(key=lambda c: (c["bbox"][1]+c["bbox"][3])/2, reverse=True)   # lowest first
+            if len(col) >= a.pick_from_bottom:
+                chosen = col[a.pick_from_bottom - 1]
+                print(f"\n  SPATIAL PICK: {a.pick_from_bottom} from the bottom of a "
+                      f"{len(col)}-button column "
+                      f"-> center=({(chosen['bbox'][0]+chosen['bbox'][2])/2:.0f},"
+                      f"{(chosen['bbox'][1]+chosen['bbox'][3])/2:.0f}) score {chosen['score']:.3f}")
+                print("  (language found the panel; geometry chose the button -- they are the "
+                      "same blue and 34 px apart)")
+                det = _relift(det, chosen, depth, cam)
+                ranked = [chosen] + [c for c in ranked if c is not chosen]
+            else:
+                print(f"\n  SPATIAL PICK SKIPPED: only {len(col)} button(s) in the column, "
+                      f"needed {a.pick_from_bottom}. Falling back to the language winner.")
+        else:
+            print(f"\n  SPATIAL PICK SKIPPED: only {len(btn)} button-sized candidate(s). "
+                  f"Falling back to the language winner.")
     print(f"\nRANKING ({len(ranked)} candidates, best first) -- this is the evidence that")
     print("separates 'could not see it' from 'saw it and preferred a decoy':")
     for i, c in enumerate(ranked[:6]):

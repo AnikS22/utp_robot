@@ -66,6 +66,19 @@ floors:
     # the way down. It belongs to the floor it selects, not to the floor you press it on.
     select_query: "the blue elevator button"
 
+    # WHICH BUTTON, COUNTED FROM THE BOTTOM OF THE PANEL COLUMN. Floor 1 is the lowest.
+    #
+    # The spatial fix the note under floor 2's select_query has been promising since 2026-09-05.
+    # The car's "1" and "2" are the same blue, 34 px apart in frame, and measured 2026-09-06 SEVEN
+    # phrasings all scored 0.28-0.35 with the ranking reshuffling between frames. Twice the
+    # grounder returned "2" -- the floor the robot was already standing on -- so the arm pressed a
+    # button that does nothing, and it read as a miss. No sentence separates them: they are not
+    # linguistically different, only spatially. Language finds the PANEL, this picks the BUTTON.
+    #
+    # From the BOTTOM, not the top: the bottom of the column is the lowest floor and does not move,
+    # while the top depends on how many floors the building has.
+    select_index_from_bottom: 1
+
     # OPERATOR NOTE 2026-09-05, verbatim: "we are trying to hit the 1st floor button so #0.33 for
     # the arm". That belongs to the IN-CAR press on the ride down, which is floor 2's select_query
     # chain, not to anything on this floor. Kept here because this is where it was said, and 0.33
