@@ -93,7 +93,13 @@ TOL_DEG = 5.0
 # xArm6's rated joint speed, so 80 is under half. The limit here is the mast ringing, not torque --
 # a 0.82 kg gripper on a 0.74 m riser -- so if a fold ever faults or the mast visibly oscillates
 # after a move, THIS is the first number to put back, before anything is changed in the reach.
-SPEED_DEG_S = 80.0
+# 80 -> 130 on 2026-09-06. The fold was believed to be off the critical path because the base does
+# not wait for it -- but it is still IN THE WAY: the leg from the call plate to the lift doors took
+# 27.4 s with the arm folding, against 8.5 s for the same leg with it already stowed. An extended
+# arm changes the footprint Nav2 is avoiding and the mast rings while it moves.
+# Still under 3/4 of the xArm6's rated joint speed. If a fold faults or the mast visibly oscillates
+# after a move, THIS is the first number to put back.
+SPEED_DEG_S = 130.0
 
 
 def main() -> int:

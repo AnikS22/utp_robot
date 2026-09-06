@@ -25,8 +25,16 @@ VENV="$HOME/unlocking-the-path/env/.venv/bin/python"
 # Defined HERE, not beside the reach: the GROUNDING stage uses it, and grounding runs first.
 PICK_ARG=""; [ -n "${UTP_PICK_FROM_BOTTOM:-}" ] && PICK_ARG="--pick-from-bottom $UTP_PICK_FROM_BOTTOM"
 
-STANDOFF=60          # mm, measured to the MARKER on the flange, not the tool tip.
-                     # 60 was confirmed by the operator on 2026-08-25 to reach the plate.
+# mm, measured to the MARKER on the flange, NOT the tool tip -- the gripper extends past the
+# marker, which is why stopping 60 mm short of the target can still touch the plate. 60 was
+# confirmed by the operator on 2026-08-25 against the ADA plate.
+#
+# IT DOES NOT ALWAYS REACH. 2026-09-06, floor-2 call plate: grounded correctly at 0.558 on the
+# right button, target 0.697 m, one clean move to the 60 mm standoff, retreat, and NO error 31 --
+# no contact. The press completed and pressed nothing, which is the worst shape of failure here
+# because every stage reported success. Contact is the only evidence this rig has that a press
+# happened, so a standoff that stops short of it is not a safety margin, it is a silent no-op.
+STANDOFF="${UTP_STANDOFF:-60}"
 NAME="press_$(date +%H%M%S)"
 MODE="--go"
 EXTRA=""

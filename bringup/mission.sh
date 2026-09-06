@@ -104,7 +104,12 @@ press() {
     # stops at a known pose and joint headroom is re-checked before each commit -- worth it while
     # the chain was being debugged, and pure cost now that it works: four commanded moves and four
     # settles on a task timed by a door closer. UTP_STEP_MM=1000 collapses it to a single move.
+    # UTP_STANDOFF 30, not the 60 default. At 60 the floor-2 call press completed with no
+    # contact at all -- correct target, clean move, retreat, no error 31. Contact is the only
+    # evidence of a press this rig can produce, so stopping short of it is a silent no-op dressed
+    # as a success. 30 mm leaves the gripper travelling into the plate rather than beside it.
     UTP_NO_STOW=1 UTP_OFFSET_PROFILE="$profile" UTP_PICK_FROM_BOTTOM="$pick" \
+    UTP_STANDOFF="${UTP_STANDOFF:-30}" \
     UTP_STEP_MM="${UTP_STEP_MM:-1000}" UTP_REACH_SPEED="${UTP_REACH_SPEED:-60}" \
         bash "$REPO/bringup/press_run.sh" --query "$query" 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
