@@ -191,11 +191,16 @@ localize_on() {
             sleep 4
         done
         rm -f "$REPO/maps/.loaded_map"
-        SEED_POSE=0,0,0 bash "$REPO/bringup/bringup_all.sh" --mode nav --map "$map" \
-            || die "could not bring the stack up on '$map'"
     else
-        note "already localizing in '$map'"
+        note "already localizing in '$map' -- not restarting SLAM"
     fi
+    # RUN THE BRING-UP EITHER WAY. It is idempotent and will not restart anything healthy, but it
+    # is also the only thing that checks the SENSING CHAIN matches the map: floor2 was built from
+    # /ouster/points_clean and floor1 from raw points, and localizing one against the other's chain
+    # cost 27.8% fit on 2026-09-06. Skipping this when .loaded_map already named the map would skip
+    # exactly that check, which is how the wrong chain survived a swap in the first place.
+    SEED_POSE="${SEED_POSE:-0.0,0.0,0.0}" bash "$REPO/bringup/bringup_all.sh" \
+        --mode nav --map "$map" || die "could not bring the stack up on '$map'"
     note "global search for the robot on '$map' ..."
     python3 "$REPO/bringup/relocalise.py" || true
     sleep 3
