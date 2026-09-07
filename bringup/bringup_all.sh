@@ -63,7 +63,15 @@ PYSEED
 fi
 { [ "$MODE" = full ] || [ "$MODE" = inputs ]; } && NEED_ARM=1
 WANT_NAV=0; [ "$MODE" = nav ] || [ "$MODE" = full ] && WANT_NAV=1
-WANT_CAMERA=0; { [ "$MODE" = full ] || [ "$MODE" = inputs ]; } && [ "${UTP_NO_CAMERA:-0}" != "1" ] && WANT_CAMERA=1
+# nav IS IN THIS LIST, and leaving it out cost a run on 2026-09-07. mission.sh brings the stack
+# up in `nav` mode, so the camera was never started and never checked -- and every earlier run
+# worked only because a camera left alive by some previous session happened to still be
+# publishing. The first cold start after a recharge exposed it: the call press died at its
+# very first step with "rgb=0 depth=0 info=no", the arm never moved, and nothing in the
+# preflight had said a word, because the preflight checked odometry, lidar, scan, safety,
+# slam and Nav2 -- everything except the sensor two of the three mission steps aim with.
+WANT_CAMERA=0; { [ "$MODE" = full ] || [ "$MODE" = inputs ] || [ "$MODE" = nav ]; } \
+    && [ "${UTP_NO_CAMERA:-0}" != "1" ] && WANT_CAMERA=1
 
 if [ "$WANT_NAV" = 1 ] && [ "$STATUS_ONLY" = 0 ]; then
   for ext in pgm yaml posegraph data; do

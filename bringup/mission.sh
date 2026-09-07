@@ -189,7 +189,14 @@ nav() {
     local xytol yawtol
     case "$wp" in
         "${A_CALL_BUTTON:-__none__}"|"${A_CAR_PANEL:-__none__}"|"${B_TASK_BUTTON:-__none__}")
-            xytol="${UTP_XY_TOL_PRESS:-0.10}"; yawtol="${UTP_YAW_TOL_PRESS:-0.15}" ;;
+            # 0.25/0.30, NOT 0.10/0.15. The tight pair was my guess, not a measurement, and it was
+            # wrong twice over. On a 4WS chassis 10 cm and 8.6 deg sits inside the wheel-alignment
+            # deadband, so the base hunts instead of settling -- 108 SECONDS on the call-plate leg
+            # on 2026-09-07, oscillating in place with the operator watching. And it was never the
+            # fix for the problem it was meant to solve: the press that failed for want of 14 mm of
+            # reach is answered by the base creep in press(), which measures the shortfall and steps
+            # in by exactly that. A goal checker cannot buy reach.
+            xytol="${UTP_XY_TOL_PRESS:-0.25}"; yawtol="${UTP_YAW_TOL_PRESS:-0.30}" ;;
         *)  xytol="${UTP_XY_TOL:-0.30}";       yawtol="${UTP_YAW_TOL:-0.35}" ;;
     esac
     set_tol "$xytol" "$yawtol"

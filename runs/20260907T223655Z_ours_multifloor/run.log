@@ -1,0 +1,165 @@
+
+==============================================================
+ 0  PREP   authority, arm, stack
+==============================================================
+  
+  already CAN. Nothing to do -- but do not touch the RC sticks.
+  SDK_VERSION: 1.18.4
+  ROBOT_IP: 192.168.1.221, VERSION: v2.6.0, PROTOCOL: V1, DETAIL: 6,6,XI1305,AC1304,v2.6.0, TYPE1300: [1, 1]
+  change protocol identifier to 3
+  [motion_enable], xArm is not ready to move
+  [set_state], xArm is ready to move
+  arm cleared: state=0 error=0
+  already at stow; nothing to do.
+  goal tolerance now 0.30 m / 0.35 rad
+
+==============================================================
+ LOAD MAP 'floor2'
+==============================================================
+  already on 'floor2' -- not restarting SLAM
+
+=== utp bring-up   mode=nav   map=floor2   domain=9   
+  probing (one node, every topic, ~7 s plus TF) ...
+  chassis silent (0.00 Hz) -- restarting the ranger driver
+  waiting for /odom (30s remaining)
+  lidar not healthy (/ouster/points 0.00 Hz, base_link->os_lidar MISSING) -- restarting via bringup/lidar3d.sh
+  waiting for /ouster/points (55s remaining)
+  waiting for /ouster/points (43s remaining)
+  'floor2' was mapped with the artifact filter -- starting it
+  waiting for /ouster/points_clean (25s remaining)
+  /scan_filtered silent (0.00 Hz) -- starting pointcloud_to_laserscan on /ouster/points_clean
+  waiting for /scan_filtered (25s remaining)
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/8222/cmdline: No such file or directory
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/8223/cmdline: No such file or directory
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/8224/cmdline: No such file or directory
+  /scan silent (0.00 Hz) -- starting the slam relay (mask 0.90 m)
+  waiting for /scan (25s remaining)
+  waiting for /scan_nav (25s remaining)
+  /safety/status silent (0.00 Hz) -- starting the mux and the arm monitor
+  waiting for /safety/status (25s remaining)
+  starting slam_toolbox in LOCALIZATION mode on 'floor2'
+  waiting for /map (30s remaining)
+localized map provenance recorded: floor2
+  Nav2 not active (action=0 bt=absent planner=absent controller=absent behavior=absent procs=0) -- launching one
+  no maps/floor2_keepout.yaml -- no keepout filter; nothing on this floor is forbidden
+
+  COMPONENT      STATE   DETAIL
+  -------------- ------- ------------------------------------------
+  ethernet       ok      enx00e04c674c60 carrier up
+  net_lidar      ok      192.168.1.119 reachable
+  net_router     ok      192.168.1.1 reachable
+  net_arm        ok      192.168.1.221 reachable
+  can0           ok      ERROR-ACTIVE, ~902 frames/s
+  chassis        ok      /odom 50.00 Hz, odom->base_link present
+  lidar          ok      /ouster/points 10.00 Hz
+  mount_tf       ok      base_link->os_sensor->os_lidar resolves, mount (-0.375, 0.0, 1.146) m
+  filter         ok      /ouster/points_clean 10.00 Hz (matches the 'floor2' chain)
+  projection     ok      /scan_filtered 9.95 Hz from /ouster/points_clean
+  scan           ok      /scan 10.00 Hz (rear mask 0.90 m)
+  scan_nav       ok      /scan_nav 10.00 Hz (temporal filter from /scan)
+  safety         ok      /safety/status 20.00 Hz, arm_stowed 100%, estop_latched 0%
+  waypoints      ok      maps/waypoints.yaml has map-frame waypoints in 'floor2'
+  slam           ok      localizing in 'floor2', lifecycle active, map->odom present
+  map_session    ok      saved map matched to the live SLAM session
+  nav2           ok      navigate_to_pose + bt_navigator/planner/controller/behavior ACTIVE, no keepout mask
+
+  elapsed: 142 seconds
+  everything --mode nav needs is up. Next:
+      python3 bringup/relocalise.py --check        # want >=80% before driving
+      python3 bringup/waypoints.py list            # must be recorded in map 'floor2'
+
+==============================================================
+ FIND SELF on 'floor2'   (needs 3 of 5 searches to agree)
+==============================================================
+  waiting for a way out (>= 40 returns past 3.0 m spanning >= 20 deg)
+  the way out is open after 1s -- searching now
+  search 1: (2.7355,1.4000) yaw 41.20  fit 56.7%
+  search 2: (2.7355,1.4000) yaw 41.20  fit 61.7%
+  search 3: (2.7355,1.4000) yaw 41.20  fit 58.6%
+  3 searches agree within 0.30 m / 15 deg at (2.7355,1.4000), fit 58.6%
+
+==============================================================
+ NAVIGATE  'f2_lift_door'
+==============================================================
+    337 cm and 14.2 deg from 'f2_lift_door'
+goal 'f2_lift_door' in map: x=5.907 y=2.537 yaw=+55.4 deg (map=floor2)
+DRIVING to 'f2_lift_door' via Nav2. Ctrl-C stops. E-stop is faster.
+arrived at 'f2_lift_door' in 9.6 s
+RESULT {"detail": "Nav2 STATUS_SUCCEEDED", "elapsed_s": 9.641, "status": "arrived", "waypoint": "f2_lift_door"}
+
+==============================================================
+ NAVIGATE  'f2_call_button'
+==============================================================
+  goal tolerance now 0.10 m / 0.15 rad
+    76 cm and 5.7 deg from 'f2_call_button'
+goal 'f2_call_button' in map: x=6.499 y=2.119 yaw=+48.6 deg (map=floor2)
+DRIVING to 'f2_call_button' via Nav2. Ctrl-C stops. E-stop is faster.
+arrived at 'f2_call_button' in 108.6 s
+RESULT {"detail": "Nav2 STATUS_SUCCEEDED", "elapsed_s": 108.611, "status": "arrived", "waypoint": "f2_call_button"}
+
+==============================================================
+ PRESS  'the small round blue button on the metal call plate'
+==============================================================
+
+==============================================================
+ 2/6  LOOK      capturing an aligned RGB-D frame
+==============================================================
+timed out. rgb=0 depth=0 info=no
+  Is the camera running? Expected topics under /mast_cam/
+  PRESS FAILED on 'the small round blue button on the metal call plate' with no contact detected
+  the robot could not confirm the call press -- PRESS THE CALL BUTTON if the lift is not coming; the lidar decides when the doors are open
+
+==============================================================
+ NAVIGATE  'f2_lift_door'
+==============================================================
+  goal tolerance now 0.30 m / 0.35 rad
+    60 cm and 6.0 deg from 'f2_lift_door'
+goal 'f2_lift_door' in map: x=5.907 y=2.537 yaw=+55.4 deg (map=floor2)
+DRIVING to 'f2_lift_door' via Nav2. Ctrl-C stops. E-stop is faster.
+arrived at 'f2_lift_door' in 8.9 s
+RESULT {"detail": "Nav2 STATUS_SUCCEEDED", "elapsed_s": 8.891, "status": "arrived", "waypoint": "f2_lift_door"}
+
+==============================================================
+ DOORS -- waiting for the car -- the lidar is watching the doorway now
+==============================================================
+  cleared /global_costmap/clear_entirely_global_costmap
+  cleared /local_costmap/clear_entirely_local_costmap
+  doors are open -- going NOW (costmaps already clear)
+
+==============================================================
+ NAVIGATE  'f2_car_at_panel'
+==============================================================
+    297 cm and 10.6 deg from 'f2_car_at_panel'
+goal 'f2_car_at_panel' in map: x=7.252 y=4.298 yaw=+56.2 deg (map=floor2)
+DRIVING to 'f2_car_at_panel' via Nav2. Ctrl-C stops. E-stop is faster.
+blocked: Nav2 ABORTED after 24.8 s (recoveries exhausted)
+RESULT {"detail": "Nav2 STATUS_ABORTED, recoveries exhausted", "elapsed_s": 24.771, "status": "blocked", "waypoint": "f2_car_at_panel"}
+    557 cm and 5.1 deg from 'f2_car_at_panel'
+  leg to 'f2_car_at_panel' came back 'blocked' -- clearing the costmaps and retrying
+  cleared /global_costmap/clear_entirely_global_costmap
+  cleared /local_costmap/clear_entirely_local_costmap
+goal 'f2_car_at_panel' in map: x=7.252 y=4.298 yaw=+56.2 deg (map=floor2)
+DRIVING to 'f2_car_at_panel' via Nav2. Ctrl-C stops. E-stop is faster.
+
+interrupted — cancellation acknowledgement timed out
+Traceback (most recent call last):
+  File "/home/weim/utp_robot/bringup/nav2_goto.py", line 306, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/home/weim/utp_robot/bringup/nav2_goto.py", line 300, in main
+    rclpy.shutdown()
+  File "/opt/ros/jazzy/lib/python3.12/site-packages/rclpy/__init__.py", line 134, in shutdown
+    _shutdown(context=context)
+  File "/opt/ros/jazzy/lib/python3.12/site-packages/rclpy/utilities.py", line 82, in shutdown
+    context.shutdown()
+  File "/opt/ros/jazzy/lib/python3.12/site-packages/rclpy/context.py", line 129, in shutdown
+    self.__context.shutdown()
+rclpy._rclpy_pybind11.RCLError: failed to shutdown: rcl_shutdown already called on the given context, at ./src/rcl/init.c:333
+    557 cm and 5.1 deg from 'f2_car_at_panel'
+  LEG FAILED: 'f2_car_at_panel' came back 'no RESULT' after 2 attempts
+  continuing anyway -- the run keeps what it has already done; this is reported at the end
+
+==============================================================
+ NAVIGATE  'f2_car_panel'
+==============================================================
+  (mission exited with status 130 -- children stopped, base halted; check the arm)
