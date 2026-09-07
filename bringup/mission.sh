@@ -156,13 +156,23 @@ press() {
     # contact at all -- correct target, clean move, retreat, no error 31. Contact is the only
     # evidence of a press this rig can produce, so stopping short of it is a silent no-op dressed
     # as a success. 30 mm leaves the gripper travelling into the plate rather than beside it.
-    UTP_NO_STOW=1 UTP_OFFSET_PROFILE="$profile" UTP_PICK_FROM_BOTTOM="$pick" \
     # --hold: DO NOT RETREAT TO THE START POSE. approach_target.py's success path drives the arm
-    # all the way back to wherever it began -- 407 mm of Cartesian motion at 60 mm/s, about seven
-    # seconds -- and then the caller folds it to stow anyway. The retreat exists so a press run by
-    # hand leaves the arm where it was found; inside a route it is pure cost, and it is spent
-    # while a lift door closes. Folding straight from the pressed pose is one joint-space move at
-    # SPEED_DEG_S, and stow_arm.py checks its own limit violations before committing.
+    # all the way back to wherever it began -- 407 mm of Cartesian motion, about seven seconds --
+    # and then the caller folds it to stow anyway. The retreat exists so a press run BY HAND leaves
+    # the arm where it was found; inside a route it is pure cost, spent while a lift door closes.
+    #
+    # KEEP THIS COMMENT ABOVE THE COMMAND. It used to sit between the assignment prefix and the
+    # command, on a line continuation. Bash splices a continuation BEFORE tokenising, so the
+    # comment swallowed the rest of the logical line and what remained was an assignment-only
+    # command: UTP_NO_STOW, UTP_OFFSET_PROFILE and UTP_PICK_FROM_BOTTOM became ordinary shell
+    # variables of this script and never reached press_run.sh at all. Nothing errored.
+    #
+    # It cost two things silently: the in-car press ran WITHOUT the spatial button pick, so the
+    # detector chose whichever blue button it preferred rather than the "1" the mission intended,
+    # and WITHOUT the lift_car_select offset measured for that button. Two of three in-car presses
+    # made no contact. The --dry-run branch below is correctly formed, so a dry run could never
+    # have shown it.
+    UTP_NO_STOW=1 UTP_OFFSET_PROFILE="$profile" UTP_PICK_FROM_BOTTOM="$pick" \
     UTP_STANDOFF="${UTP_STANDOFF:-30}" \
     UTP_STEP_MM="${UTP_STEP_MM:-1000}" UTP_REACH_SPEED="${UTP_REACH_SPEED:-90}" \
         bash "$REPO/bringup/press_run.sh" --query "$query" --hold 2>&1 | tee "$log"
@@ -274,7 +284,9 @@ doors() {
     # Localizing is harmless: it publishes /initialpose and moves nothing. DRIVING is the dangerous
     # part, and the caller still gates that. So hand back a status and let the caller decide.
     [ "${UTP_DOORS_OVERRIDE:-0}" = "1" ] && { note "UTP_DOORS_OVERRIDE=1 -- treating as open"; clear_costmaps; return 0; }
-    clear_costmaps
+    # NO clear_costmaps HERE. The failure path used to blank the obstacle layer on the way out,
+    # which deletes the marks of the shut doors -- so a caller that ignored the status drove at a
+    # closed lift with a freshly emptied costmap. Leave the doors marked; let Nav2 refuse.
     return 1
 }
 
@@ -372,7 +384,20 @@ find_self() {
     # There is a clean gap. 72 sits in it. This is a floor for DRIVING, not for reporting -- a
     # lower score is still computed, still logged, and still shown in RViz, because a known-bad
     # pose is more useful to an operator than no pose. It just may not move the robot.
-    local minfit="${UTP_RELOC_MIN_FIT:-72}"
+    # 72 -> 55, because 72 was wrong and would refuse working runs. I set it after the robot drove
+    # at the operator, reasoning from a score split that an audit of all 15 recordings then
+    # demolished:
+    #
+    #   * every 74-80% figure I used to define "correct" is on FLOOR 2. The highest floor-1 fit
+    #     anywhere in the corpus is 65.7%. There is no verified-correct floor-1 lock to compare to.
+    #   * 67.4% on floor 2 was followed by FIVE consecutive arrivals; 65.7% by an arrival in 13.5 s.
+    #     A 72% floor refuses both.
+    #   * and the converse fails too: 78.2% and 75.0% each preceded a Nav2 abort.
+    #
+    # Score does not separate good locks from bad in either direction, so it cannot carry a safety
+    # gate on its own. It is kept only as a floor against the obviously degenerate. The real signal
+    # is the AGREEMENT of repeated searches above, and the scan-quality test before them.
+    local minfit="${UTP_RELOC_MIN_FIT:-55}"
     say "FIND SELF on '$map'   (needs $need of $tries searches to agree)"
     [ -n "$DRY" ] && { LOCALIZED="$map"; return 0; }
 
@@ -596,7 +621,10 @@ ENTRY_POSE="${A_CAR_FACING_IN:-${A_CAR_FACING_OUT:-}}"
 # faces the door, and ENTRY_APPROACH is that pose by definition.
 wait_stow
 nav   "$ENTRY_APPROACH"
-doors "waiting for the car -- the lidar is watching the doorway now"
+# READ THE STATUS. doors() was changed to return rather than die so the CALLER could decide, and
+# then no caller decided -- the entry leg ran unconditionally on a door timeout.
+doors "waiting for the car -- the lidar is watching the doorway now" \
+    || die "the doors never opened; not driving at a closed lift"
 nav   "$ENTRY_POSE"
 nav   "$A_CAR_PANEL"
 
@@ -629,6 +657,12 @@ nav   "$A_CAR_FACING_OUT"
 # door-close wait and the ride, which is all of the dead time there is.
 say "SWAP  loading '$B_MAP' in the background, while the doors close and the car moves"
 event map_load_start "$B_MAP (background)"
+# CLOSE THE DRIVE GATE FOR THE WHOLE SWAP. load_map runs in a SUBSHELL below, so the assignments
+# it makes to CURRENT_MAP and LOCALIZED are lost when that subshell exits -- the parent would go
+# on believing it is localized in the DEPARTURE floor's map while the live map is being torn down
+# and replaced. Setting them here means the gate in nav() is shut for the entire window, and the
+# collection below re-opens it only for the map that actually loaded.
+CURRENT_MAP=""; LOCALIZED=""
 ( load_map "$B_MAP" ) > /tmp/utp_swap.log 2>&1 &
 SWAP_PID=$!
 
@@ -686,6 +720,10 @@ elif [ -n "${SWAP_PID:-}" ]; then
         note "map load finished during the ride -- no time spent on it here"
     fi
     wait "$SWAP_PID" || { sed 's/^/    /' /tmp/utp_swap.log | tail -20; die "the background load of '$B_MAP' failed"; }
+    # The subshell could not tell us; record it here. Without this every default run died at the
+    # first leg on the destination floor with "has not localized in 'floor2'" -- which was exactly
+    # backwards, it HAD localized, on floor1. Seen in runs/20260907T012225Z.
+    CURRENT_MAP="$B_MAP"; LOCALIZED=""
     event map_load_done "$B_MAP (background)"
 fi
 # LOCALIZE EVEN IF THE DOORS TIMED OUT. Knowing where it is costs nothing and is what an operator
