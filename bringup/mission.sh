@@ -275,25 +275,73 @@ load_map() {
     python3 "$REPO/bringup/startup_mark_map.py" "$map" >/dev/null 2>&1 || true
 }
 
-# find_self <name> -- THE FAST HALF. Global search, about a second, and it is the ONLY part that
-# has to happen after the doors open.
+# find_self <name> -- THE FAST HALF, AND IT MUST AGREE WITH ITSELF BEFORE ANYTHING DRIVES.
 #
-# It cannot be moved earlier for the same reason the swap can: a global search inside a CLOSED car
-# scores against four blank walls. seed_pose's docstring is explicit that it "would happily anchor
-# on some other doorway-sized gap metres away", and it did -- 12 m out, measured 2026-09-06. With
-# the doors open the scan reaches into the lobby and a car with a lobby beyond it is not a shape
-# that repeats.
+# A single fit number is not evidence. Measured 2026-09-06, in the car on floor 1: the global
+# search returned 81.1% -- the best score of the whole session, comfortably over the 80% the tools
+# call localized -- on a pose that was simply WRONG. The operator saw it immediately; the number
+# did not. A high score means "this scan matches the map well HERE", and inside a lift car a
+# doorway-sized gap matches a lot of places well.
+#
+# What a wrong lock cannot fake is AGREEMENT. The search starts from the live scan each time, so
+# repeating it and demanding the answers land in the same place is a far stronger test than any one
+# score: a correct lock reconverges to within centimetres, a spurious one wanders between the
+# candidates that happened to match. So this runs the search up to UTP_RELOC_TRIES times and
+# requires UTP_RELOC_AGREE consecutive results inside UTP_RELOC_TOL_M / UTP_RELOC_TOL_DEG.
+#
+# It still cannot run before the doors open, for the reason seed_pose gives: sealed in, the scan is
+# four blank walls and the search would agree with itself about the wrong answer. Agreement is
+# necessary, not sufficient.
 find_self() {
-    local map="$1" fit
-    say "FIND SELF on '$map'"
+    local map="$1" tries="${UTP_RELOC_TRIES:-5}" need="${UTP_RELOC_AGREE:-3}"
+    local tol="${UTP_RELOC_TOL_M:-0.30}" told="${UTP_RELOC_TOL_DEG:-15}"
+    local minfit="${UTP_RELOC_MIN_FIT:-40}"
+    say "FIND SELF on '$map'   (needs $need of $tries searches to agree)"
     [ -n "$DRY" ] && return 0
-    python3 "$REPO/bringup/relocalise.py" || true
-    sleep 2
-    fit="$(python3 "$REPO/bringup/relocalise.py" --check 2>&1 | sed -n 's/.*fit \([0-9.]*\)%.*/\1/p' | tail -1)"
-    [ -n "$fit" ] || die "could not score the localization fit on '$map'"
-    note "fit ${fit}%"
-    awk -v f="$fit" 'BEGIN{exit !(f < 40)}' && die "fit ${fit}% on '$map' -- the robot does not
-        know where it is. Nothing below may drive."
+    local i agree=1 px="" py="" pw="" fit=""
+    for i in $(seq 1 "$tries"); do
+        python3 "$REPO/bringup/relocalise.py" >/dev/null 2>&1 || true
+        sleep 2
+        read -r x y w fit <<<"$(python3 - <<'PY'
+import rclpy, math, time, tf2_ros, rclpy.time, subprocess, os, re
+from rclpy.node import Node
+rclpy.init(); n=Node("utp_find_self"); b=tf2_ros.Buffer(); tf2_ros.TransformListener(b,n)
+e=time.time()+12
+while time.time()<e:
+    rclpy.spin_once(n,timeout_sec=0.1)
+    if b.can_transform("map","base_link",rclpy.time.Time()): break
+try:
+    t=b.lookup_transform("map","base_link",rclpy.time.Time())
+    x,y=t.transform.translation.x,t.transform.translation.y
+    yaw=math.degrees(2*math.atan2(t.transform.rotation.z,t.transform.rotation.w))
+    print(f"{x:.4f} {y:.4f} {yaw:.2f}", end=" ")
+except Exception:
+    print("nan nan nan", end=" ")
+rclpy.shutdown()
+PY
+)"
+        fit="$(python3 "$REPO/bringup/relocalise.py" --check 2>&1 | sed -n 's/.*fit \([0-9.]*\)%.*/\1/p' | tail -1)"
+        note "search $i: (${x},${y}) yaw ${w}  fit ${fit:-?}%"
+        if [ -n "$px" ]; then
+            agree=$(python3 -c "
+import sys,math
+dx=$x-$px; dy=$y-$py
+dw=abs(($w-$pw+180)%360-180)
+print(($agree+1) if (math.hypot(dx,dy)<=$tol and dw<=$told) else 1)")
+        fi
+        px="$x"; py="$y"; pw="$w"
+        if [ "$agree" -ge "$need" ]; then
+            awk -v f="${fit:-0}" -v m="$minfit" 'BEGIN{exit !(f < m)}' && \
+                die "the searches AGREE at (${x},${y}) but only score ${fit}% -- consistently
+                confident and consistently wrong is the failure this check exists to catch."
+            note "$need searches agree within ${tol} m / ${told} deg at (${x},${y}), fit ${fit}%"
+            return 0
+        fi
+    done
+    die "the global search did NOT converge: $tries attempts never produced $need consecutive
+        results within ${tol} m / ${told} deg. The robot does not know where it is, and a fit
+        score alone would not have told you -- 81.1% was measured on a demonstrably wrong pose.
+        Open the doors fully so the scan reaches past the car, or set the pose in RViz."
 }
 
 localize_on() { load_map "$1"; find_self "$1"; }
