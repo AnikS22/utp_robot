@@ -1,0 +1,16 @@
+{"stamp": 1788816047.351036, "kind": "map_load_start", "detail": "floor2"}
+{"stamp": 1788816095.5921264, "kind": "map_load_done", "detail": "floor2"}
+{"stamp": 1788816096.385711, "kind": "scan_informative", "detail": "3.0m/20deg"}
+{"stamp": 1788816118.3341842, "kind": "localized", "detail": "floor2 5.8154,2.3750 yaw 56.00 fit 82.1%"}
+{"stamp": 1788816118.3876307, "kind": "leg_start", "detail": "f2_lift_door"}
+{"stamp": 1788816122.2772563, "kind": "leg_end", "detail": "f2_lift_door already-there 0s"}
+{"stamp": 1788816122.3225703, "kind": "leg_start", "detail": "f2_lift_door"}
+{"stamp": 1788816125.249579, "kind": "leg_end", "detail": "f2_lift_door already-there 0s"}
+{"stamp": 1788816125.2945025, "kind": "doors_wait", "detail": "open"}
+{"stamp": 1788816137.3509955, "kind": "doors_open", "detail": ""}
+{"stamp": 1788816137.4021146, "kind": "leg_start", "detail": "f2_car_at_panel"}
+{"stamp": 1788816145.6069267, "kind": "leg_end", "detail": "f2_car_at_panel arrived 8s"}
+{"stamp": 1788816145.6551692, "kind": "leg_start", "detail": "f2_car_panel"}
+{"stamp": 1788816158.585946, "kind": "leg_end", "detail": "f2_car_panel arrived 13s"}
+{"stamp": 1788816158.636978, "kind": "press_start", "detail": "the blue elevator button"}
+{"stamp": 1788816199.5612104, "kind": "press_contact", "detail": "the blue elevator button"}

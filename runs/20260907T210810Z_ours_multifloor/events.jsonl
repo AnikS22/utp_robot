@@ -1,0 +1,36 @@
+{"stamp": 1788815304.333492, "kind": "map_load_start", "detail": "floor2"}
+{"stamp": 1788815354.2698848, "kind": "map_load_done", "detail": "floor2"}
+{"stamp": 1788815356.5838077, "kind": "scan_informative", "detail": "3.0m/20deg"}
+{"stamp": 1788815375.7612908, "kind": "localized", "detail": "floor2 2.7229,1.3841 yaw 45.36 fit 65.7%"}
+{"stamp": 1788815375.8123064, "kind": "leg_start", "detail": "f2_lift_door"}
+{"stamp": 1788815390.8210087, "kind": "leg_end", "detail": "f2_lift_door arrived 15s"}
+{"stamp": 1788815390.8715682, "kind": "leg_start", "detail": "f2_call_button"}
+{"stamp": 1788815403.799388, "kind": "leg_end", "detail": "f2_call_button arrived 13s"}
+{"stamp": 1788815403.8436306, "kind": "press_start", "detail": "the small round blue button on the metal call plate"}
+{"stamp": 1788815444.3160558, "kind": "press_completed", "detail": "the small round blue button on the metal call plate"}
+{"stamp": 1788815446.6581478, "kind": "leg_start", "detail": "f2_lift_door"}
+{"stamp": 1788815610.6654153, "kind": "leg_end", "detail": "f2_lift_door arrived 164s"}
+{"stamp": 1788815610.7110946, "kind": "doors_wait", "detail": "open"}
+{"stamp": 1788815616.5310128, "kind": "doors_open", "detail": ""}
+{"stamp": 1788815616.5807378, "kind": "leg_start", "detail": "f2_car_at_panel"}
+{"stamp": 1788815625.9172997, "kind": "leg_end", "detail": "f2_car_at_panel arrived 9s"}
+{"stamp": 1788815625.9656186, "kind": "leg_start", "detail": "f2_car_panel"}
+{"stamp": 1788815632.0198734, "kind": "leg_end", "detail": "f2_car_panel arrived 6s"}
+{"stamp": 1788815632.0734317, "kind": "press_start", "detail": "the blue elevator button"}
+{"stamp": 1788815653.6259985, "kind": "press_creep", "detail": "the blue elevator button shortfall 0.044 advance 0.144"}
+{"stamp": 1788815655.7026126, "kind": "press_failed", "detail": "the blue elevator button"}
+{"stamp": 1788815655.915408, "kind": "leg_start", "detail": "f2_car_at_doors"}
+{"stamp": 1788815661.9191222, "kind": "leg_end", "detail": "f2_car_at_doors arrived 6s"}
+{"stamp": 1788815661.9702487, "kind": "map_load_start", "detail": "floor1 (background)"}
+{"stamp": 1788815662.022703, "kind": "doors_wait", "detail": "close"}
+{"stamp": 1788815662.0251691, "kind": "map_load_start", "detail": "floor1"}
+{"stamp": 1788815665.703744, "kind": "doors_closed", "detail": ""}
+{"stamp": 1788815670.0217805, "kind": "ride_start", "detail": "2->1"}
+{"stamp": 1788815721.8976161, "kind": "map_load_done", "detail": "floor1"}
+{"stamp": 1788815721.9494228, "kind": "map_load_done", "detail": "floor1 (background)"}
+{"stamp": 1788815726.3204067, "kind": "scan_informative", "detail": "3.0m/20deg"}
+{"stamp": 1788815730.7232347, "kind": "localization_rejected", "detail": "floor1 attempt 1"}
+{"stamp": 1788815735.2106142, "kind": "localization_rejected", "detail": "floor1 attempt 2"}
+{"stamp": 1788815741.1450655, "kind": "localization_rejected", "detail": "floor1 attempt 3"}
+{"stamp": 1788815746.9165215, "kind": "localization_rejected", "detail": "floor1 attempt 4"}
+{"stamp": 1788815751.0326824, "kind": "localization_rejected", "detail": "floor1 attempt 5"}

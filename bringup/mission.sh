@@ -35,7 +35,7 @@ source "$REPO/bringup/env.sh" >/dev/null 2>&1 || { echo "env.sh failed" >&2; exi
 source "$REPO/bringup/run_event.sh"
 
 FROM=2; TO=1; DRY=""; ARRIVAL_ONLY=0; MANUAL_CALL=0; MANUAL_SELECT=0; PREPARE_FLOOR=""; PREPARE_IN_CAR=0
-READY_ON_A=0; FROM_CAR=0
+READY_ON_A=0; FROM_CAR=0; ENTER_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY="--dry-run"; shift ;;
@@ -92,11 +92,19 @@ while [ $# -gt 0 ]; do
     # goal -- 4 cm and 0.5 deg away, inside a 14 cm tolerance. Everything about that run was good
     # except the last check, and there was no way to continue it without redoing the whole floor.
     --from-car) FROM_CAR=1; shift ;;
+    # JUST THE HARD PART: outside the lift -> through the doors -> square to the panel -> press the
+    # floor button, then stop. No call plate, no ride, no far floor.
+    #
+    # This is the segment that has never once completed, and every attempt at it has cost a full
+    # run to reach: localize, drive, press the call plate, wait, and only then find out whether the
+    # base parks close enough to the panel for the arm. Isolating it makes that a two-minute test
+    # instead of a ten-minute one. The operator presses the call plate.
+    --enter-only) ENTER_ONLY=1; MANUAL_CALL=1; shift ;;
     --prepare-floor) PREPARE_FLOOR="$2"; shift 2 ;;
     --in-car) PREPARE_IN_CAR=1; shift ;;
     --from) FROM="$2"; shift 2 ;;
     --to)   TO="$2";   shift 2 ;;
-    *) echo "usage: bash bringup/mission.sh [--dry-run] [--from N] [--to N] [--manual-lift]\n       [--ready] [--from-car] [--arrival-only] [--prepare-floor N [--in-car]]" >&2; exit 2 ;;
+    *) echo "usage: bash bringup/mission.sh [--dry-run] [--from N] [--to N] [--manual-lift]\n       [--ready] [--from-car] [--enter-only] [--arrival-only] [--prepare-floor N [--in-car]]" >&2; exit 2 ;;
   esac
 done
 if [ "$PREPARE_IN_CAR" = 1 ] && [ -z "$PREPARE_FLOOR" ]; then
@@ -177,13 +185,22 @@ nav() {
     fi
     event leg_start "$wp"
     [ -n "$DRY" ] && { python3 "$REPO/bringup/nav2_goto.py" "$wp" || true; return 0; }
+    # PRECISION ONLY WHERE AN ARM HAS TO REACH FROM. Everywhere else, room to finish the leg.
+    local xytol yawtol
+    case "$wp" in
+        "${A_CALL_BUTTON:-__none__}"|"${A_CAR_PANEL:-__none__}"|"${B_TASK_BUTTON:-__none__}")
+            xytol="${UTP_XY_TOL_PRESS:-0.10}"; yawtol="${UTP_YAW_TOL_PRESS:-0.15}" ;;
+        *)  xytol="${UTP_XY_TOL:-0.30}";       yawtol="${UTP_YAW_TOL:-0.35}" ;;
+    esac
+    set_tol "$xytol" "$yawtol"
+
     # A GOAL YOU ARE ALREADY STANDING ON IS AN ARRIVAL, and it has to be decided HERE, because
     # Nav2's answer to it is indistinguishable from a real failure. 2026-09-07, the best run of the
     # night: the robot pressed the call button, the doors opened, the entry drive carried it all the
     # way into the car -- and the next leg, to the pose inside the car, came back `blocked` after 47
     # MILLISECONDS while standing 4 cm and 0.5 deg from the goal. Nothing was wrong with anything.
     # The run died one step from the floor button and the whole floor had to be redone.
-    if at_wp "$wp"; then
+    if at_wp "$wp" "$xytol" "$(python3 -c "import math;print(round(math.degrees($yawtol),1))")"; then
         note "already at '$wp' -- no drive needed"
         event leg_end "$wp already-there 0s"
         return 0
@@ -228,6 +245,26 @@ nav() {
         return 1
     fi
     return 0
+}
+
+# set_tol <xy_m> <yaw_rad> -- the controller's goal checker, changed only when it actually differs.
+#
+# ONE TOLERANCE CANNOT SERVE BOTH JOBS, and using one is what produced both failures on the
+# 2026-09-07 21:08 run. At 0.14 m the robot ground for 158 SECONDS against the lift-door pose
+# while sitting 14.3 cm away -- 3 mm outside the threshold, on a leg where a handspan either way
+# changes nothing. At the same 0.14 m the in-car panel pose was reached "successfully" with the
+# button 0.894 m from the arm's 0.88 m shoulder, so the press refused for want of 14 mm.
+#
+# Transit legs get room; the three poses an arm has to reach FROM get precision. The operator's
+# words: tolerance loose "going in the elevator and then high again when hitting the button".
+_TOL_XY=""; _TOL_YAW=""
+set_tol() {
+    [ -n "$DRY" ] && return 0
+    [ "$1" = "$_TOL_XY" ] && [ "$2" = "$_TOL_YAW" ] && return 0
+    timeout 25 ros2 param set /controller_server general_goal_checker.xy_goal_tolerance "$1" >/dev/null 2>&1
+    timeout 25 ros2 param set /controller_server general_goal_checker.yaw_goal_tolerance "$2" >/dev/null 2>&1
+    _TOL_XY="$1"; _TOL_YAW="$2"
+    note "goal tolerance now ${1} m / ${2} rad"
 }
 
 # at_wp <waypoint> [tol_m] [tol_deg] -- is the robot already there? Tolerances default to the
@@ -828,12 +865,8 @@ fi
 # If a press ever reports "NOT REACHING" by a few centimetres, re-issuing that one nav goal is the
 # cheap fix -- a second attempt from close range lands far tighter than the first.
 if [ -z "$DRY" ]; then
-    for _pp in "general_goal_checker.xy_goal_tolerance:${UTP_XY_TOL:-0.14}" \
-               "general_goal_checker.yaw_goal_tolerance:${UTP_YAW_TOL:-0.20}"; do
-        timeout 25 ros2 param set /controller_server "${_pp%%:*}" "${_pp##*:}" >/dev/null 2>&1 \
-            && note "goal checker ${_pp%%:*} = ${_pp##*:}" \
-            || echo "    could not set ${_pp%%:*} -- arrivals may be too loose for a press" >&2
-    done
+    # NOT PINNED HERE ANY MORE -- nav() chooses per leg. See set_tol.
+    set_tol "${UTP_XY_TOL:-0.30}" "${UTP_YAW_TOL:-0.35}"
 fi
 
 # ---------------------------------------------------------------------------- 1  floor FROM
@@ -934,6 +967,14 @@ fi
 
 # Face the doors NOW, while still localized in a map the robot is genuinely in.
 wait_stow
+if [ "$ENTER_ONLY" = 1 ]; then
+    if [ -n "${PRESS_FAILED:-}" ]; then
+        say "ENTER-ONLY FINISHED -- in the car, but the floor press made NO CONTACT: $PRESS_FAILED"
+        exit 1
+    fi
+    say "ENTER-ONLY FINISHED -- through the doors, square to the panel, floor $TO pressed"
+    exit 0
+fi
 nav   "$A_CAR_FACING_OUT" || true
 
 # ---------------------------------------------------------------------------- 2  the ride

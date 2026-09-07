@@ -50,11 +50,10 @@ f2_car_at_panel:
 f2_car_panel:
   frame: map
   map_name: floor2
-  mola_session: 010fa5756345d0f7
-  odom_epoch: 1788817053
-  x: 6.8254
-  y: 4.2806
-  yaw: -2.8276
+  odom_epoch: 1788640330
+  x: 6.8889
+  y: 4.1384
+  yaw: 3.0424
 f2_lift_door:
   frame: map
   map_name: floor2

@@ -1,0 +1,47 @@
+# Sensor configuration — matches the REAL robot. Supersedes the camera/lidar blocks in robot.yaml.
+# Design (user-confirmed): ONE stationary RGB-D camera on a top metal-frame mast (NOT wrist-mounted),
+# plus a 2D lidar at the FRONT. The mast geometry below is the COMMITTED design — the real metal
+# frame will be built to match these numbers.
+
+camera_mast:
+  model: intel_realsense_d455      # the single, fixed top camera (VLM reasoning + grounding viewpoint)
+  mount: top_mast_frame_rear       # ~0.85 m metal frame at the REAR-CENTER of the deck, camera on top
+  # pose relative to base_link (x forward, y left, z up) — COMMITTED:
+  position_m: [-0.25, 0.0, 1.15]   # rear-center (behind the arm so the frame never blocks arm reach), 1.15 m high
+  pitch_deg: -10                   # tilt down (tuned from render: -20 put the button at the top edge; -10 centers
+                                   # a ~0.95 m button at ~1.0-1.25 m standoff while still showing floor + EE)
+  rgb:   {width: 1280, height: 720, hfov_deg: 90, vfov_deg: 65}            # D455 RGB ~90x65 deg
+  depth: {width: 1280, height: 720, hfov_deg: 87, vfov_deg: 58, min_m: 0.4, max_m: 6.0}  # D455 depth
+  frame: mast_cam_optical
+  # Physical build spec (for the real frame): a vertical post from the deck top (~0.30 m) up to
+  # ~1.15 m (≈0.85 m of frame), mounted ~0.25 m behind the robot's rotation center, camera fixed on
+  # top facing forward, angled 20 deg down.
+
+lidar_front:
+  model: rplidar_a1m8              # Slamtec RPLIDAR A1M8 (2D, 360 deg) — the real robot's front lidar
+  mount: base_front
+  position_m: [0.25, 0.0, 0.08]    # ON the front rails, ahead of the arm. NOTE: the COMMITTED mounted
+                                   # pose is authored in isaac_worker/assets/ranger_xarm6_arranged.usda
+                                   # (over "lidar_front") — that USD is the source of truth for placement.
+  fov_deg: 360                     # RPLIDAR spins 360; rear sectors occluded by the chassis, filtered for Nav2
+  range_m: [0.15, 12.0]            # A1M8 datasheet: 0.15 m min .. 12 m max (white target). Was S2E-class 0.05/30.
+  samples: 360                     # ~1 deg angular resolution (A1M8 spec <=1 deg) -> 360 rays / revolution
+  scan_rate_hz: 5.5                # A1M8 nominal scan rate (adjustable 5-10 Hz; datasheet default 5.5 Hz)
+  frame: lidar_link
+
+# ROS2 bridge topics (M1.2) these sensors publish via the Isaac action graph.
+ros:
+  rgb_topic: /mast_cam/color/image_raw
+  depth_topic: /mast_cam/depth/image_rect_raw
+  camera_info_topic: /mast_cam/color/camera_info
+  scan_topic: /scan
+
+open_items:
+  - >-
+    RESOLVED - lidar = Slamtec RPLIDAR A1M8 (0.15-12 m, ~1 deg, 5.5 Hz). The Isaac RTX-lidar
+    OmniLidar profile (which drives /scan min/max range) is a referenced Slamtec_RPLIDAR_S2E
+    asset baked S2E-class (0.05/30 m @ 10 Hz); we OVERRIDE its omni:sensor:Core:* attributes to
+    the A1M8 values above in isaac_worker/assets/ranger_xarm6_arranged.usda (immediately effective,
+    trial_server loads that file) and in isaac_worker/robot/build_full_robot.py (so a rebuild bakes
+    them from this config). The USD scanRateBaseHz field is a uint, so 5.5 Hz is authored as 5
+    (nearest int <= nominal); reportRateBaseHz = scanRateBaseHz * samples = 5 * 360 = 1800.

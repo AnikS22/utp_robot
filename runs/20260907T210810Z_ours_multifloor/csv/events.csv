@@ -1,0 +1,37 @@
+detail,kind,stamp
+floor2,map_load_start,1788815304.333492
+floor2,map_load_done,1788815354.2698848
+3.0m/20deg,scan_informative,1788815356.5838077
+"floor2 2.7229,1.3841 yaw 45.36 fit 65.7%",localized,1788815375.7612908
+f2_lift_door,leg_start,1788815375.8123064
+f2_lift_door arrived 15s,leg_end,1788815390.8210087
+f2_call_button,leg_start,1788815390.8715682
+f2_call_button arrived 13s,leg_end,1788815403.799388
+the small round blue button on the metal call plate,press_start,1788815403.8436306
+the small round blue button on the metal call plate,press_completed,1788815444.3160558
+f2_lift_door,leg_start,1788815446.6581478
+f2_lift_door arrived 164s,leg_end,1788815610.6654153
+open,doors_wait,1788815610.7110946
+,doors_open,1788815616.5310128
+f2_car_at_panel,leg_start,1788815616.5807378
+f2_car_at_panel arrived 9s,leg_end,1788815625.9172997
+f2_car_panel,leg_start,1788815625.9656186
+f2_car_panel arrived 6s,leg_end,1788815632.0198734
+the blue elevator button,press_start,1788815632.0734317
+the blue elevator button shortfall 0.044 advance 0.144,press_creep,1788815653.6259985
+the blue elevator button,press_failed,1788815655.7026126
+f2_car_at_doors,leg_start,1788815655.915408
+f2_car_at_doors arrived 6s,leg_end,1788815661.9191222
+floor1 (background),map_load_start,1788815661.9702487
+close,doors_wait,1788815662.022703
+floor1,map_load_start,1788815662.0251691
+,doors_closed,1788815665.703744
+2->1,ride_start,1788815670.0217805
+floor1,map_load_done,1788815721.8976161
+floor1 (background),map_load_done,1788815721.9494228
+3.0m/20deg,scan_informative,1788815726.3204067
+floor1 attempt 1,localization_rejected,1788815730.7232347
+floor1 attempt 2,localization_rejected,1788815735.2106142
+floor1 attempt 3,localization_rejected,1788815741.1450655
+floor1 attempt 4,localization_rejected,1788815746.9165215
+floor1 attempt 5,localization_rejected,1788815751.0326824

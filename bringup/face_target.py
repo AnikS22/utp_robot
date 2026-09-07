@@ -47,7 +47,7 @@ from sensor_msgs.msg import LaserScan  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
 
 from safety.mux_watch import MuxWatch  # noqa: E402
-from safety.reach_envelope import (APPROACH_BUDGET_S, ARM_REACH_M as ENVELOPE_M,  # noqa: E402
+from safety.reach_envelope import (PRESS_ACCEPT_SLACK_M, APPROACH_BUDGET_S, ARM_REACH_M as ENVELOPE_M,  # noqa: E402
                                    MIN_LIDAR_RANGE_M, PRESS_STANDOFF_M, check_before_reach,
                                    press_pose_ok, stalled)
 from safety.waypoint_drive import Limits, corridor_blocked, wrap  # noqa: E402

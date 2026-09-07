@@ -1,0 +1,17 @@
+detail,kind,stamp
+floor2,map_load_start,1788816047.351036
+floor2,map_load_done,1788816095.5921264
+3.0m/20deg,scan_informative,1788816096.385711
+"floor2 5.8154,2.3750 yaw 56.00 fit 82.1%",localized,1788816118.3341842
+f2_lift_door,leg_start,1788816118.3876307
+f2_lift_door already-there 0s,leg_end,1788816122.2772563
+f2_lift_door,leg_start,1788816122.3225703
+f2_lift_door already-there 0s,leg_end,1788816125.249579
+open,doors_wait,1788816125.2945025
+,doors_open,1788816137.3509955
+f2_car_at_panel,leg_start,1788816137.4021146
+f2_car_at_panel arrived 8s,leg_end,1788816145.6069267
+f2_car_panel,leg_start,1788816145.6551692
+f2_car_panel arrived 13s,leg_end,1788816158.585946
+the blue elevator button,press_start,1788816158.636978
+the blue elevator button,press_contact,1788816199.5612104
