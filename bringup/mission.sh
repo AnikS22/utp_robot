@@ -365,7 +365,17 @@ load_map() {
 # four blank walls and the search would agree with itself about the wrong answer. Agreement is
 # necessary, not sufficient.
 find_self() {
-    local map="$1" tries="${UTP_RELOC_TRIES:-5}" need="${UTP_RELOC_AGREE:-3}"
+    # SECOND ARGUMENT: a near-field mask, in metres, for the arrival only.
+    #
+    # Inside a lift car ~90% of the returns are the car, and the car is not in the floor's map, so
+    # the search scores best where the map's walls are densest -- an enclosed pocket 7.4 m from the
+    # lift. Dropping the near field leaves only the rays reaching out of the doorway, which DO
+    # correspond to mapped structure. Replayed across six arrivals on disk, 18 searches:
+    # near the lift 2/18 unmasked, 16/18 masked.
+    #
+    # Passed only where the near field is known to be unmapped clutter. On the departure floor the
+    # robot is in a room and those close returns are real evidence, so it is not used there.
+    local map="$1" minr="${2:-}" tries="${UTP_RELOC_TRIES:-5}" need="${UTP_RELOC_AGREE:-3}"
     local tol="${UTP_RELOC_TOL_M:-0.30}" told="${UTP_RELOC_TOL_DEG:-15}"
     # 40 -> 72. THIS THRESHOLD LET THE ROBOT DRIVE AT THE OPERATOR.
     #
@@ -398,7 +408,7 @@ find_self() {
     # gate on its own. It is kept only as a floor against the obviously degenerate. The real signal
     # is the AGREEMENT of repeated searches above, and the scan-quality test before them.
     local minfit="${UTP_RELOC_MIN_FIT:-55}"
-    say "FIND SELF on '$map'   (needs $need of $tries searches to agree)"
+    say "FIND SELF on '$map'   (needs $need of $tries searches to agree)${minr:+   [near-field mask ${minr} m]}"
     [ -n "$DRY" ] && { LOCALIZED="$map"; return 0; }
 
     # THE SCAN MUST SEE REAL STRUCTURE BEFORE ANY OF THIS MEANS ANYTHING -- BUT "STRUCTURE" IS
@@ -424,31 +434,35 @@ find_self() {
     #
     # So: require a minimum number of returns beyond UTP_SEE_M. Direction-free, and it fails
     # exactly in the case that produced the wrong lock.
-    # A FRACTION, NOT A COUNT. The first version asked for >= 25 returns beyond 3 m, and that
-    # passed from inside the lift car with the doors open -- 85 returns reached down the corridor
-    # through the doorway, comfortably over 25. But the scan as a whole was 853 returns of which
-    # 765 (90%) were under 1.5 m: the car walls, plus the operator and a chair riding down with
-    # the robot. None of that is in the map, so the matcher was fitting 90% noise against
-    # geometry that does not exist and landed on whichever enclosed pocket matched -- the same
-    # (5.88,-5.93) every time, 56% -> 68% as the scene shifted.
+    # THE SCAN MUST CARRY MAPPED STRUCTURE -- AND FROM 2026-09-07 THE ARRIVAL MASKS THE REST.
     #
-    # What separates the cases is how much of the scan is ROOM rather than BOX:
+    # This gate went through three wrong shapes before this one, each failing the same way: it
+    # asked about a DIRECTION instead of about the INFORMATION.
     #
-    #     inside the car, doors open   median 1.12 m,  10% of returns beyond 3 m
-    #     floor-2 lobby                median 2.22 m,  much higher fraction
+    #   forward clearance   refused a good pose in the floor-2 lobby (1.57 m ahead, 3.85 m behind,
+    #                       15.65 m max) because the robot happened to face a wall.
+    #   count beyond 3 m    passed from inside the car, because 85 rays reached down the doorway.
+    #   median >= 1.8 m     correct about box-vs-room, and it refuses the in-car scan outright --
+    #                       which is now wrong, because the arrival MASKS the box away and localizes
+    #                       from the doorway rays alone. Median would veto the very scans that were
+    #                       replayed to 16/18 correct.
     #
-    # The median is the honest summary: it cannot be rescued by a few long rays down a doorway,
-    # which is exactly how the count-based gate was fooled.
-    local swait="${UTP_SEE_WAIT:-90}" seem="${UTP_SEE_M:-3.0}" seen="${UTP_SEE_N:-25}" c0=$SECONDS
-    local seemed="${UTP_SEE_MEDIAN_M:-1.8}"
-    note "waiting until the scan is mostly ROOM not BOX (median >= ${seemed} m and >= ${seen} returns beyond ${seem} m)"
+    # What the arrival actually needs is that the doorway is OPEN: a sealed car has essentially no
+    # returns past 3 m in any direction, while a car with its doors open has ~86 spanning ~35 deg.
+    # So: enough long returns, spanning enough bearing that they are a doorway and not a few stray
+    # rays. Direction-free, and it still refuses the sealed car -- the case that produced a pose
+    # 8 m wrong which the robot then drove on.
+    local swait="${UTP_SEE_WAIT:-90}" seem="${UTP_SEE_M:-3.0}" seen="${UTP_SEE_N:-40}" c0=$SECONDS
+    local seespan="${UTP_SEE_SPAN_DEG:-20}"
+    note "waiting for a way out (>= ${seen} returns past ${seem} m spanning >= ${seespan} deg)"
     while :; do
-        if UTP_SEE_MEDIAN_M="$seemed" python3 - "$seem" "$seen" <<'PYSEE' >/dev/null 2>&1; then
-import rclpy, sys, time, math, numpy as np
+        if UTP_SEE_SPAN_DEG="$seespan" python3 - "$seem" "$seen" <<'PYSEE' >/dev/null 2>&1; then
+import rclpy, sys, os, time, math, numpy as np
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 far_m, need = float(sys.argv[1]), int(sys.argv[2])
+span_min = math.radians(float(os.environ.get("UTP_SEE_SPAN_DEG", "20")))
 rclpy.init(); n = Node("utp_see_check"); d = {}
 n.create_subscription(LaserScan, "/scan_nav", lambda m: d.__setitem__("s", m), qos_profile_sensor_data)
 t = time.time()
@@ -456,26 +470,31 @@ while "s" not in d and time.time() - t < 8:
     rclpy.spin_once(n, timeout_sec=0.1)
 ok = False
 if "s" in d:
-    r = np.array(d["s"].ranges)
-    r = r[np.isfinite(r) & (r > d["s"].range_min)]
-    if r.size:
-        import os
-        med_min = float(os.environ.get("UTP_SEE_MEDIAN_M", "1.8"))
-        ok = (int((r >= far_m).sum()) >= need) and (float(np.median(r)) >= med_min)
+    s = d["s"]
+    r = np.asarray(s.ranges, dtype=float)
+    ang = s.angle_min + np.arange(len(r)) * s.angle_increment
+    good = np.isfinite(r) & (r > s.range_min)
+    far = good & (r >= far_m)
+    if int(far.sum()) >= need:
+        a = np.sort(ang[far])
+        # widest contiguous run, allowing small gaps -- a doorway is one arc, not scatter
+        gap = np.diff(a)
+        cut = np.where(gap > math.radians(4.0))[0]
+        starts = np.concatenate(([0], cut + 1)); ends = np.concatenate((cut, [len(a) - 1]))
+        ok = bool(((a[ends] - a[starts]).max() >= span_min))
 rclpy.shutdown()
 sys.exit(0 if ok else 1)
 PYSEE
-            note "scan sees past ${seem} m after $(( SECONDS - c0 ))s -- searching now"
-            event scan_informative "${seem}m"
+            note "the way out is open after $(( SECONDS - c0 ))s -- searching now"
+            event scan_informative "${seem}m/${seespan}deg"
             break
         fi
         if [ $(( SECONDS - c0 )) -ge "$swait" ]; then
             event scan_blind "${seem}m"
-            die "after ${swait}s the scan still sees nothing beyond ${seem} m in ANY direction,
-        which is what the inside of a closed lift car looks like. Localizing from here produces a
-        pose that agrees with itself and is wrong -- measured 2026-09-07, three searches within
-        10 cm at 59.9% while the robot was 8 m from where they said, after which it drove at the
-        operator. Open the doors or move the robot out, then re-run."
+            die "after ${swait}s there is still no opening: fewer than ${seen} returns past ${seem} m
+        spanning ${seespan} deg, in any direction. That is a sealed lift car. Localizing from here
+        produces a pose that agrees with itself and is wrong -- measured 2026-09-07, and the robot
+        drove on it. Open the doors, then re-run."
         fi
         sleep 1
     done
@@ -487,7 +506,7 @@ PYSEE
         # second of actual search. Nearly all the wall clock was process startup, spent standing
         # in a lift doorway. The search already prints its own converged score on the "refined"
         # line, so the second call was asking a question it had just been told the answer to.
-        fit="$(python3 "$REPO/bringup/relocalise.py" 2>&1 \
+        fit="$(python3 "$REPO/bringup/relocalise.py" ${minr:+--min-range "$minr"} 2>&1 \
                | sed -n 's/.*refined .* fit \([0-9.]*\)%.*/\1/p' | tail -1)"
         sleep 1
         read -r x y w <<<"$(python3 - <<'PY'
@@ -728,7 +747,8 @@ elif [ -n "${SWAP_PID:-}" ]; then
 fi
 # LOCALIZE EVEN IF THE DOORS TIMED OUT. Knowing where it is costs nothing and is what an operator
 # needs in order to see the problem in RViz; only driving is gated below.
-find_self "$B_MAP"
+# MASKED, because this search happens inside the car. See find_self's second argument.
+find_self "$B_MAP" "${UTP_ARRIVAL_MASK_M:-1.5}"
 
 # CLEAR BEFORE THE FIRST LEG ON THE NEW FLOOR, ALWAYS. The obstacle layer still holds the lift
 # doors as a lethal band across the only way out -- they were shut for the whole ride, and the

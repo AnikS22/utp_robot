@@ -44,6 +44,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true", help="score only; publish nothing")
+    ap.add_argument("--min-range", type=float, default=0.0, metavar="M",
+                    help="ignore returns closer than M metres. For the lift arrival, where ~90%% "
+                         "of the scan is car wall that is not in the map. 0 = off (default).")
     a = ap.parse_args()
     rclpy.init(); n = Node("utp_relocalise")
     buf = tf2_ros.Buffer(); tf2_ros.TransformListener(buf, n)
@@ -71,7 +74,38 @@ def main() -> int:
         rclpy.spin_once(n, timeout_sec=0.1)
         if buf.can_transform("map", "base_link", rclpy.time.Time()):
             break
+    # NEAR-FIELD MASK. Default is the scan's own range_min, i.e. no change.
+    #
+    # WHY IT EXISTS. Inside a lift car ~90% of the returns are the car itself, and the car is not
+    # in the floor's map. This function scores endpoints landing on occupied cells with no penalty
+    # for contradicting the map, so a scan of mostly-unmapped short rays scores best wherever the
+    # map's walls are densest -- which on floor1 is an enclosed pocket 7.4 m from the lift. It is
+    # not a search bug; it is the honest argmax of a question that should not have been asked.
+    #
+    # Dropping the near field leaves only the rays that reach out of the doorway, and those DO
+    # correspond to mapped structure. Measured by replaying runs/20260907T012518Z and
+    # runs/20260907T013926Z -- two physically separate arrivals -- through this search:
+    #
+    #     unmasked   (5.94,-5.85) 51-55%   the wrong pocket, 7.4 m out, every time
+    #     >1.5 m     (2.59, 1.01) 74-79%   ten searches, 4 cm spread, 0.21 m from the lift
+    #
+    # The answer is flat from 1.3 m to 4.0 m and flips only below ~1.2 m, because the data has a
+    # hole there: 765 returns under 1.5 m, TWO between 1.5 and 3.0, 86 beyond. The threshold sits
+    # in the hole rather than on a slope. On a floor-2 lobby scan it removes 4 beams of 136 and
+    # returns the identical pose -- a no-op where the scan is already a room.
+    #
+    # safety/floor_plan.py:138 called for exactly this and left it unwritten: "The honest fix is to
+    # score only those beams (range beyond the car walls, ~1.5 m+)".
+    #
+    # NOT A DEFAULT. It throws away every close return, so it is right only where the near field is
+    # known to be unmapped clutter -- the arrival, inside the car. Anywhere else those returns are
+    # real evidence.
     mp, sc = d["map"], d["scan"]; info = mp.info; res = info.resolution
+    _min_range = max(float(a.min_range), sc.range_min) if a.min_range else sc.range_min
+    if a.min_range:
+        _kept = sum(1 for r in sc.ranges if r == r and _min_range < r < 15)
+        print(f"  near-field mask: dropping returns under {_min_range:.2f} m "
+              f"-- {_kept} of {len(sc.ranges)} rays kept")
     ox, oy = info.origin.position.x, info.origin.position.y
     W, H = info.width, info.height
     grid = np.array(mp.data, dtype=np.int8).reshape(H, W)
@@ -80,8 +114,10 @@ def main() -> int:
     ang = sc.angle_min
     for r in sc.ranges:
         aa = ang; ang += sc.angle_increment
-        if r == r and sc.range_min < r < 15:
+        if r == r and _min_range < r < 15:
             rs.append(r); angs.append(aa)
+    # BEFORE the subsample, deliberately. If the near field were dropped after this line the
+    # thinning would already have spent most of its 120 slots on car wall.
     st = max(1, len(rs) // BEAMS)
     rs = np.array(rs[::st]); angs = np.array(angs[::st])
 
