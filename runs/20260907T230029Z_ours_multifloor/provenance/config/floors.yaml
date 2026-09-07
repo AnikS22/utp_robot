@@ -1,0 +1,169 @@
+# The building, one entry per floor. Read safety/floor_plan.py's header first -- it says why a
+# lift ride is a map handover and not a navigation problem, and why that makes this file safety
+# critical rather than cosmetic.
+#
+# ONE MAP PER FLOOR, AND THEY MUST BE DIFFERENT MAPS. Two floors cannot share a slam_toolbox pose
+# graph: a graph is built from one continuous drive and there is no drive between floors. Every
+# identity check in this stack (safety/map_frame.py, bringup/nav2_goto.py, bringup/floor_swap.py)
+# compares MAP NAMES, so two floors naming one map turns the swap into a no-op that reports
+# success while the robot drives floor 1's route standing on floor 2. check_building() refuses it.
+#
+# WAYPOINT NAMES ARE GLOBAL. maps/waypoints.yaml is one flat store shared by every map, so the
+# names below must be unique across floors or the second recording silently overwrites the first.
+# Hence the f1_ / f2_ prefixes -- ON BOTH FLOORS, since 2026-09-05. Floor 1 used to be the
+# exception: its five waypoints were recorded unsuffixed on 2026-09-01 because bringup/
+# elevator_route.sh already drove them by those names. They are being deleted and re-recorded
+# under f1_ names in the floor1 re-map (see the floor "1" entry below for why), which leaves no
+# unprefixed waypoint anywhere and no way for floor 3 to collide with floor 1 by accident.
+#
+# RECORD EACH FLOOR'S WAYPOINTS WHILE LOCALIZED IN THAT FLOOR'S MAP, in the session that saved it.
+# Full procedure: docs/MULTIFLOOR.md.
+
+building: fau_eng
+
+floors:
+
+  # -------------------------------------------------------------------------------------------
+  "1":
+    kind: task
+    description: >
+      GROUND FLOOR, WHERE THE RIDE ENDS. The robot arrives here inside the car, steps out, and does
+      the ADA task: drive to the plate, press it, drive outside. It is NOT a lift floor -- it never
+      calls the lift from here and never selects a floor from inside the car here.
+      Map maps/floor1.* recorded 2026-09-05 as one continuous drive covering the lobby and the ADA
+      door: 836x829 at 0.05 m, 9918 occupied cells, 27.9 MB posegraph and 9.7 MB .data -- a MAP,
+      not a picture. The two waypoints below were recorded 2026-09-06 in that map's own
+      localization session.
+    map: floor1
+
+    # ONLY TWO WAYPOINTS, AND THAT IS THE WHOLE FLOOR. This block used to list five lift roles --
+    # call_button, door_reverse, car_facing_out, car_panel, exit -- and none of them was ever
+    # recorded, because on floor 1 three of them name controls THAT DO NOT EXIST. There is no call
+    # plate to press here and no in-car floor button to select. Recording five poses to turn
+    # --check green would have put three poses on disk pointing at nothing.
+    #
+    # NO car_facing_out, DELIBERATELY. That role is a SEED pose: on a lift floor it tells
+    # slam_toolbox where the robot is sitting when the doors open. Floor 1 does not seed. The robot
+    # drives out of the car and bringup/relocalise.py finds it GLOBALLY -- a lattice over every free
+    # cell x 72 headings, which on this map is 831,312 poses and about a second. Verified
+    # 2026-09-06: from a deliberately wrong seed it recovered the true pose, and a second sweep
+    # could not beat what it found.
+    waypoints:
+      task_button:  f1_ada_button   # square to the ADA plate  (+8.051,+3.377)  +31.8
+      task_exit:    f1_outside      # finish pose, outside      (+10.772,+3.410) +34.0
+
+    # NAME THE COLOUR OR THE FUNCTION, NOT THE HARDWARE. Measured 2026-09-06 from the live route:
+    # 'the accessible door push button' scored 0.408 and beat four decoys, with the fire-alarm
+    # family correctly rejected by press_veto.py (best forbidden hit 0.585, landing elsewhere).
+    task_query: "the accessible door push button"
+
+    # NO call_query. That field names the plate OUTSIDE that calls a car TO this floor, and the
+    # robot never calls the lift from floor 1 -- the ride ends here. safety/floor_plan.py requires
+    # call_query only for kind: lift, and task_query instead.
+
+    # select_query IS required here, and it is not a contradiction. It names the button INSIDE the
+    # car that sends the car to THIS floor -- the "1" -- and that button is pressed from floor 2 on
+    # the way down. It belongs to the floor it selects, not to the floor you press it on.
+    select_query: "the round blue button with a number on it"   # NOT "blue elevator button":
+      # that let the four key switches above the NO SMOKING sign outscore the floor buttons,
+      # and pick-from-bottom then took the lowest of THOSE -- which check_press_safe refused
+      # as overlapping an emergency control (86%). 2026-09-07. This query proposes both floor
+      # buttons, and the spatial pick takes the lower one.
+
+    # WHICH BUTTON, COUNTED FROM THE BOTTOM OF THE PANEL COLUMN. Floor 1 is the lowest.
+    #
+    # The spatial fix the note under floor 2's select_query has been promising since 2026-09-05.
+    # The car's "1" and "2" are the same blue, 34 px apart in frame, and measured 2026-09-06 SEVEN
+    # phrasings all scored 0.28-0.35 with the ranking reshuffling between frames. Twice the
+    # grounder returned "2" -- the floor the robot was already standing on -- so the arm pressed a
+    # button that does nothing, and it read as a miss. No sentence separates them: they are not
+    # linguistically different, only spatially. Language finds the PANEL, this picks the BUTTON.
+    #
+    # From the BOTTOM, not the top: the bottom of the column is the lowest floor and does not move,
+    # while the top depends on how many floors the building has.
+    select_index_from_bottom: 1
+
+    # OPERATOR NOTE 2026-09-05, verbatim: "we are trying to hit the 1st floor button so #0.33 for
+    # the arm". That belongs to the IN-CAR press on the ride down, which is floor 2's select_query
+    # chain, not to anything on this floor. Kept here because this is where it was said, and 0.33
+    # has still not been tied to a named parameter -- guessing which one it is (a z offset, a reach,
+    # a joint target) is how a wrong number ends up in a config that safety code reads.
+
+  # -------------------------------------------------------------------------------------------
+  "2":
+    description: >
+      Destination floor. Map recorded and saved 2026-09-05 as maps/floor2.* (267 KB grid, 20.4 MB
+      posegraph, 2884 occupied cells). That is the CLEAN re-map, made after
+      safety/cloud_artifact_filter.py stopped the OS0 near-field crosstalk from stamping phantom
+      walls; the earlier contaminated run is kept as maps/floor2.contaminated.* at 3467 occupied
+      cells, and the 583-cell difference is the artifact. All five waypoints below were recorded
+      2026-09-05 in that map's own localization session, and every one of the four nav legs has
+      been driven successfully by Nav2. The in-car press has been tuned by hand at car_panel.
+      The lift has NOT yet been ridden.
+    map: floor2
+
+    # CORRECTED 2026-09-05. This block previously named map 'elevator_f2' and waypoints
+    # 'call_button_f2', 'car_panel_f2' and so on. NONE OF THOSE EXIST: the map on disk is
+    # maps/floor2.* and the recorded waypoints are all f2_-PREFIXED, not _f2-SUFFIXED. The entry
+    # had been written from the naming convention described at the top of this file rather than
+    # from the waypoints that were actually recorded, so `floor_swap.py --to 2 --go` would have
+    # failed to find its seed pose with the robot already standing inside the lift car. Caught by
+    # `floor_swap.py --check`, which is the one piece of this that behaved correctly.
+    waypoints:
+      call_button:     f2_call_button    # outside, at the call plate      (+6.499,+2.119)  +48.6
+      door_facing:     f2_lift_door      # outside, NOSE toward the doors  (+5.907,+2.537)  +55.4
+      car_facing_in:   f2_car_at_panel   # inside, facing away from doors  (+7.252,+4.298)  +56.2
+      car_facing_out:  f2_car_at_doors   # inside, facing the doors        (+7.252,+4.298) -123.8
+      car_panel:       f2_car_panel      # inside, square to the panel     (+6.889,+4.138) +174.3
+      exit:            f2_lift_door      # back outside the doors
+
+    # NO door_reverse, DELIBERATELY. Floor 2 enters nose-first, so no reverse pose was ever
+    # recorded and none should be invented. safety/floor_plan.py waives the role when door_facing
+    # and car_facing_in are both present -- see FORWARD_ENTRY_ROLES there for why pointing
+    # door_reverse at f2_lift_door instead would have been a lie no checker could catch.
+    #
+    # car_facing_in and car_facing_out are the SAME POSITION, 180 deg apart. The second was
+    # derived by flipping the first's heading rather than recorded separately, because the
+    # operator asked for exactly that. The turn between them is bringup/spin.py, NOT a Nav2 goal:
+    # MPPI takes its full 0.8 rad/s and loses the scan match. See spin.py's header.
+    #
+    # car_panel is 0.48 m from car_facing_out and is the pose the arm press was actually tuned at,
+    # after several offset corrections. It is NOT interchangeable with car_facing_in even though
+    # both sit "inside the car" -- car_facing_in has only ever been validated for navigation.
+
+    # MEASURED 2026-09-06, from the live call-plate pose (captures/press_171645), against the
+    # frame that stopped two runs. "the blue elevator call button" chose the "IN CASE OF FIRE USE
+    # STAIRS" SIGN -- a 189x221 px dark square high in the frame -- at 0.464, while the real button
+    # (27x31 px, 0.09% of the image) came second at 0.418. check_press_safe.py refused both runs
+    # because that sign reads 0.654 as "an emergency stop button", which is the guard working
+    # exactly as intended: pressing it is not a failed trial, it is an evacuation.
+    #
+    # Four queries on the SAME frame, so this is a comparison and not an anecdote:
+    #   the blue elevator call button                        SIGN   0.464   (button 0.418)
+    #   the blue button on the wall plate beside the lift    button 0.512   (sign   0.283)
+    #   the round blue button                                button 0.538   (sign   0.285)
+    #   the small round blue button on the metal call plate  button 0.564   (sign   0.291)
+    #
+    # The winner does not just win, it inverts the ranking: the sign falls to 0.291, a 0.273
+    # margin, where the old query LOST to it. What did the work is naming the SIZE and the SHAPE --
+    # "small", "round" -- because the decoy's whole advantage was being large and rectangular.
+    # This does not fix "name the colour, not the object"; it extends it: the colour alone could
+    # not separate a blue button from a dark sign at this distance.
+    call_query: "the small round blue button on the metal call plate"
+
+    # KNOWN-OPEN, AND THE MOST LIKELY THING TO GO WRONG IN A DEMO. A panel has one button per
+    # floor and they are all the same blue. This query cannot tell them apart, and the grounder
+    # will return whichever it likes best -- which is the same failure shape as the fire alarm on
+    # 2026-08-29 (confident, well-formed, wrong object), except press_veto.py has nothing to say
+    # about it because a wrong floor button is not a dangerous object.
+    #
+    # For a two-button lift the odds are what they are and press_run.sh shows the chosen box
+    # before the arm moves, so an operator watching can stop it. Do not read a successful demo as
+    # evidence that this query is discriminative. If it needs to be, the honest fix is a spatial
+    # one -- the panel's buttons are vertically ordered and their order is known -- and that is a
+    # geometry question for the grounder's output, not a better sentence.
+    select_query: "the round blue button with a number on it"   # NOT "blue elevator button":
+      # that let the four key switches above the NO SMOKING sign outscore the floor buttons,
+      # and pick-from-bottom then took the lowest of THOSE -- which check_press_safe refused
+      # as overlapping an emergency control (86%). 2026-09-07. This query proposes both floor
+      # buttons, and the spatial pick takes the lower one.

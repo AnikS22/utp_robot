@@ -103,6 +103,52 @@ def _relift(det, cand, depth, cam):
         det.point3d = None
         return det
     z = float(_np.median(good))
+    # CENTRE ON THE BUTTON, NOT ON THE BOX.
+    #
+    # Everything above measures the detector's BOX: the median depth of its middle half, and the
+    # geometric centre of its corners. A control is not its box. It stands PROUD of the plate it is
+    # mounted on -- that is what makes it pressable -- so within the box the button's own pixels are
+    # the nearest ones, and the plate behind it drags both the median depth and, when the box sits
+    # loose, the lateral centre.
+    #
+    # Measured 2026-09-07 across three consecutive frames of the in-car floor button, 27x33 px each:
+    # the protruding pixels' centroid sat 11.3, 11.0 and 10.9 mm to one side of the box centre, and
+    # 6 to 9 mm nearer. Three independent frames agreeing to 0.4 mm is a measurement, not noise --
+    # and it is the same correction the operator had been dialling in by hand as "+y", "-y", "a
+    # touch more". This measures it instead of asking.
+    #
+    # GUARDED, because the same arithmetic on a bad box is nonsense: three frames where the detector
+    # had caught something that was not a button (boxes 32x17, 29x15, 16x18 px) produced depth
+    # shifts of 308, 156 and 45 mm. A real button is a small bump on a flat plate, so a shift beyond
+    # these bounds means the box is not on one, and the box centre is kept.
+    if _np.isfinite(z) and z > 0.05:
+        _bx = _np.asarray(depth[int(y0):int(y1), int(x0):int(x1)], dtype=float)
+        if _bx.size and (_bx.max(initial=0) > 100):
+            _bx = _bx / 1000.0
+        _m = _np.isfinite(_bx) & (_bx > 0.05)
+        if _m.sum() >= 20:
+            _near = _bx[_m] <= _np.percentile(_bx[_m], 25)      # the quarter standing proud
+            _yy, _xx = _np.nonzero(_m & (_bx <= _np.percentile(_bx[_m], 25)))
+            if _yy.size >= 8:
+                _u = float(_xx.mean()) + x0
+                _v = float(_yy.mean()) + y0
+                _z = float(_np.median(_bx[_m][_near]))
+                _K0 = cam["K"]
+                if _K0 and isinstance(_K0[0], (list, tuple)):
+                    _K0 = [q for r in _K0 for q in r]
+                _du = abs(_u - (x0 + x1) / 2.0) * _z / float(_K0[0])
+                _dv = abs(_v - (y0 + y1) / 2.0) * _z / float(_K0[4])
+                if _du <= 0.030 and _dv <= 0.030 and abs(_z - z) <= 0.050:
+                    x0, x1 = _u - (x1 - x0) / 2.0, _u + (x1 - x0) / 2.0
+                    y0, y1 = _v - (y1 - y0) / 2.0, _v + (y1 - y0) / 2.0
+                    z = _z
+                    lift_note = (f"depth-centred on the protruding button "
+                                 f"({_du*1000:.0f} mm lateral, {_dv*1000:.0f} mm vertical)")
+                else:
+                    lift_note = (f"box centre kept: the protruding pixels are {_du*1000:.0f}/"
+                                 f"{_dv*1000:.0f} mm and {abs(_z-z)*1000:.0f} mm off, too far for a "
+                                 f"button on a plate")
+                print(f"  {lift_note}")
     # K is stored either flat (9 values) or as a 3x3 nested list, depending on who wrote the
     # capture. Flatten before indexing rather than assuming, which is what crashed here first.
     K = cam["K"]

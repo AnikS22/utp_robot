@@ -1,0 +1,32 @@
+# Runtime / execution configuration.
+# The `render` switch is the local-vetting vs HPC-batch knob:
+#   gui      -> Isaac viewer visible (watch a single scene while vetting). Used by `utp.runner.vet`.
+#   headless -> no window, fast, GPU-pinned. Used by `utp.runner.batch` for the campaign.
+render: gui                 # default for local vetting; batch runner forces `headless`.
+
+# Which world backend the pipeline talks to:
+#   isaac -> real Isaac worker over ROS2 (M1+).
+#   mock  -> pure-Python MockWorld (M0, tests, CI — no Isaac/GPU/network).
+world: mock
+
+# GPU assignment for headless Isaac workers (one persistent worker per GPU).
+# NOTE: this list is informational only — the world=isaac dispatcher REQUIRES an explicit
+# --gpus/UTP_GPUS assignment so an automated default can never grab the display GPU
+# (check `nvidia-smi --query-gpu=index,display_active --format=csv` first). One trial
+# server per GPU; parallel slots are isolated on ROS domains 42, 43, 44, ...
+gpus: [0, 1, 2]             # RTX 6000 Ada x3 locally; override for A100 nodes.
+workers_per_gpu: 1
+isaac_server_seconds: 14400 # trial_server --seconds per launch; dispatcher relaunches on expiry
+
+# Per-trial limits (guard the FSM; feed the `timeout` failure_category).
+trial_time_budget_s: 300
+max_recovery_attempts: 2    # verification-driven retries before declaring execution failure
+control_loop_hz: 30
+
+# Reproducibility.
+deterministic: true
+seed_offset: 0              # added to scene_seed; lets us run fresh batches without collisions
+
+# Artifacts.
+save_screenshots: true      # failure-taxonomy figure inputs; logged in artifact_paths
+save_video: false
