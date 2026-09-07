@@ -935,8 +935,25 @@ else
       # Same params file as mapping -- a map built with one set of scan-matcher settings and
       # localized with another matches worse for no reason -- overriding only what must differ.
       # --ros-args after --params-file wins, so the override is the last word.
+      # FREEZE THE PUBLISHED MAP FOR THE WHOLE LOCALIZATION SESSION.
+      #
+      # chmod a-w on maps/*.pgm protects the FILE. It does not protect the map Nav2 actually uses,
+      # which is the /map TOPIC, and slam_toolbox regenerates that every map_update_interval
+      # (5.0 s in config/slam_os0.yaml) from its pose graph plus the scans it has taken since --
+      # in localization mode as well as mapping. Measured 2026-09-07 on floor2: the live grid had
+      # 2972 occupied cells against the saved file's 2884. Eighty-eight walls that exist only at
+      # runtime, and the operator watched one of them appear where the robot was standing, after
+      # which Nav2's static layer treated it as an obstacle and planned around a wall that is not
+      # in the building.
+      #
+      # A huge interval means the map is published once on activation and never regenerated, so
+      # what Nav2 sees for the rest of the session is exactly what was loaded from disk. The 5.0 s
+      # default stays correct for mapping, which is why this is overridden HERE and not in the
+      # shared params file. UTP_MAP_UPDATE_INTERVAL exists for anyone who deliberately wants the
+      # live behaviour back.
       start_bg ros2 run slam_toolbox localization_slam_toolbox_node --ros-args \
         --params-file "$REPO/config/slam_os0.yaml" -p use_sim_time:=false -p mode:=localization \
+        -p map_update_interval:="${UTP_MAP_UPDATE_INTERVAL:-1000000.0}" \
         -p map_file_name:="$REPO/maps/$MAP_NAME" -p map_start_pose:="[$SEED_POSE]"
       ensure_active /slam_toolbox 90 || note "SLAM activation failed; see $LOG"
       wait_ready 30 /map latched "topic:/map:nav_msgs.msg:OccupancyGrid:latched" "tf:map:odom"
