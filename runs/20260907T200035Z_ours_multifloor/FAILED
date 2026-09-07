@@ -1,0 +1,1 @@
+operator killed the run: floor-2 lock at 57.6% fit put f2_lift_door 3.4 m from the robot's true position, Nav2 aborted the leg after 178 s (recoveries exhausted); call press made contact but the operator judged the depth/lateral landing off; the arm never folded after contact (state 4 after error 31)

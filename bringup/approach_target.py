@@ -155,7 +155,36 @@ def main() -> int:
                     help="named offset from calib/handeye.json target_offset_profiles, "
                          "e.g. lift_car_select. Default: the validated global offset.")
     ap.add_argument("--min-standoff", type=float, default=150.0,
-                    help="stop with the MARKER this far from the target, mm")
+                    help="stop with the REFERENCE POINT this far from the target, mm. May be "
+                         "negative with --tool-tip-mm: the tip is then driven that far PAST the "
+                         "target plane, which is what actually depresses a button.")
+    # AIM THE THING THAT TOUCHES THE WALL.
+    #
+    # Every approach until now placed the CALIBRATION MARKER at the target. The marker is a point
+    # on the flange used by the hand-eye solve; it sits 96 mm BEHIND the flange face. The gripper
+    # fingertip sits ~172 mm IN FRONT of it. Along the approach axis they are 268 mm apart, so
+    # "stop with the marker 30 mm from the button" commands the FINGERTIP to a point 238 mm inside
+    # the wall.
+    #
+    # Measured 2026-09-07 on the floor-2 call button, from the log and the arm's own encoders:
+    #   plan     drove the tip to 236 mm past the button (i.e. through the wall)
+    #   contact  error 31 fired 293 mm short of that commanded pose, with the tip 26 mm past the
+    #            wall plane, 71 mm lateral and 165 mm ABOVE the button
+    # The press "made contact" and the route scored it a success. What it touched was the wall,
+    # a handspan above the control. That is the whole of the "depth is way off" report -- the
+    # detector was right (0.645, 28x32 px) and the depth was right (camera 0.583 m vs lidar
+    # 0.626 m at the same bearing, a 4 cm difference that IS the plate). The arm was aiming the
+    # wrong point at it.
+    #
+    # This is NOT the unresolved tcp_offset question in docs/CALIBRATION.md item 2. Nothing is
+    # written to the controller and hand-eye stays flange-relative and untouched; the tool length
+    # is used HERE, in this script, only to choose which point on the flange to drive at the
+    # target. 172 mm need not be exact -- with a small standoff and error-31 contact detection an
+    # error of a centimetre or two is absorbed. 268 mm is not.
+    ap.add_argument("--tool-tip-mm", type=float,
+                    default=float(os.environ.get("UTP_TOOL_TIP_MM", "0") or 0),
+                    help="distance from the flange face to the fingertip along the tool +z axis. "
+                         "When non-zero the TIP, not the marker, is placed at the standoff.")
     ap.add_argument("--go", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--id", type=int, default=3)
@@ -292,10 +321,29 @@ def main() -> int:
     print(f"\nstart flange {start_xyz.round(4)}  marker {marker_now.round(4)}")
     print(f"start headroom {room:.1f} deg on J{j}")
 
+    # THE REFERENCE POINT the standoff is measured from. See --tool-tip-mm.
+    if a.tool_tip_mm:
+        ref_off = np.array([0.0, 0.0, a.tool_tip_mm / 1000.0])
+        ref_name = f"tool tip ({a.tool_tip_mm:.0f} mm past the flange)"
+    else:
+        ref_off = moff
+        ref_name = "calibration marker"
+    ref_now = R_f @ ref_off + start_xyz
+    print(f"reference point : {ref_name} -> {ref_now.round(4)}")
+    if a.tool_tip_mm:
+        _sep = float(np.dot(R_f @ (ref_off - moff), approach))
+        print(f"  the marker sits {_sep*1000:.0f} mm behind it along the approach axis; aiming the "
+              f"marker instead would drive the tip that far past the target")
     step_mm = a.step_mm if a.step_mm else STEP_MM
     speed = a.speed if a.speed else SPEED_MM_S
-    dist_now = float(np.dot(p_arm - marker_now, approach))
-    print(f"marker is {dist_now*1000:.0f} mm from the target along the approach axis")
+    dist_now = float(np.dot(p_arm - ref_now, approach))
+    print(f"reference point is {dist_now*1000:.0f} mm from the target along the approach axis")
+    if dist_now <= a.min_standoff / 1000.0:
+        print(f"\nNOT REACHING: the reference point is already {dist_now*1000:.0f} mm from the "
+              f"target, at or inside the {a.min_standoff:.0f} mm standoff. Driving would push it "
+              f"further in, not press. Move the base back, or re-ground.", file=sys.stderr)
+        arm.disconnect()
+        return 1
     stops = []
     d = dist_now
     while d - step_mm / 1000.0 > a.min_standoff / 1000.0:
@@ -305,7 +353,7 @@ def main() -> int:
     print(f"\n{len(stops)} steps, stopping at {a.min_standoff:.0f} mm standoff:")
     for i, s in enumerate(stops, 1):
         tgt = p_arm - approach * s
-        fl = tgt - R_f @ moff
+        fl = tgt - R_f @ ref_off
         print(f"  step {i}: marker standoff {s*1000:6.0f} mm -> flange {fl.round(4)}")
 
     if a.dry_run:
@@ -318,7 +366,7 @@ def main() -> int:
     try:
         for i, s in enumerate(stops, 1):
             tgt = p_arm - approach * s
-            fl = tgt - R_f @ moff
+            fl = tgt - R_f @ ref_off
             print(f"\n[step {i}/{len(stops)}] marker standoff {s*1000:.0f} mm ...")
             code = arm.set_position(x=fl[0]*1000, y=fl[1]*1000, z=fl[2]*1000,
                                     roll=start_rpy[0], pitch=start_rpy[1], yaw=start_rpy[2],

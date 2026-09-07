@@ -183,10 +183,21 @@ press() {
     # stops at a known pose and joint headroom is re-checked before each commit -- worth it while
     # the chain was being debugged, and pure cost now that it works: four commanded moves and four
     # settles on a task timed by a door closer. UTP_STEP_MM=1000 collapses it to a single move.
-    # UTP_STANDOFF 30, not the 60 default. At 60 the floor-2 call press completed with no
-    # contact at all -- correct target, clean move, retreat, no error 31. Contact is the only
-    # evidence of a press this rig can produce, so stopping short of it is a silent no-op dressed
-    # as a success. 30 mm leaves the gripper travelling into the plate rather than beside it.
+    # UTP_TOOL_TIP_MM 172 AND A NEGATIVE STANDOFF. These two go together and they are the fix
+    # for "the depth was way off", measured on the floor-2 call button 2026-09-07.
+    #
+    # approach_target used to place the hand-eye CALIBRATION MARKER at the standoff. The marker is
+    # 96 mm behind the flange face; the fingertip is 172 mm in front of it. So "marker 30 mm from
+    # the button" drove the FINGERTIP 236 mm into the wall. It rammed, error 31 fired 293 mm short
+    # of the commanded pose with the tip 71 mm lateral and 165 mm ABOVE the button, and the route
+    # scored that a successful press. The detector and the depth were both fine -- gdino picked the
+    # right 28x32 px button at 0.645, and its 0.583 m agreed with the lidar wall at 0.626 m. The
+    # arm was aiming the wrong point on itself.
+    #
+    # With the tip as the reference the standoff becomes what it sounds like, and it must be
+    # NEGATIVE: a button needs to be pushed, so drive the tip 25 mm past the target plane and let
+    # contact stop it. 25 mm also absorbs a ~20 mm error in the unverified 172 mm tool length in
+    # either direction, which a small positive standoff would not.
     # --hold: DO NOT RETREAT TO THE START POSE. approach_target.py's success path drives the arm
     # all the way back to wherever it began -- 407 mm of Cartesian motion, about seven seconds --
     # and then the caller folds it to stow anyway. The retreat exists so a press run BY HAND leaves
@@ -207,7 +218,8 @@ press() {
     # made no contact. The --dry-run branch below is correctly formed, so a dry run could never
     # have shown it.
     UTP_NO_STOW=1 UTP_OFFSET_PROFILE="$profile" UTP_PICK_FROM_BOTTOM="$pick" \
-    UTP_STANDOFF="${UTP_STANDOFF:-30}" UTP_REACH_MARGIN_M="${UTP_REACH_MARGIN_M:-0.03}" \
+    UTP_STANDOFF="${UTP_STANDOFF:--25}" UTP_REACH_MARGIN_M="${UTP_REACH_MARGIN_M:-0.03}" \
+    UTP_TOOL_TIP_MM="${UTP_TOOL_TIP_MM:-172}" \
     UTP_STEP_MM="${UTP_STEP_MM:-1000}" UTP_REACH_SPEED="${UTP_REACH_SPEED:-90}" \
         bash "$REPO/bringup/press_run.sh" --query "$query" --hold --name "$cap" 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
