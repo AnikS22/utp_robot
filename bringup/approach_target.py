@@ -261,10 +261,20 @@ def main() -> int:
     # The fix for being out of reach is to move the BASE (bringup/face_target.py), never to ask
     # the arm for reach it does not have.
     sys.path.insert(0, str(REPO))
-    from safety.reach_envelope import check_before_reach
-    _ok, _why = check_before_reach(float(np.linalg.norm(p_arm)))
+    from safety.reach_envelope import check_before_reach, ARM_REACH_M
+    # UTP_REACH_MARGIN_M: refuse a little EARLY. in_reach is `range <= 0.88` with no slack, and on
+    # 2026-09-07 the ADA plate grounded at 0.8801 m: refused as "0.00 m short". A target that close
+    # to the envelope edge is no better than one past it -- IK at the boundary faults just the
+    # same -- so the caller can ask for a margin, and the SHORTFALL_M line tells it exactly how far
+    # to move the base before trying again (mission.sh reads it).
+    _rng = float(np.linalg.norm(p_arm))
+    _margin = float(os.environ.get("UTP_REACH_MARGIN_M", "0") or 0)
+    _ok, _why = check_before_reach(_rng + _margin)
     if not _ok:
         print(f"\nNOT REACHING: {_why}", file=sys.stderr)
+        if _margin:
+            print(f"  (with a {_margin*1000:.0f} mm margin; measured {_rng:.3f} m)", file=sys.stderr)
+        print(f"SHORTFALL_M {max(0.0, _rng + _margin - ARM_REACH_M):.3f}")
         return 1
 
     from xarm.wrapper import XArmAPI

@@ -155,7 +155,9 @@ class Facer(Node):
         self.mux.note_command(not (v == 0.0 and w == 0.0), now)
         return self.mux.verdict(now).ok
 
-    def servo_to_press_pose(self, tx: float, ty: float, lim: Limits) -> tuple[bool, str]:
+    def servo_to_press_pose(self, tx: float, ty: float, lim: Limits,
+                            standoff_m: float = PRESS_STANDOFF_M,
+                            slack_m: float = PRESS_ACCEPT_SLACK_M) -> tuple[bool, str]:
         """Face the grounded target and step to the press standoff. Target-relative, on odometry.
 
         THIS IS isaac_world._approach_press_pose, PORTED. Its own comment says why it must not use
@@ -187,7 +189,7 @@ class Facer(Node):
             dist = math.hypot(tx - x, ty - y)
             yaw_err = wrap(math.atan2(ty - y, tx - x) - th)
 
-            if press_pose_ok(dist, yaw_err):
+            if press_pose_ok(dist, yaw_err, standoff_m=standoff_m, slack_m=slack_m):
                 self.stop()
                 return True, (f"positioned: {dist:.2f} m from the target, "
                               f"{math.degrees(yaw_err):+.1f} deg off the press axis")
@@ -215,7 +217,7 @@ class Facer(Node):
             w = max(-lim.w_max, min(lim.w_max, 1.2 * yaw_err))
             if abs(w) < 0.12 and abs(yaw_err) > YAW_TOL:
                 w = math.copysign(0.12, w)
-            v = 0.0 if abs(yaw_err) > 0.6 else min(0.10, max(0.0, dist - PRESS_STANDOFF_M))
+            v = 0.0 if abs(yaw_err) > 0.6 else min(0.10, max(0.0, dist - standoff_m))
             if 0.0 < v < 0.05:
                 v = 0.05
             self.pub.publish(Twist(linear=Vector3(x=v), angular=Vector3(z=w)))
@@ -234,7 +236,18 @@ def main() -> int:
     ap.add_argument("capture", type=Path, help="capture dir holding detection.json")
     ap.add_argument("--standoff", type=float, default=PRESS_STANDOFF_M)
     ap.add_argument("--dry-run", action="store_true")
+    # --advance M: step straight in toward the grounded target by M metres and stop, ignoring
+    # the press standoff. For the SMALL shortfalls a Nav2 arrival leaves: 2026-09-07 the base
+    # stopped 16 cm short of f1_ada_button (inside the 0.14 m goal tolerance plus coast), the
+    # plate grounded at 0.880 m from link_base against a 0.88 m arm, and approach_target refused.
+    # The fix is to move the base by the shortfall, not to re-plan a 0.50 m standoff from a pose
+    # that was already nearly right. Accepts within 3 cm, then the caller RE-GROUNDS.
+    ap.add_argument("--advance", type=float, default=None,
+                    help="drive straight toward the target by this many metres, then stop")
     a = ap.parse_args()
+    if a.advance is not None and not (0.0 < a.advance <= 0.40):
+        print(f"--advance {a.advance} is outside (0, 0.40] m; refusing", file=sys.stderr)
+        return 2
 
     det_file = a.capture / "detection.json"
     if not det_file.exists():
@@ -272,7 +285,10 @@ def main() -> int:
                  f"OUT OF REACH by {dist-ARM_REACH_M:.2f} m"))
         print(f"  plan: turn {math.degrees(bear):+.1f} deg, then advance {step_in:+.2f} m "
               f"to a {a.standoff:.2f} m standoff")
-        if dist <= ARM_REACH_M and abs(bear) <= YAW_TOL:
+        if a.advance is not None:
+            step_in = a.advance
+            print(f"  --advance: stepping in {a.advance:.2f} m toward the target instead")
+        elif dist <= ARM_REACH_M and abs(bear) <= YAW_TOL:
             print("  nothing to do.")
             return 0
         if a.dry_run:
@@ -299,7 +315,11 @@ def main() -> int:
             {"odom_xy": [tx, ty], "z_base": float(p_base[2]), "frame": frame,
              "score": float(det.get("score", 0.0)), "query": det.get("query")}, indent=2))
 
-        ok, why = n.servo_to_press_pose(tx, ty, lim)
+        if a.advance is not None:
+            ok, why = n.servo_to_press_pose(tx, ty, lim, standoff_m=max(0.05, dist - a.advance),
+                                            slack_m=0.03)
+        else:
+            ok, why = n.servo_to_press_pose(tx, ty, lim)
         print(f"  approach: {'ok' if ok else 'FAILED'} {why}")
         # THE REPORT MUST NOT OUTRUN THE MEASUREMENT. "positioned 0.68 m, +0.0 deg off the press
         # axis" was true of the TARGET and false of the plate: the target came from a grounding

@@ -77,6 +77,31 @@ if [ "$PREPARE_IN_CAR" = 1 ] && [ -z "$PREPARE_FLOOR" ]; then
     echo "--in-car requires --prepare-floor" >&2; exit 2
 fi
 
+# ON THE WAY OUT, STOP WHAT THIS SCRIPT STARTED. Without this, a die or a Ctrl-C mid-leg left
+# nav2_goto.py and the Nav2 goal running with nobody reading the result, a background map load
+# half done, and the arm wherever the press left it. Children are killed by PARENT PID -- never by
+# a name pattern -- then a zero twist goes out on the servo input, which outranks Nav2 at the mux.
+PRESS_FAILED=""
+cleanup() {
+    local rc=$?
+    trap - EXIT INT TERM
+    [ -n "$DRY" ] && exit "$rc"
+    # SIGINT first: nav2_goto.py cancels its Nav2 goal on KeyboardInterrupt and on nothing else.
+    pkill -INT -P $$ >/dev/null 2>&1 || true; sleep 2; pkill -P $$ >/dev/null 2>&1 || true
+    timeout 6 python3 - <<'PYZ' >/dev/null 2>&1 || true
+import rclpy, time
+from geometry_msgs.msg import Twist
+rclpy.init(); n = rclpy.create_node("utp_mission_stop")
+p = n.create_publisher(Twist, "/cmd_vel_servo", 10)
+for _ in range(10): p.publish(Twist()); time.sleep(0.05)
+rclpy.shutdown()
+PYZ
+    [ "$rc" -ne 0 ] && echo "  (mission exited with status $rc -- children stopped, base halted; check the arm)" >&2
+    exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
 say()  { echo; echo "=============================================================="; \
          echo " $*"; echo "=============================================================="; }
 die()  { echo; echo "STOP: $*" >&2; exit 1; }
@@ -151,7 +176,9 @@ press() {
     [ -n "$DRY" ] || "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go >/dev/null 2>&1
     [ -n "$DRY" ] && { UTP_OFFSET_PROFILE="$profile" UTP_PICK_FROM_BOTTOM="$pick" \
         bash "$REPO/bringup/press_run.sh" --dry-run --query "$query" || true; return 0; }
-    log="$(mktemp)"
+    local cap tries="${UTP_PRESS_TRIES:-2}" attempt short adv
+    for attempt in $(seq 1 "$tries"); do
+    log="$(mktemp)"; cap="press_$(date +%H%M%S)"
     # ONE MOTION, AND FASTER. approach_target.py splits the reach into 60 mm segments so a fault
     # stops at a known pose and joint headroom is re-checked before each commit -- worth it while
     # the chain was being debugged, and pure cost now that it works: four commanded moves and four
@@ -164,6 +191,9 @@ press() {
     # all the way back to wherever it began -- 407 mm of Cartesian motion, about seven seconds --
     # and then the caller folds it to stow anyway. The retreat exists so a press run BY HAND leaves
     # the arm where it was found; inside a route it is pure cost, spent while a lift door closes.
+    # UTP_REACH_MARGIN_M: refuse the reach while it is still 30 mm INSIDE the envelope edge, and
+    # get told the shortfall. 2026-09-07 the ADA plate grounded at 0.8801 m against a 0.88 m arm
+    # after Nav2 stopped 16 cm short of the waypoint; refused, and the run died with the arm out.
     #
     # KEEP THIS COMMENT ABOVE THE COMMAND. It used to sit between the assignment prefix and the
     # command, on a line continuation. Bash splices a continuation BEFORE tokenising, so the
@@ -177,28 +207,56 @@ press() {
     # made no contact. The --dry-run branch below is correctly formed, so a dry run could never
     # have shown it.
     UTP_NO_STOW=1 UTP_OFFSET_PROFILE="$profile" UTP_PICK_FROM_BOTTOM="$pick" \
-    UTP_STANDOFF="${UTP_STANDOFF:-30}" \
+    UTP_STANDOFF="${UTP_STANDOFF:-30}" UTP_REACH_MARGIN_M="${UTP_REACH_MARGIN_M:-0.03}" \
     UTP_STEP_MM="${UTP_STEP_MM:-1000}" UTP_REACH_SPEED="${UTP_REACH_SPEED:-90}" \
-        bash "$REPO/bringup/press_run.sh" --query "$query" --hold 2>&1 | tee "$log"
+        bash "$REPO/bringup/press_run.sh" --query "$query" --hold --name "$cap" 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
     grep -qE "code: 31|err=31" "$log" && contact=1
+    short="$(sed -n 's/^SHORTFALL_M \([0-9.]*\).*/\1/p' "$log" | tail -1)"
     rm -f "$log"
+    [ "$contact" = 1 ] && break
+    # OUT OF REACH BY A LITTLE: MOVE THE BASE, NOT THE ARM. approach_target refused and said by
+    # how much. Step the base straight in by that plus UTP_REACH_STEP_M, capped, then ground again
+    # from the new pose -- the old 3D point was measured from the pose the base just left. The arm
+    # is folded first so the re-ground does not photograph it (see fold-before-grounding above).
+    if [ "$rc" -ne 0 ] && [ -n "$short" ] && [ "$attempt" -lt "$tries" ]; then
+        adv="$(python3 -c "print(round(min(${UTP_REACH_CAP_M:-0.35}, $short + ${UTP_REACH_STEP_M:-0.10}), 3))")"
+        note "out of reach by ${short} m -- stepping the base in ${adv} m, then grounding again"
+        event press_creep "$query shortfall ${short} advance ${adv}"
+        "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go >/dev/null 2>&1
+        if python3 "$REPO/bringup/face_target.py" "$REPO/captures/$cap" --advance "$adv" 2>&1 \
+                | sed 's/^/    /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+            continue
+        fi
+        note "the base could not step in; not retrying the press"
+        break
+    fi
+    break
+    done
     if [ "$contact" = 1 ]; then
         note "CONTACT (controller error 31) -- the gripper met the plate"
         event press_contact "$query"
         arm_clear
     elif [ "$rc" -ne 0 ]; then
+        # NOT FATAL ANY MORE. This used to die, which (a) left the arm at `ready`, sticking out of
+        # the chassis footprint, and (b) ended a run over one press when the operator was standing
+        # right there able to press the button. The arm is folded below on every path, the failure
+        # is logged, and the CALLER decides: a lift button falls back to the operator with the
+        # lidar still deciding when the doors are open; the task press is reported at the end.
         event press_failed "$query"
-        die "press chain failed on '$query' with no contact detected"
+        echo "  PRESS FAILED on '$query' with no contact detected" >&2
+        PRESS_FAILED="${PRESS_FAILED:+$PRESS_FAILED, }$query"
     else
         # Completed with no contact. That is NOT a success -- see press_run.sh on the 60 mm
         # standoff -- and the figure must be able to tell the two apart.
         event press_no_contact "$query"
+        PRESS_FAILED="${PRESS_FAILED:+$PRESS_FAILED, }$query (no contact)"
     fi
     # Fold in the BACKGROUND. config/safety.yaml sets require_arm_stowed: false, so the arbiter
     # does not gate base motion on the arm -- waiting for the fold buys nothing and costs it.
     "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go >/dev/null 2>&1 &
     STOW_PID=$!
+    [ "$contact" = 1 ]
 }
 
 arm_clear() {
@@ -261,7 +319,7 @@ doors() {
     fi
 
     clear_costmaps
-    while [ $(( SECONDS - t0 )) -lt "${UTP_DOOR_WAIT:-60}" ]; do
+    while [ $(( SECONDS - t0 )) -lt "${UTP_DOOR_WAIT:-150}" ]; do
         if python3 "$REPO/bringup/doors_open_lidar.py" --once --quiet \
                 --clear-m "${UTP_DOOR_CLEAR:-1.6}" >/dev/null 2>&1; then
             note "doors are open -- going NOW (costmaps already clear)"
@@ -278,7 +336,7 @@ doors() {
         clear_costmaps
         return 0
     fi
-    note "lidar still sees them shut after ${UTP_DOOR_WAIT:-60}s"
+    note "lidar still sees them shut after ${UTP_DOOR_WAIT:-150}s"
     event doors_timeout "$want"
     # RETURN A FAILURE, DO NOT KILL THE RUN HERE. This used to `die`, which meant a timed-out door
     # check ended the mission BEFORE find_self ever ran -- so the robot sat on the far floor still
@@ -437,7 +495,7 @@ find_self() {
     # So: enough long returns, spanning enough bearing that they are a doorway and not a few stray
     # rays. Direction-free, and it still refuses the sealed car -- the case that produced a pose
     # 8 m wrong which the robot then drove on.
-    local swait="${UTP_SEE_WAIT:-90}" seem="${UTP_SEE_M:-3.0}" seen="${UTP_SEE_N:-40}" c0=$SECONDS
+    local swait="${UTP_SEE_WAIT:-150}" seem="${UTP_SEE_M:-3.0}" seen="${UTP_SEE_N:-40}" c0=$SECONDS
     local seespan="${UTP_SEE_SPAN_DEG:-20}"
     note "waiting for a way out (>= ${seen} returns past ${seem} m spanning >= ${seespan} deg)"
     while :; do
@@ -622,7 +680,8 @@ if [ "$MANUAL_CALL" = 1 ]; then
     note "press the call button now; the lidar below is watching the doorway"
 else
     nav   "$A_CALL_BUTTON"
-    press "$A_CALL_QUERY"
+    press "$A_CALL_QUERY" \
+        || note "the robot could not confirm the call press -- PRESS THE CALL BUTTON if the lift is not coming; the lidar decides when the doors are open"
 fi
 
 # Forward entry where the floor defines it, else the original reverse.
@@ -655,7 +714,8 @@ if [ "$MANUAL_SELECT" = 1 ]; then
         done; echo
     fi
 else
-    press "$B_SELECT_QUERY" lift_car_select "${B_SELECT_INDEX:-}"
+    press "$B_SELECT_QUERY" lift_car_select "${B_SELECT_INDEX:-}" \
+        || note "the robot could not confirm the floor press -- PRESS FLOOR $TO if the car does not move"
 fi
 
 # Face the doors NOW, while still localized in a map the robot is genuinely in.
@@ -758,7 +818,7 @@ clear_costmaps
 
 if [ "$B_KIND" = "task" ]; then
     nav   "$B_TASK_BUTTON"
-    press "$B_TASK_QUERY"
+    press "$B_TASK_QUERY" || note "task press failed -- still driving out so the run ends where it should"
     # NOTHING between the press and the drive. The opener is already swinging; a check here is a
     # check against a closing door, and all three that were tried were slower than the event.
     nav   "$B_TASK_EXIT"
@@ -767,5 +827,10 @@ else
 fi
 
 wait_stow
+if [ -n "${PRESS_FAILED:-}" ]; then
+    event mission_complete "$FROM->$TO press failed: $PRESS_FAILED"
+    say "MISSION ENDED -- floor $FROM to floor $TO, but these presses made NO CONTACT: $PRESS_FAILED"
+    exit 1
+fi
 event mission_complete "$FROM->$TO"
 say "MISSION COMPLETE -- floor $FROM to floor $TO"
