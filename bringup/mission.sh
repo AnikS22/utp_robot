@@ -34,7 +34,7 @@ source "$REPO/bringup/env.sh" >/dev/null 2>&1 || { echo "env.sh failed" >&2; exi
 # code path.
 source "$REPO/bringup/run_event.sh"
 
-FROM=2; TO=1; DRY=""; ARRIVAL_ONLY=0; MANUAL_CALL=0
+FROM=2; TO=1; DRY=""; ARRIVAL_ONLY=0; MANUAL_CALL=0; MANUAL_SELECT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY="--dry-run"; shift ;;
@@ -51,6 +51,13 @@ while [ $# -gt 0 ]; do
     # the physical measurement in docs/CALIBRATION.md item 2. Until that is done, this flag keeps
     # the rest of the run autonomous instead of blocking it behind a calibration.
     --manual-call) MANUAL_CALL=1; shift ;;
+    # The operator also presses the IN-CAR floor button. Same reason as --manual-call: the reach
+    # carries a systematic offset until the calibration in docs/CALIBRATION.md item 2 is measured,
+    # and the in-car button is 25 mm. Skipping both presses tests the part nobody has yet seen end
+    # to end -- enter the car, ride, get out, do the task on the far floor -- without blocking it
+    # behind an arm question.
+    --manual-select) MANUAL_SELECT=1; shift ;;
+    --manual-lift) MANUAL_CALL=1; MANUAL_SELECT=1; shift ;;
     --from) FROM="$2"; shift 2 ;;
     --to)   TO="$2";   shift 2 ;;
     *) echo "usage: bash bringup/mission.sh [--dry-run] [--from N] [--to N]" >&2; exit 2 ;;
@@ -443,7 +450,18 @@ nav   "$A_CAR_PANEL"
 
 # The in-car button belongs to the DESTINATION floor, and gets the offset measured on it.
 wait_stow
-press "$B_SELECT_QUERY" lift_car_select "${B_SELECT_INDEX:-}"
+if [ "$MANUAL_SELECT" = 1 ]; then
+    say "FLOOR BUTTON -- the operator presses it (--manual-select)"
+    event press_manual "floor $TO"
+    note "press the button for floor $TO now"
+    if [ -z "$DRY" ]; then
+        for i in $(seq "${UTP_SELECT_WAIT:-20}" -1 1); do
+            printf "\r  riding in %2ds -- press the floor button  " "$i"; sleep 1
+        done; echo
+    fi
+else
+    press "$B_SELECT_QUERY" lift_car_select "${B_SELECT_INDEX:-}"
+fi
 
 # Face the doors NOW, while still localized in a map the robot is genuinely in.
 wait_stow
