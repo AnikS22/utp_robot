@@ -244,11 +244,17 @@ doors() {
         return 0
     fi
     note "lidar still sees them shut after ${UTP_DOOR_WAIT:-60}s"
-    [ "${UTP_DOORS_OVERRIDE:-0}" = "1" ] || die "the doors did not open. Nothing below may drive:
-        Nav2 has them marked as a lethal band across the opening and the leg would abort into
-        them. Set UTP_DOORS_OVERRIDE=1 to drive regardless."
-    note "UTP_DOORS_OVERRIDE=1 -- driving anyway"
+    event doors_timeout "$want"
+    # RETURN A FAILURE, DO NOT KILL THE RUN HERE. This used to `die`, which meant a timed-out door
+    # check ended the mission BEFORE find_self ever ran -- so the robot sat on the far floor still
+    # believing the 0,0,0 seed load_map was started with, and the operator's report was "it didn't
+    # relocalize and thinks it is somewhere else". That was true, and it was this line.
+    #
+    # Localizing is harmless: it publishes /initialpose and moves nothing. DRIVING is the dangerous
+    # part, and the caller still gates that. So hand back a status and let the caller decide.
+    [ "${UTP_DOORS_OVERRIDE:-0}" = "1" ] && { note "UTP_DOORS_OVERRIDE=1 -- treating as open"; clear_costmaps; return 0; }
     clear_costmaps
+    return 1
 }
 
 
@@ -468,6 +474,18 @@ wait_stow
 nav   "$A_CAR_FACING_OUT"
 
 # ---------------------------------------------------------------------------- 2  the ride
+# START THE SWAP NOW, IN THE BACKGROUND. It used to run after the doors closed, sequentially,
+# and took 49 s measured -- long enough that a one-floor ride can finish first, which is how a run
+# arrives on floor 1 still believing the 0,0,0 seed it was started with.
+#
+# Nothing between here and the far floor needs localization: the last leg on this floor is already
+# driven, and the next drive is after the doors open below. So the load can overlap BOTH the
+# door-close wait and the ride, which is all of the dead time there is.
+say "SWAP  loading '$B_MAP' in the background, while the doors close and the car moves"
+event map_load_start "$B_MAP (background)"
+( load_map "$B_MAP" ) > /tmp/utp_swap.log 2>&1 &
+SWAP_PID=$!
+
 doors "let them CLOSE, then ride" close
 
 # SWAP THE MAP NOW, WHILE THE CAR MOVES. This is the whole reason exiting the lift kept failing:
@@ -481,8 +499,6 @@ doors "let them CLOSE, then ride" close
 # seeded: a task floor has no in-car pose and must not be given an invented one. The robot does
 # not know where it is until find_self runs with the doors open, and nothing below drives until
 # then.
-load_map "$B_MAP"
-
 say "RIDE  floor $FROM -> $TO"
 event ride_start "$FROM->$TO"
 cat <<'RIDE'
@@ -490,7 +506,8 @@ cat <<'RIDE'
   The scan inside the car matches every floor equally well, and would match just as
   well if the lift were stuck.
 RIDE
-doors "the car has arrived -- they must be OPEN before anything below runs"
+DOORS_OPEN=1
+doors "the car has arrived -- they must be OPEN before anything below runs" open || DOORS_OPEN=0
 fi
 
 # ---------------------------------------------------------------------------- 3  floor TO
@@ -508,8 +525,26 @@ fi
 if [ "$ARRIVAL_ONLY" = 1 ]; then
     load_map "$B_MAP"
     doors "the car is on floor $TO -- they must be OPEN before the search"
+elif [ -n "${SWAP_PID:-}" ]; then
+    # Collect the background swap. If it was still running when the doors opened, the overlap did
+    # not cover the whole ride -- worth saying, because that is the number to tune.
+    if kill -0 "$SWAP_PID" 2>/dev/null; then
+        note "waiting for the background map load to finish (the ride was shorter than the swap)"
+    else
+        note "map load finished during the ride -- no time spent on it here"
+    fi
+    wait "$SWAP_PID" || { sed 's/^/    /' /tmp/utp_swap.log | tail -20; die "the background load of '$B_MAP' failed"; }
+    event map_load_done "$B_MAP (background)"
 fi
+# LOCALIZE EVEN IF THE DOORS TIMED OUT. Knowing where it is costs nothing and is what an operator
+# needs in order to see the problem in RViz; only driving is gated below.
 find_self "$B_MAP"
+
+if [ "${DOORS_OPEN:-1}" != "1" ]; then
+    die "localized on '$B_MAP', but the doors never read open, so nothing drives. The pose above
+        is now correct and visible in RViz -- open the doors and re-run with --arrival-only, or
+        set UTP_DOORS_OVERRIDE=1 if the lidar is wrong about them."
+fi
 
 # CLEAR BEFORE THE FIRST LEG ON THE NEW FLOOR, ALWAYS. The obstacle layer still holds the lift
 # doors as a lethal band across the only way out -- they were shut for the whole ride, and the
