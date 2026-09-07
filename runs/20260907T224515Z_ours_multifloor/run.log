@@ -1,0 +1,74 @@
+
+==============================================================
+ 0  PREP   authority, arm, stack
+==============================================================
+  GRANTED -- control_mode=CAN. The chassis now listens to /cmd_vel.
+    Do not touch the RC sticks: that reclaims RC and you will be back here.
+  SDK_VERSION: 1.18.4
+  ROBOT_IP: 192.168.1.221, VERSION: v2.6.0, PROTOCOL: V1, DETAIL: 6,6,XI1305,AC1304,v2.6.0, TYPE1300: [1, 1]
+  change protocol identifier to 3
+  [clean_error], xArm is ready to move
+  arm cleared: state=2 error=0
+  already at stow; nothing to do.
+  goal tolerance now 0.30 m / 0.35 rad
+
+==============================================================
+ LOAD MAP 'floor2'
+==============================================================
+  already on 'floor2' -- not restarting SLAM
+
+=== utp bring-up   mode=nav   map=floor2   domain=9   
+  probing (one node, every topic, ~7 s plus TF) ...
+  'floor2' was mapped with the artifact filter -- starting it
+  stopping 1 existing 'cloud_artifact_filter.py' process(es): 7963
+  waiting for /ouster/points_clean (25s remaining)
+/home/weim/utp_robot/bringup/bringup_all.sh: line 576: /proc/15529/cmdline: No such file or directory
+/home/weim/utp_robot/bringup/bringup_all.sh: line 576: /proc/15530/cmdline: No such file or directory
+/home/weim/utp_robot/bringup/bringup_all.sh: line 576: /proc/15531/cmdline: No such file or directory
+  camera silent (0.00 Hz) -- restarting camera.sh
+  waiting for /mast_cam/color/camera_info (40s remaining)
+  waiting for /mast_cam/color/camera_info (32s remaining)
+  waiting for /mast_cam/color/camera_info (24s remaining)
+  waiting for /mast_cam/color/camera_info (15s remaining)
+  waiting for /mast_cam/color/camera_info (7s remaining)
+localized map provenance recorded: floor2
+
+  COMPONENT      STATE   DETAIL
+  -------------- ------- ------------------------------------------
+  ethernet       ok      enx00e04c674c60 carrier up
+  net_lidar      ok      192.168.1.119 reachable
+  net_router     ok      192.168.1.1 reachable
+  net_arm        ok      192.168.1.221 reachable
+  can0           ok      ERROR-ACTIVE, ~921 frames/s
+  chassis        ok      /odom 50.00 Hz, odom->base_link present
+  lidar          ok      /ouster/points 10.00 Hz
+  mount_tf       ok      base_link->os_sensor->os_lidar resolves, mount (-0.375, 0.0, 1.146) m
+  filter         ok      /ouster/points_clean 9.99 Hz (matches the 'floor2' chain)
+  projection     ok      /scan_filtered 10.00 Hz from /ouster/points_clean
+  scan           ok      /scan 10.00 Hz (rear mask 0.90 m)
+  scan_nav       ok      /scan_nav 10.00 Hz (temporal filter from /scan)
+  safety         ok      /safety/status 20.00 Hz, arm_stowed 100%, estop_latched 0%
+  camera         FAIL    camera_info 0 Hz
+  waypoints      ok      maps/waypoints.yaml has map-frame waypoints in 'floor2'
+  slam           ok      localizing in 'floor2', lifecycle active, map->odom present
+  map_session    ok      saved map matched to the live SLAM session
+  nav2           ok      navigate_to_pose + bt_navigator/planner/controller/behavior ACTIVE, no keepout mask
+
+  WHY:
+    camera:
+      the D435 negotiated 480 Mbps -- that is USB 2. config/camera.yaml asks for 1280x720x30 
+      colour plus 848x480x30 depth, which USB 2 physically cannot carry, so librealsense 
+      opens NOTHING and loops on xioctl(VIDIOC_S_FMT) errno=5 while the node sits there 
+      looking alive. RESTARTING WILL NOT HELP. Move it to a blue USB 3 port, or run --mode 
+      nav, or set UTP_NO_CAMERA=1 and accept that grounding and pressing do not work in this 
+      session.
+
+  elapsed: 82 seconds
+  1 component(s) DOWN, 0 not started because their input was down.
+  A stage is never launched into a silent input: a node started before its input exists
+  is ALIVE AND SILENT FOREVER and reports nothing. Fix the top failure, then re-run --
+  this script is idempotent and will not restart anything that is already healthy:
+      bash bringup/bringup_all.sh --mode nav --map floor2
+
+STOP: could not bring the stack up on 'floor2'
+  (mission exited with status 1 -- children stopped, base halted; check the arm)

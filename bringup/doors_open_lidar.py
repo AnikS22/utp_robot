@@ -79,9 +79,19 @@ def main() -> int:
         if v.size < 5:
             # No returns at all in the sector IS the open case: nothing within range ahead.
             return float("inf")
-        # 10th percentile, not min: a single stray return -- dust, a passing leg, the OS0's
-        # near-field artifact -- must not veto a drive through an open door.
-        return float(np.percentile(v, 10))
+        # MEDIAN, NOT 10th PERCENTILE. The 10th percentile asks "is almost every forward beam
+        # reaching past the threshold", which is only true when the robot is square in the opening.
+        # Measured 2026-09-07 at the floor-2 lift with the doors DEMONSTRABLY OPEN: straight ahead
+        # p10 1.10 m, median 3.15 m, max 4.90 m, 253 returns past 3 m -- and the check said SHUT,
+        # because the robot had arrived 15 deg off the door waypoint and about a tenth of the
+        # forward beams were landing on the door frame beside the opening. The operator watched it
+        # sit in front of an open lift.
+        #
+        # The median asks the question that actually matters -- is the bulk of the forward sector
+        # looking THROUGH something -- and it is just as robust to the stray close return the
+        # percentile was introduced for, since a few near beams cannot move it. A shut door still
+        # reads its own surface across the whole sector: measured 0.48 m closed against 3.15 m open.
+        return float(np.median(v))
 
     # Discovery first. A node created a moment ago has not seen /scan yet, and reporting "no scan"
     # because we did not wait is the failure mode this repo keeps finding.

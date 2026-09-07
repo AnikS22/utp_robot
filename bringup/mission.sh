@@ -115,13 +115,14 @@ fi
 # nav2_goto.py and the Nav2 goal running with nobody reading the result, a background map load
 # half done, and the arm wherever the press left it. Children are killed by PARENT PID -- never by
 # a name pattern -- then a zero twist goes out on the servo input, which outranks Nav2 at the mux.
-PRESS_FAILED=""; LEGS_FAILED=""
+PRESS_FAILED=""; LEGS_FAILED=""; POSE_WATCH="/tmp/utp_posewatch_$$.json"
 cleanup() {
     local rc=$?
     trap - EXIT INT TERM
     [ -n "$DRY" ] && exit "$rc"
     # SIGINT first: nav2_goto.py cancels its Nav2 goal on KeyboardInterrupt and on nothing else.
     pkill -INT -P $$ >/dev/null 2>&1 || true; sleep 2; pkill -P $$ >/dev/null 2>&1 || true
+    rm -f "${POSE_WATCH:-}" 2>/dev/null || true
     timeout 6 python3 - <<'PYZ' >/dev/null 2>&1 || true
 import rclpy, time
 from geometry_msgs.msg import Twist
@@ -185,6 +186,26 @@ nav() {
     fi
     event leg_start "$wp"
     [ -n "$DRY" ] && { python3 "$REPO/bringup/nav2_goto.py" "$wp" || true; return 0; }
+    # DID THE POSE JUMP SINCE THE LAST LEG? The drive gate above asks whether find_self ever
+    # agreed with itself in this map -- a question that was answered YES, correctly, twenty seconds
+    # before the robot's map pose moved 3.6 m across the lobby while it stood still at the lift
+    # doors on 2026-09-07. An opening lift door hands the scan matcher a 5 m corridor where there
+    # was a flat surface, and it re-matched somewhere else. Nav2 then planned the entry from a place
+    # the robot was not standing on. Odometry and the map must move by the same amount over a leg;
+    # when they do not, the pose stopped being true and nothing may drive on it.
+    if [ -z "$DRY" ] && [ -f "$POSE_WATCH" ]; then
+        _jump="$(timeout 60 python3 "$REPO/bringup/pose_watch.py" "$POSE_WATCH" --check \
+                    --tol "${UTP_POSE_JUMP_TOL_M:-0.50}" 2>&1)"; _jrc=$?
+        printf '%s\n' "$_jump" | sed 's/^/    /'
+        if [ "$_jrc" -eq 1 ]; then
+            event pose_jump "$wp"
+            LOCALIZED=""          # the lock is void; find_self must re-establish it
+            die "refusing to drive to '$wp': the map pose moved without the wheels agreeing, so
+        SLAM re-matched the scan somewhere else and this waypoint now names a place measured from
+        an origin the robot is not standing on. Re-localize before driving."
+        fi
+    fi
+
     # PRECISION ONLY WHERE AN ARM HAS TO REACH FROM. Everywhere else, room to finish the leg.
     local xytol yawtol
     case "$wp" in
@@ -234,6 +255,7 @@ nav() {
         fi
     done
     event leg_end "$wp ${status:-none} $(( SECONDS - t0 ))s"
+    [ -z "$DRY" ] && timeout 60 python3 "$REPO/bringup/pose_watch.py" "$POSE_WATCH" --sample >/dev/null 2>&1
     # DO NOT END THE RUN OVER ONE LEG. This used to die, so a single blocked drive threw away
     # everything the run had already done -- the call press, the ride, the localization -- and the
     # operator had to restart from the map load. The operator's instruction, 2026-09-07: "in the
@@ -786,6 +808,9 @@ print(($agree+1) if (math.hypot(dx,dy)<=$tol and dw<=$told) else 1)")
             note "$need searches agree within ${tol} m / ${told} deg at (${x},${y}), fit ${fit}%"
             event localized "$map ${x},${y} yaw ${w} fit ${fit}%"
             LOCALIZED="$map"
+            # A FRESH BASELINE. The pose just established is the one the jump check measures from;
+            # keeping an older sample would compare across the relocalization itself.
+            timeout 60 python3 "$REPO/bringup/pose_watch.py" "$POSE_WATCH" --sample >/dev/null 2>&1
             return 0
         fi
     done
