@@ -26,6 +26,14 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO/bringup/env.sh" >/dev/null 2>&1 || { echo "env.sh failed" >&2; exit 1; }
 
+# EVENTS FOR THE FIGURES. run_event.sh's own header: "The numbered markers on the trajectory
+# figure come from these, so a decision with no event is a decision that cannot be drawn." This
+# script emitted none, so its runs produced 2069 map-frame poses and a zero-line events.jsonl --
+# a trajectory nobody can segment into legs, which is most of what a figure is for. With
+# UTP_RUN_DIR unset every call is a silent no-op, so an instrumented run and a plain run stay one
+# code path.
+source "$REPO/bringup/run_event.sh"
+
 FROM=2; TO=1; DRY=""; ARRIVAL_ONLY=0; MANUAL_CALL=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -82,14 +90,16 @@ PY
 # is how a drive that aborted after 158 s was treated as an arrival on 2026-09-06, and the arm was
 # then commanded at a plate 5 m away.
 nav() {
-    local wp="$1" out status
+    local wp="$1" out status t0=$SECONDS
     say "NAVIGATE  '$wp'"
+    event leg_start "$wp"
     [ -n "$DRY" ] && { python3 "$REPO/bringup/nav2_goto.py" "$wp" || true; return 0; }
     out="$(mktemp)"
     python3 "$REPO/bringup/nav2_goto.py" "$wp" --go --timeout "${UTP_NAV_TIMEOUT:-180}" 2>&1 | tee "$out"
     status="$(sed -n 's/^RESULT //p' "$out" | tail -1 | python3 -c \
         'import sys,json; d=sys.stdin.read().strip(); print(json.loads(d).get("status","") if d else "")' 2>/dev/null)"
     rm -f "$out"
+    event leg_end "$wp ${status:-none} $(( SECONDS - t0 ))s"
     [ "$status" = "arrived" ] || die "leg to '$wp' came back '${status:-no RESULT}', not an arrival"
 }
 
@@ -99,6 +109,7 @@ nav() {
 press() {
     local query="$1" profile="${2:-}" pick="${3:-}" log rc contact=0
     say "PRESS  '$query'${profile:+   [offset: $profile]}${pick:+   [button ${pick} from bottom]}"
+    event press_start "$query"
     # FOLD BEFORE GROUNDING, ALWAYS. press_run.sh grounds with the arm parked and only then moves
     # it to the press orientation, because grounding after the arm moves PHOTOGRAPHS THE ARM --
     # its header records a run where the detector, handed a picture of the robot's own arm, chose
@@ -132,9 +143,15 @@ press() {
     rm -f "$log"
     if [ "$contact" = 1 ]; then
         note "CONTACT (controller error 31) -- the gripper met the plate"
+        event press_contact "$query"
         arm_clear
     elif [ "$rc" -ne 0 ]; then
+        event press_failed "$query"
         die "press chain failed on '$query' with no contact detected"
+    else
+        # Completed with no contact. That is NOT a success -- see press_run.sh on the 60 mm
+        # standoff -- and the figure must be able to tell the two apart.
+        event press_no_contact "$query"
     fi
     # Fold in the BACKGROUND. config/safety.yaml sets require_arm_stowed: false, so the arbiter
     # does not gate base motion on the arm -- waiting for the fold buys nothing and costs it.
@@ -181,6 +198,7 @@ clear_costmaps() {
 doors() {
     local want="${2:-open}" t0=$SECONDS last=$SECONDS
     say "DOORS -- $1"
+    event doors_wait "$want"
     [ -n "$DRY" ] && return 0
 
     if [ "$want" = close ]; then
@@ -188,6 +206,7 @@ doors() {
             if ! python3 "$REPO/bringup/doors_open_lidar.py" --once --quiet \
                     --clear-m "${UTP_DOOR_CLEAR:-1.6}" >/dev/null 2>&1; then
                 note "doors are shut -- the scan is only the car now"
+                event doors_closed ""
                 clear_costmaps
                 return 0
             fi
@@ -204,6 +223,7 @@ doors() {
         if python3 "$REPO/bringup/doors_open_lidar.py" --once --quiet \
                 --clear-m "${UTP_DOOR_CLEAR:-1.6}" >/dev/null 2>&1; then
             note "doors are open -- going NOW (costmaps already clear)"
+            event doors_open ""
             return 0
         fi
         if [ $(( SECONDS - last )) -ge 8 ]; then clear_costmaps >/dev/null 2>&1; last=$SECONDS; fi
@@ -239,6 +259,7 @@ doors() {
 load_map() {
     local map="$1"
     say "LOAD MAP '$map'"
+    event map_load_start "$map"
     [ -n "$DRY" ] && return 0
     local pat; pat=$(printf 'slam_%s' 'toolbox')
     local live=""
@@ -273,6 +294,7 @@ load_map() {
     SEED_POSE="${SEED_POSE:-0.0,0.0,0.0}" bash "$REPO/bringup/bringup_all.sh" \
         --mode nav --map "$map" || die "could not bring the stack up on '$map'"
     python3 "$REPO/bringup/startup_mark_map.py" "$map" >/dev/null 2>&1 || true
+    event map_load_done "$map"
 }
 
 # find_self <name> -- THE FAST HALF, AND IT MUST AGREE WITH ITSELF BEFORE ANYTHING DRIVES.
@@ -335,6 +357,7 @@ print(($agree+1) if (math.hypot(dx,dy)<=$tol and dw<=$told) else 1)")
                 die "the searches AGREE at (${x},${y}) but only score ${fit}% -- consistently
                 confident and consistently wrong is the failure this check exists to catch."
             note "$need searches agree within ${tol} m / ${told} deg at (${x},${y}), fit ${fit}%"
+            event localized "$map ${x},${y} yaw ${w} fit ${fit}%"
             return 0
         fi
     done
@@ -443,6 +466,7 @@ doors "let them CLOSE, then ride" close
 load_map "$B_MAP"
 
 say "RIDE  floor $FROM -> $TO"
+event ride_start "$FROM->$TO"
 cat <<'RIDE'
   Nothing in software is true about which floor this is until the doors open again.
   The scan inside the car matches every floor equally well, and would match just as
@@ -490,4 +514,5 @@ else
 fi
 
 wait_stow
+event mission_complete "$FROM->$TO"
 say "MISSION COMPLETE -- floor $FROM to floor $TO"
