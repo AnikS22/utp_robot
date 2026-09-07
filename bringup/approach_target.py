@@ -2,9 +2,11 @@
 """Step the arm toward a grounded target, checking joint headroom at every move.
 
     python3 bringup/approach_target.py --capture press_scene2 --dry-run
-    python3 bringup/approach_target.py --capture press_scene2 --go --min-standoff 150
+    python3 bringup/approach_target.py --capture press_scene2 --go --min-standoff -45
 
-THE ARM MOVES, TOWARD A WALL. It stops at --min-standoff and never commands contact.
+THE ARM MOVES, TOWARD A WALL. It drives the FINGERTIP to --min-standoff from the target, which
+is NEGATIVE by default: a button has to be pushed, so the tip is commanded past the target plane
+and contact stops it. See --tool-tip-mm for why the reference point is the tip and not the marker.
 
 Approaching is where a calibration gets tested for real, and where the two ways this arm bites
 both live:
@@ -154,7 +156,7 @@ def main() -> int:
     ap.add_argument("--offset-profile", default=None,
                     help="named offset from calib/handeye.json target_offset_profiles, "
                          "e.g. lift_car_select. Default: the validated global offset.")
-    ap.add_argument("--min-standoff", type=float, default=150.0,
+    ap.add_argument("--min-standoff", type=float, default=-45.0,
                     help="stop with the REFERENCE POINT this far from the target, mm. May be "
                          "negative with --tool-tip-mm: the tip is then driven that far PAST the "
                          "target plane, which is what actually depresses a button.")
@@ -181,10 +183,14 @@ def main() -> int:
     # is used HERE, in this script, only to choose which point on the flange to drive at the
     # target. 172 mm need not be exact -- with a small standoff and error-31 contact detection an
     # error of a centimetre or two is absorbed. 268 mm is not.
+    # DEFAULT 172, NOT 0. Aiming the marker is now known to be wrong, so it must not be what a
+    # caller gets by forgetting a flag -- every route in this repo goes through here, and the fix
+    # is only a fix if it propagates to all of them without each one opting in. Pass 0 to restore
+    # the old marker aiming, which is useful only for reproducing pre-2026-09-07 runs.
     ap.add_argument("--tool-tip-mm", type=float,
-                    default=float(os.environ.get("UTP_TOOL_TIP_MM", "0") or 0),
-                    help="distance from the flange face to the fingertip along the tool +z axis. "
-                         "When non-zero the TIP, not the marker, is placed at the standoff.")
+                    default=float(os.environ.get("UTP_TOOL_TIP_MM", "172") or 0),
+                    help="distance from the flange face to the fingertip along the tool +z axis "
+                         "(default 172). The TIP is placed at the standoff. 0 = legacy marker aim.")
     ap.add_argument("--go", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--id", type=int, default=3)
@@ -390,6 +396,11 @@ def main() -> int:
             if room < J5_MARGIN_DEG:
                 print(f"  STOPPING: only {room:.1f} deg left on J{j} (margin {J5_MARGIN_DEG})")
                 break
+            # MEASURING THE GAP COSTS ~8 s PER STEP, and a stepped approach has five of them.
+            # That is 40 s of standing still, which is fine when a human is walking up with a
+            # ruler and ruinous on a task timed by a lift door closer. Off unless asked for.
+            if os.environ.get("UTP_MEASURE_GAP", "0") != "1":
+                continue
             r = subprocess.run([sys.executable, str(REPO/"bringup"/"grab_frame.py"),
                                 "--name", f"approach_{i:02d}", "--settle", "8"],
                                capture_output=True, text=True, timeout=120)

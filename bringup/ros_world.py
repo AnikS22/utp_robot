@@ -1297,7 +1297,7 @@ class RosWorld:
         #    is refused with arm_not_stowed, which reads as a navigation fault after a success.
         mode = "--dry-run" if self.dry_run else "--go"
         r = _ros([ROS_PY, str(REPO / "bringup" / "approach_target.py"),
-                  "--capture", str(cap), "--min-standoff", "60", mode], timeout=300)
+                  "--capture", str(cap), "--min-standoff", "-45", mode], timeout=300)
         ok = r.returncode == 0
 
         if not self.dry_run:

@@ -62,15 +62,20 @@
   "max_mm": 8.18779814584497,
   "rotation_spread_deg": 63.78092467403988,
   "target_offset_link_base_m": [
-    0.003,
-    -0.02,
-    0.04
+    0.0,
+    0.0,
+    0.015
   ],
-  "target_offset_note": "SYSTEMATIC TARGET CORRECTION in link_base metres, applied to every grounded target by bringup/approach_target.py unless a profile is named.\n\nDEFAULT [0.003, -0.020, 0.040] -- measured 2026-09-01 against the elevator CALL button and then applied UNCHANGED to the ADA door plate, a different target on a different wall at a different pose, where the press landed MORE CENTRED than without it. A correction that improves two unrelated targets is a property of the rig. The hand-eye solve behind it is sound: 2.96 mm RMS, worst 8.2 mm, 10 pairs, 63.8 deg rotation spread. The correction is almost entirely lateral and vertical with only 3 mm along the approach axis, which is the shape of a camera-to-arm offset and NOT a depth-lift bias (that was the first hypothesis and it was wrong).\n\nREVERTED TO IT 2026-09-06, on operator instruction. Between 2026-09-05 and then the default had been walked twice -- y -0.020 -> -0.045, then x +8 mm and y +7 mm back -- reaching [0.011, -0.038, 0.040]. BOTH of those steps were tuned against ONE target: the floor-select button inside the floor-2 lift car. Neither was ever re-checked against the ADA plate or the call button, and they were nevertheless applied to every press the rig makes. That is the difference between a calibration and a fudge: the 2026-09-01 value earned the word calibration by being validated on a second, unrelated target, and the in-car steps never did. On 2026-09-06 the ADA press made contact but landed off, with the in-car value active.\n\nThe in-car tuning is NOT deleted -- it is kept in target_offset_profiles.lift_car_select and is still the best value anyone has measured for that specific 25 mm button. Select it with approach_target.py --offset-profile lift_car_select (or UTP_OFFSET_PROFILE), which is what the in-car press should use and nothing else should.\n\nWHAT WOULD INVALIDATE THE DEFAULT: re-running the hand-eye solve, remounting the camera or the arm, or changing the tool. Re-measure against BOTH a large target and a small one -- a 120 mm ADA plate alone cannot see an error that 25 mm buttons expose immediately.",
+  "target_offset_note": "[0, 0, +0.015] SINCE 2026-09-07. Was [0.003, -0.020, 0.040]; 40 mm of that was straight UP.\n\nWHY THE OLD ONE WAS WRONG. It was tuned by hand while approach_target.py aimed the hand-eye CALIBRATION MARKER at the target. The marker sits 25 mm ABOVE and 268 mm BEHIND the fingertip at the wrist orientation a press holds, so aiming it put the tip about 25 mm low and a quarter of a metre through the wall. Raising the target by 40 mm cancelled part of the first error and did nothing about the second, and on a 120 mm ADA plate that was enough to look like a calibration. approach_target.py now aims the FINGERTIP (--tool-tip-mm / UTP_TOOL_TIP_MM), so that compensation became pure error: the operator reported the press landing 'a tad high'.\n\nWHY IT IS NOT SIMPLY ZERO. Zero is what the raw grounding gives, and the raw grounding is very good -- the floor-2 hall call button grounds at 1.069 m off the floor against the 1.067 m ADA hall-call centreline this building is built to, from gdino plus depth alone. But the modelled fingertip is not exactly the pad that touches the plate, and at zero the operator watched the press land slightly low. +15 mm is what they called for after seeing both: 25 mm lower than the old value, not 40. Operator-verified on the floor-2 call button, tip aiming, stepped approach.\n\nThe old value is kept as target_offset_profiles.marker_aim_legacy, for reading old runs. Do NOT select it for a press -- it is only correct in combination with marker aiming, which is gone.\n\nSTILL SUSPECT: target_offset_profiles.lift_car_select [0.011, -0.038, 0.040] was tuned the same way, against the 25 mm in-car floor button, and carries the same 40 mm of vertical compensation. It has NOT been re-measured since the aiming was fixed and should be expected to aim high.\n\nThe hand-eye solve itself is untouched and still good: 2.96 mm RMS, worst 8.2 mm, 10 pairs, 63.8 deg rotation spread, flange-relative, tcp_offset zero.",
   "target_offset_profiles": {
     "lift_car_select": [
       0.011,
       -0.038,
+      0.04
+    ],
+    "marker_aim_legacy": [
+      0.003,
+      -0.02,
       0.04
     ]
   }

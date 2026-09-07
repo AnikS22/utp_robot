@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One command: look -> ground -> show you the photo -> reach -> retreat.
 #
-#     bash bringup/press_run.sh                      # full run, 60 mm press standoff
+#     bash bringup/press_run.sh                      # full run, tip 45 mm PAST the target
 #     bash bringup/press_run.sh --standoff 100       # stop further out
 #     bash bringup/press_run.sh --dry-run            # look and ground, plan the reach, move nothing
 #     bash bringup/press_run.sh --hold               # stay extended (to measure the gap by hand)
@@ -34,7 +34,7 @@ PICK_ARG=""; [ -n "${UTP_PICK_FROM_BOTTOM:-}" ] && PICK_ARG="--pick-from-bottom 
 # no contact. The press completed and pressed nothing, which is the worst shape of failure here
 # because every stage reported success. Contact is the only evidence this rig has that a press
 # happened, so a standoff that stops short of it is not a safety margin, it is a silent no-op.
-STANDOFF="${UTP_STANDOFF:-60}"
+STANDOFF="${UTP_STANDOFF:--45}"
 NAME="press_$(date +%H%M%S)"
 MODE="--go"
 EXTRA=""

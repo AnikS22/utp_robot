@@ -195,9 +195,16 @@ press() {
     # arm was aiming the wrong point on itself.
     #
     # With the tip as the reference the standoff becomes what it sounds like, and it must be
-    # NEGATIVE: a button needs to be pushed, so drive the tip 25 mm past the target plane and let
-    # contact stop it. 25 mm also absorbs a ~20 mm error in the unverified 172 mm tool length in
-    # either direction, which a small positive standoff would not.
+    # NEGATIVE: a button needs to be pushed, so drive the tip past the target plane and let contact
+    # stop it. It also absorbs the unverified 172 mm tool length, which a positive standoff would
+    # not. -45 mm is the operator-verified value: -25 never touched the plate at all, -60 pressed
+    # it hard and was called "a lil too much", -45 sits between them.
+    #
+    # AND STEP IT, 60 mm at a time, rather than one 1000 mm move. The stops are points along the
+    # approach axis in front of the button, so the first step puts the tip ON that axis and the
+    # rest are pure axial pushes into the plate. A single move instead cuts a long diagonal from
+    # wherever the wrist happens to be -- on 2026-09-07 that plunged 274 mm downward while
+    # travelling only 106 mm forward, and whatever it met first counted as the press.
     # --hold: DO NOT RETREAT TO THE START POSE. approach_target.py's success path drives the arm
     # all the way back to wherever it began -- 407 mm of Cartesian motion, about seven seconds --
     # and then the caller folds it to stow anyway. The retreat exists so a press run BY HAND leaves
@@ -218,12 +225,15 @@ press() {
     # made no contact. The --dry-run branch below is correctly formed, so a dry run could never
     # have shown it.
     UTP_NO_STOW=1 UTP_OFFSET_PROFILE="$profile" UTP_PICK_FROM_BOTTOM="$pick" \
-    UTP_STANDOFF="${UTP_STANDOFF:--25}" UTP_REACH_MARGIN_M="${UTP_REACH_MARGIN_M:-0.03}" \
+    UTP_STANDOFF="${UTP_STANDOFF:--45}" UTP_REACH_MARGIN_M="${UTP_REACH_MARGIN_M:-0.03}" \
     UTP_TOOL_TIP_MM="${UTP_TOOL_TIP_MM:-172}" \
-    UTP_STEP_MM="${UTP_STEP_MM:-1000}" UTP_REACH_SPEED="${UTP_REACH_SPEED:-90}" \
+    UTP_STEP_MM="${UTP_STEP_MM:-60}" UTP_REACH_SPEED="${UTP_REACH_SPEED:-60}" \
         bash "$REPO/bringup/press_run.sh" --query "$query" --hold --name "$cap" 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
     grep -qE "code: 31|err=31" "$log" && contact=1
+    # A CONTACT TRIP IS ALSO A REASON TO STOP RETRYING, even though approach_target exits non-zero
+    # for it: the gripper met the plate, which is the goal. Without this the creep below would
+    # step the base in and press a second time on a button it had already hit.
     short="$(sed -n 's/^SHORTFALL_M \([0-9.]*\).*/\1/p' "$log" | tail -1)"
     rm -f "$log"
     [ "$contact" = 1 ] && break
@@ -259,10 +269,29 @@ press() {
         echo "  PRESS FAILED on '$query' with no contact detected" >&2
         PRESS_FAILED="${PRESS_FAILED:+$PRESS_FAILED, }$query"
     else
-        # Completed with no contact. That is NOT a success -- see press_run.sh on the 60 mm
-        # standoff -- and the figure must be able to tell the two apart.
-        event press_no_contact "$query"
-        PRESS_FAILED="${PRESS_FAILED:+$PRESS_FAILED, }$query (no contact)"
+        # COMPLETED THE FULL APPROACH. Whether that is a press depends on the standoff, and the
+        # answer changed on 2026-09-07 when the aiming was fixed.
+        #
+        # It used to be no. With a POSITIVE standoff the arm stops short of the plate on purpose,
+        # so finishing the motion proves only that it moved -- press_run.sh's 60 mm default once
+        # completed cleanly against the floor-2 call plate having touched nothing at all, and the
+        # route called it a success. Error 31 was the only evidence this rig could produce.
+        #
+        # It is now yes, PROVIDED the standoff is negative. The tip is commanded PAST the target
+        # plane, so completing the motion means the gripper physically travelled through where the
+        # grounded button is. Measured the same day: the operator watched a -45 mm press land
+        # dead centre on the call button and the controller never tripped at all, because a button
+        # takes less force to depress than the abnormal-current threshold reads. Requiring 31 would
+        # have scored that bullseye a failure. -60 mm on the same button did trip 31, and the
+        # operator called it too hard. So 31 is evidence of a FIRM press, not the definition of one.
+        if awk -v s="${UTP_STANDOFF:--45}" 'BEGIN{exit !(s < 0)}'; then
+            note "pressed: the tip was driven ${UTP_STANDOFF:--45} mm past the target and the move completed"
+            note "  (no controller trip -- a button can depress below the abnormal-current threshold)"
+            event press_completed "$query"
+        else
+            event press_no_contact "$query"
+            PRESS_FAILED="${PRESS_FAILED:+$PRESS_FAILED, }$query (no contact, standoff was not negative)"
+        fi
     fi
     # Fold in the BACKGROUND. config/safety.yaml sets require_arm_stowed: false, so the arbiter
     # does not gate base motion on the arm -- waiting for the fold buys nothing and costs it.
