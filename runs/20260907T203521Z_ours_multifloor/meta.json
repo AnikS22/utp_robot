@@ -1,0 +1,19 @@
+{
+  "scene": "multifloor",
+  "method": "ours",
+  "map": "floor2",
+  "started_utc": "2026-09-07T20:35:22.562500+00:00",
+  "git_sha": "4adcf77f92e50b7d3b867266dd7c6656685e2e3c",
+  "host": "weim-Dell-Pro-Max-16-Plus-MB16250",
+  "ros_domain_id": "9",
+  "camera_ns": "mast_cam",
+  "frame_fps": 2.0,
+  "frame_width": 640,
+  "note": "poses.jsonl is the trajectory; events.jsonl is appended by the route, not by this process",
+  "ended_utc": "2026-09-07T20:36:37.470288+00:00",
+  "n_frames": 19,
+  "n_poses": 733,
+  "outcome": "FAILED",
+  "failed_reason": "floor-2 global search never got 3 consecutive agreeing results: 4 of 5 landed within 2 cm of (2.67,1.66) but search 3 was rejected at 53.9% fit, resetting the run. Nothing moved.",
+  "complete": false
+}

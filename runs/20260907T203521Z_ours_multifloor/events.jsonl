@@ -1,0 +1,4 @@
+{"stamp": 1788813330.1325562, "kind": "map_load_start", "detail": "floor2"}
+{"stamp": 1788813365.6393385, "kind": "map_load_done", "detail": "floor2"}
+{"stamp": 1788813367.6315377, "kind": "scan_informative", "detail": "3.0m/20deg"}
+{"stamp": 1788813382.5434647, "kind": "localization_rejected", "detail": "floor2 attempt 3"}

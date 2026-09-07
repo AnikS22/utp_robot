@@ -1,0 +1,12 @@
+detail,kind,stamp
+floor2,map_load_start,1788813425.0362926
+floor2,map_load_done,1788813465.5105836
+3.0m/20deg,scan_informative,1788813466.3375478
+"floor2 2.6555,1.6600 yaw 57.60 fit 65.4%",localized,1788813482.6473432
+f2_lift_door,leg_start,1788813482.6717484
+f2_lift_door arrived 12s,leg_end,1788813494.6889877
+f2_call_button,leg_start,1788813494.7149813
+f2_call_button arrived 10s,leg_end,1788813504.188304
+the small round blue button on the metal call plate,press_start,1788813504.2111757
+the small round blue button on the metal call plate,press_completed,1788813533.6476142
+f2_lift_door,leg_start,1788813535.8274288

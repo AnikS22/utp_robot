@@ -1,0 +1,1 @@
+operator stopped the run after the call-button press to fix two things it exposed: press() returned failure on a successful press, and the door wait spawned a fresh ROS node every second. Localized 65.4%, both floor-2 legs arrived, the call press landed.

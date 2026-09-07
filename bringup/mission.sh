@@ -288,6 +288,11 @@ press() {
             note "pressed: the tip was driven ${UTP_STANDOFF:--45} mm past the target and the move completed"
             note "  (no controller trip -- a button can depress below the abnormal-current threshold)"
             event press_completed "$query"
+            # AND SAY SO TO THE CALLER. This function returns `[ "$contact" = 1 ]`, so without
+            # this line a press the script had just declared successful returned FAILURE, and
+            # mission.sh printed "the robot could not confirm the call press" at an operator who
+            # had watched it land dead centre. Observed on the 2026-09-07 20:36 run.
+            contact=1
         else
             event press_no_contact "$query"
             PRESS_FAILED="${PRESS_FAILED:+$PRESS_FAILED, }$query (no contact, standoff was not negative)"
@@ -359,17 +364,37 @@ doors() {
         return 0
     fi
 
+    # ONE WATCHER, NOT A POLL. This used to run doors_open_lidar.py --once inside a 1 Hz shell
+    # loop. Every iteration paid a fresh rclpy init and DDS discovery of /scan_nav: measured
+    # 2026-09-07 at 0.58, 0.61 and 2.89 s for the SAME check. Add the loop's own `sleep 1` and the
+    # `sleep 2` inside clear_costmaps and the robot could stand still for about five seconds after
+    # the doors had physically opened -- which is what the operator saw as hesitating to go in, and
+    # it is spent against a door closer that does not wait.
+    #
+    # The script already had the right mode: WITHOUT --once it holds one node open and returns the
+    # instant the sector reads clear. So start it once with the whole budget, and poll the PROCESS
+    # at 5 Hz, which costs nothing.
     clear_costmaps
-    while [ $(( SECONDS - t0 )) -lt "${UTP_DOOR_WAIT:-150}" ]; do
-        if python3 "$REPO/bringup/doors_open_lidar.py" --once --quiet \
-                --clear-m "${UTP_DOOR_CLEAR:-1.6}" >/dev/null 2>&1; then
-            note "doors are open -- going NOW (costmaps already clear)"
-            event doors_open ""
-            return 0
+    python3 "$REPO/bringup/doors_open_lidar.py" --timeout "${UTP_DOOR_WAIT:-150}" --quiet \
+        --clear-m "${UTP_DOOR_CLEAR:-1.6}" >/dev/null 2>&1 &
+    local watch=$! clr=""
+    while kill -0 "$watch" 2>/dev/null; do
+        # Clear in the BACKGROUND. A foreground clear is two `ros2 service call` node startups,
+        # ~2-4 s, and doing that in the polling loop would put back most of the delay just removed.
+        if [ $(( SECONDS - last )) -ge 8 ]; then
+            [ -n "$clr" ] && kill "$clr" 2>/dev/null
+            clear_costmaps >/dev/null 2>&1 & clr=$!
+            last=$SECONDS
         fi
-        if [ $(( SECONDS - last )) -ge 8 ]; then clear_costmaps >/dev/null 2>&1; last=$SECONDS; fi
-        sleep 1
+        sleep 0.2
     done
+    # Do not let a clear land mid-drive and blank the obstacle layer while the robot is moving.
+    [ -n "$clr" ] && kill "$clr" 2>/dev/null
+    if wait "$watch"; then
+        note "doors are open -- going NOW (costmaps already clear)"
+        event doors_open ""
+        return 0
+    fi
 
     if [ -t 0 ]; then
         echo "  lidar still sees them shut. RETURN to go anyway, Ctrl-C to stop."
