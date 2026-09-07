@@ -376,35 +376,62 @@ find_self() {
     say "FIND SELF on '$map'   (needs $need of $tries searches to agree)"
     [ -n "$DRY" ] && { LOCALIZED="$map"; return 0; }
 
-    # THE SCAN MUST BE ABLE TO SEE OUT BEFORE ANY OF THIS MEANS ANYTHING.
+    # THE SCAN MUST SEE REAL STRUCTURE BEFORE ANY OF THIS MEANS ANYTHING -- BUT "STRUCTURE" IS
+    # NOT "CLEAR AHEAD".
     #
     # A global search is only as good as the geometry it is given. Sealed in a lift car the scan is
-    # a metal box roughly 1.3 m on a side, and a box matches many places on a building map -- and
-    # matches them CONSISTENTLY, so repeating the search reproduces the same wrong answer and the
-    # agreement test is satisfied by it. That is not hypothetical: on 2026-09-07 three searches
-    # agreed within 10 cm at 59.9% while the robot was 8 m away in the car, the gate opened, and it
-    # drove at the operator.
+    # a metal box ~1.3 m on a side, and a box matches many places on a building map -- CONSISTENTLY,
+    # so repeating the search reproduces the same wrong answer and the agreement test is satisfied
+    # by it. On 2026-09-07 three searches agreed within 10 cm at 59.9% while the robot was 8 m away
+    # in the car, and it drove at the operator.
     #
-    # There is no way to ask the building whether its doors are open. There IS a way to ask whether
-    # this robot can see anything: the forward clear distance. Out of the car, or facing an open
-    # doorway, the scan reaches metres down a corridor. Boxed in, it does not. So that measurement
-    # is the precondition, checked HERE rather than as a separate step a caller can skip -- and it
-    # is a property of the scan, not a claim about the doors, which is the thing actually required.
-    local cwait="${UTP_CLEAR_WAIT:-90}" cm="${UTP_CLEAR_M:-2.0}" c0=$SECONDS
-    note "waiting for the view to open up (need ${cm} m ahead; a sealed car gives ~1.3 m)"
+    # The first version of this gate measured the FORWARD sector, and that was wrong for the job.
+    # Measured minutes later, in the floor-2 lobby: forward 1.57 m, behind 3.85 m, MAX RANGE
+    # 15.65 m. Plenty of structure to localize against, and the gate refused, because the robot
+    # happened to be facing a wall 1.6 m away. Which way the robot points has nothing to do with
+    # whether its scan is informative -- that was the flaw in every door-shaped check tonight.
+    #
+    # What actually separates the two cases is how far the scan reaches ANYWHERE. A sealed car is
+    # bounded in every direction; a lobby is not:
+    #
+    #     sealed car      max ~1.5 m in all bearings
+    #     floor-2 lobby   max 15.65 m, median 2.22 m
+    #
+    # So: require a minimum number of returns beyond UTP_SEE_M. Direction-free, and it fails
+    # exactly in the case that produced the wrong lock.
+    local swait="${UTP_SEE_WAIT:-90}" seem="${UTP_SEE_M:-3.0}" seen="${UTP_SEE_N:-25}" c0=$SECONDS
+    note "waiting until the scan sees structure (>= ${seen} returns beyond ${seem} m; a sealed car has none)"
     while :; do
-        if python3 "$REPO/bringup/doors_open_lidar.py" --once --quiet --clear-m "$cm" >/dev/null 2>&1; then
-            note "front is clear after $(( SECONDS - c0 ))s -- the scan can see real structure now"
-            event front_clear "${cm}m"
+        if python3 - "$seem" "$seen" <<'PYSEE' >/dev/null 2>&1; then
+import rclpy, sys, time, math, numpy as np
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import LaserScan
+far_m, need = float(sys.argv[1]), int(sys.argv[2])
+rclpy.init(); n = Node("utp_see_check"); d = {}
+n.create_subscription(LaserScan, "/scan_nav", lambda m: d.__setitem__("s", m), qos_profile_sensor_data)
+t = time.time()
+while "s" not in d and time.time() - t < 8:
+    rclpy.spin_once(n, timeout_sec=0.1)
+ok = False
+if "s" in d:
+    r = np.array(d["s"].ranges)
+    r = r[np.isfinite(r) & (r > d["s"].range_min)]
+    ok = int((r >= far_m).sum()) >= need
+rclpy.shutdown()
+sys.exit(0 if ok else 1)
+PYSEE
+            note "scan sees past ${seem} m after $(( SECONDS - c0 ))s -- searching now"
+            event scan_informative "${seem}m"
             break
         fi
-        if [ $(( SECONDS - c0 )) -ge "$cwait" ]; then
-            event front_blocked "${cm}m"
-            die "the view has not opened up in ${cwait}s: less than ${cm} m clear ahead, which is
-        what the inside of a closed lift car looks like. Localizing from here produces a pose that
-        agrees with itself and is wrong -- measured 2026-09-07, three searches within 10 cm at
-        59.9% while the robot was 8 m from where they said, after which it drove at the operator.
-        Open the doors, or turn the robot to face out, then re-run."
+        if [ $(( SECONDS - c0 )) -ge "$swait" ]; then
+            event scan_blind "${seem}m"
+            die "after ${swait}s the scan still sees nothing beyond ${seem} m in ANY direction,
+        which is what the inside of a closed lift car looks like. Localizing from here produces a
+        pose that agrees with itself and is wrong -- measured 2026-09-07, three searches within
+        10 cm at 59.9% while the robot was 8 m from where they said, after which it drove at the
+        operator. Open the doors or move the robot out, then re-run."
         fi
         sleep 1
     done
