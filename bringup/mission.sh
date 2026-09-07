@@ -443,9 +443,34 @@ press() {
             PRESS_FAILED="${PRESS_FAILED:+$PRESS_FAILED, }$query (no contact, standoff was not negative)"
         fi
     fi
-    # Fold in the BACKGROUND. config/safety.yaml sets require_arm_stowed: false, so the arbiter
-    # does not gate base motion on the arm -- waiting for the fold buys nothing and costs it.
-    "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go >/dev/null 2>&1 &
+    # FOLD IN THE BACKGROUND, BUT ACTUALLY FOLD. config/safety.yaml sets require_arm_stowed: false,
+    # so the arbiter does not gate base motion on the arm and waiting for the fold buys nothing --
+    # but "backgrounded" was being read as "unchecked", and it was not folding at all.
+    #
+    # Measured 2026-09-07 after the floor-2 call press: the arm was still extended when the robot
+    # reached the lift doors, and the operator saw it. Error 31 leaves the controller in state 4,
+    # where a servo command is REFUSED; arm_clear above does clear it, but the clear and the
+    # backgrounded fold were racing, and when the fold lost it exited non-zero into /dev/null with
+    # nobody reading it. An arm left out is not cosmetic here: it sits in the forward sector the
+    # door check reads, and it is outside the chassis footprint Nav2 plans with.
+    #
+    # So: clear, fold, and if that did not take, clear and fold AGAIN -- still off the critical
+    # path, still not gating the drive, but now it reports instead of failing silently.
+    ( for _try in 1 2; do
+        "$REPO/.venv-arm/bin/python" - >/dev/null 2>&1 <<'PYCLR'
+from xarm.wrapper import XArmAPI
+import time
+a = XArmAPI("192.168.1.221", is_radian=False)
+a.clean_error(); a.clean_warn(); a.motion_enable(True); a.set_mode(0); a.set_state(0)
+time.sleep(0.4); a.disconnect()
+PYCLR
+        if "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go 2>&1 \
+                | grep -q "at stow: True"; then
+            exit 0
+        fi
+        sleep 1
+      done
+      echo "  ARM DID NOT FOLD after two attempts -- it is still extended" >&2 ) &
     STOW_PID=$!
     [ "$contact" = 1 ]
 }
