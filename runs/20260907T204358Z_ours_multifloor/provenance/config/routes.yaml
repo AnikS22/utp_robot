@@ -1,0 +1,171 @@
+# Missions: waypoints in order, with visual actions where something must be touched.
+#
+# Waypoints come from `bringup/waypoints.py record <name>` and live in maps/waypoints.yaml.
+# They are in the ODOM frame, so they are only valid within one continuous run of the ranger
+# driver -- restarting it re-zeros odom and silently invalidates every one of them.
+#
+# Step kinds:
+#   goto: <waypoint>     drive there on odometry; the lidar vetoes a blocked corridor
+#   action: <name>       run a visual action (see ACTIONS in utp/pipeline/, driven by run_trial.py)
+#     query: "..."       optional: what the grounder should look for
+#     standoff: 60       optional: mm, measured to the flange marker
+#   wait: <seconds>      hold position
+#
+# Waypoints are APPROXIMATE and that is fine: a leg only has to park the robot with the target in
+# the camera frame. The grounder and the visual servo close the rest, to 3 mm measured.
+
+routes:
+  # Smallest useful thing: drive one leg and stop. Use this to check a waypoint before
+  # trusting it in a longer route.
+  one_leg:
+    - goto: start
+  # THE BENCHMARK. Piloted recording happens with the doors OPEN (you just drove through them);
+  # the autonomous run meets them CLOSED. So the route cannot be a fixed list -- at the doors it
+  # LOOKS: a `check` step captures a frame and asks the VLM whether the way is passable.
+  #   clear   -> drive straight through to 'outside'
+  #   blocked -> splice in 'press_and_pass' (drive to the plate, press it, wait), then continue
+  #   VLM unreachable / unparseable -> FAIL CLOSED, hold position, human decides
+  # Waypoints to record, in one continuous driver session, robot piloted to each pose:
+  #   start    where the run begins
+  #   door     facing the doors, both leaves in the camera frame
+  #   button   square to the ADA plate's wall, ~0.55 m off it (the press pose proven 2026-08-25)
+  #   outside  past the doorway, where the run ends
+  benchmark:
+    - goto: door
+    - check: blockage
+      if_blocked: press_and_pass
+    - goto: outside
+
+  # The branch `benchmark` takes when the doors are shut. No leading 'goto: doors' -- the robot
+  # is ALREADY at the doors when this fires, and an extra leg is an extra turn, which is where
+  # 4WS odometry is worst. After the wait the doors are opening; benchmark's final leg drives
+  # through while they are -- and if they never opened, the corridor veto stops on the tape.
+  # THE BRANCH A REASONED TRIAL USES. No `goto button` -- that waypoint was a human pointing at
+  # the control, which hollows out the grounding claim: the robot would not be FINDING the plate,
+  # it would be driven to it. Instead the base closes the gap to the OBSTRUCTION geometrically
+  # (no map, no waypoint, stop ~0.55 m out) and the grounder locates the control from a frame
+  # taken there. approach_blockage has no idea what a button is, and must not.
+  press_and_pass_visual:
+    # No approach_blockage here -- escalate() now closes the gap BEFORE asking, because the
+    # reasoner cannot identify a control it is too far away to see. Kept out of the branch so the
+    # robot is not driven at the door twice.
+    #
+    # find_control sweeps the camera because the plate is on the wall BESIDE the doors and the
+    # D435 is ~69 deg wide, so from a door-facing pose it is simply not in frame. It grounds every
+    # view locally (~1 s each, no API), vetoes anything that reads as a fire alarm, and turns to
+    # the best survivor.
+    - action: find_control
+      query: "the accessible door push button"
+    # Then bring the CONTROL into reach. approach_blockage stops 0.55 m from the DOOR; the plate
+    # is on the wall beside it, measured 2026-08-29 at 5.51 m range and +25.1 deg bearing from
+    # the door-facing pose -- out of the 0.88 m arm envelope by 4.63 m. Grounding it perfectly
+    # would still have reached nothing.
+    - action: reach_control
+      query: "the accessible door push button"
+    - action: press_button
+      query: "the accessible door push button"
+      standoff: 60
+    - wait: 6
+
+  press_and_pass:
+    - goto: button
+    - action: press_button
+      query: "the accessible door push button"
+      standoff: 60
+    - wait: 6
+
+  # THE RECORDED-BUTTON RUN. Four poses, piloted and recorded back to back in ONE driver session:
+  #   start    where the run begins
+  #   doors    square to the closed doors, ~1.5 m off, both leaves in frame
+  #   button   THE PRESS POSE: square to the ADA plate's wall, ~0.5 m off, plate centred in frame
+  #   final    outside, past the doorway
+  # then: start -> doors -> button -> press -> doors -> final.
+  #
+  # WHY THE BUTTON IS RECORDED. Five FSM trials at these doors ended in abstention: the plate is
+  # on the wall ~80-100 deg off the door normal, and from any pose the survey reached it was
+  # either out of frame, half-cropped, or ~50 px and lost to the wall signs. A recorded press
+  # pose sidesteps all of it -- the robot is DRIVEN to the plate, and press_run only has to
+  # ground it from ~0.5 m, where it is ~160 px and unambiguous.
+  #
+  # BE HONEST ABOUT WHAT THIS MEASURES. With the button pose recorded, the grounder is finding a
+  # plate the operator already pointed the camera at. That tests the press, the navigation and
+  # the door transit; it does NOT test whether the system can find a control it was not led to.
+  # Score this route as the transit-and-press benchmark, not as the search benchmark.
+  #
+  # TIMING. ADA openers hold for as little as 5 s (ANSI A156.19). press -> stow -> drive to
+  # 'doors' is ~20-25 s, so the leaves may be closing by the time the final leg starts. The lidar
+  # sees the tape on the doors, so a re-closed door STOPS the robot rather than being driven into;
+  # if that happens, shorten the path by removing the `goto: doors` after the press.
+  recorded_press:
+    # 'start' FIRST. Hand-parking on the recorded pose is not realistic, so the robot squares
+    # itself onto it -- position AND heading -- before the first real leg. Omitted once
+    # (2026-08-29) and the very next leg to 'doors' was off, because it began from wherever
+    # the RC had left the robot pointing.
+    - goto: start
+    - goto: doors
+    - goto: button
+    # CLOSE THE DRIFT BEFORE PRESSING. 'button' gets the robot to the plate's wall; it does not
+    # get it square to the plate. Measured 2026-08-29, first run of this route: odometry said
+    # 0.15 m from the recorded pose, the camera showed the plate ~22 deg left of axis and beyond
+    # the 0.5 m standoff -- ordinary drift over a ~10 m loop with two full turns. press_run
+    # reaches from wherever it stands, so without this step it reaches at the wrong place.
+    # reach_control grounds the plate, runs the fire-alarm veto, then faces it and steps in to
+    # the press standoff (the sim's _approach_press_pose); press_run then re-grounds from there.
+    - action: reach_control
+      query: "the accessible door push button"
+    - action: press_button
+      query: "the accessible door push button"
+      standoff: 60
+    - goto: doors
+    - goto: final
+
+  # THREE WAYPOINTS, from wherever the robot is standing: go to the plate, press it, go out.
+  #   button  the press pose -- square to the ADA plate's wall, plate CENTRED in the camera
+  #   doors   in front of the doors, facing through them
+  #   final   outside, past the doorway
+  # No 'start': the run begins where the robot already is, which is the point of three.
+  #
+  # reach_control between the waypoint and the press is not optional. 'button' gets the base to
+  # the plate's WALL; it does not get it square to the plate, and odometry drift over a short
+  # loop was measured at 1.6-1.7 m / +30 deg from the same recorded pose three times running.
+  # reach_control grounds the plate, runs the fire-alarm veto, then faces it and steps in to the
+  # press standoff. press_run then raises the arm, re-grounds from there, and reaches.
+  press_and_out:
+    - goto: button
+    - action: reach_control
+      query: "the accessible door push button"
+    - action: press_button
+      query: "the accessible door push button"
+      standoff: 60
+    - goto: doors
+    - goto: final
+  # SIM twin of recorded_press: the exact join that failed on hardware -- waypoint to the button
+  # wall, reposition on the grounded control, press, exit. Waypoints from make_sim_waypoints.py.
+  recorded_press_sim:
+    - goto: door
+    - goto: button
+    - action: reach_control
+      query: "the door release button on the wall"
+    - action: press_button
+      query: "the door release button on the wall"
+    - wait: 3
+    - goto: door
+    - goto: outside
+
+  # SIM twins of benchmark/press_and_pass (Isaac trial server, domain 42, UTP_SIM=1).
+  # Same step kinds, same executor, same check -> the workflow is what gets tested.
+  # One geometric difference: in the sim scene the button's wall FACES the robot, and the
+  # straight line button->goal clips the door jamb -- so the sim branch returns to 'door'
+  # before the final leg. wait is 3 s: the sim door slides open in ~2 s and never re-closes.
+  benchmark_sim:
+    - goto: door
+    - check: blockage
+      if_blocked: press_and_pass_sim
+    - goto: outside
+
+  press_and_pass_sim:
+    - goto: button
+    - action: press_button
+      query: "the door release button on the wall"
+    - wait: 3
+    - goto: door

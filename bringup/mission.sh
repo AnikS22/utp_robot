@@ -35,6 +35,7 @@ source "$REPO/bringup/env.sh" >/dev/null 2>&1 || { echo "env.sh failed" >&2; exi
 source "$REPO/bringup/run_event.sh"
 
 FROM=2; TO=1; DRY=""; ARRIVAL_ONLY=0; MANUAL_CALL=0; MANUAL_SELECT=0; PREPARE_FLOOR=""; PREPARE_IN_CAR=0
+READY_ON_A=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY="--dry-run"; shift ;;
@@ -66,11 +67,27 @@ while [ $# -gt 0 ]; do
     # extracting shell functions with sed into a wrapper: fragile, easy to interrupt half way, and
     # twice it left slam_toolbox killed but not restarted, which then looked like a localization
     # bug. One flag, the same code path the mission uses, nothing to reassemble.
+    # ALREADY THERE, ALREADY LOCALIZED -- SO GO.
+    #
+    # The departure half opens with load_map + find_self on floor 2: restart slam_toolbox on the
+    # map, deserialize a building-sized pose graph, re-probe the whole sensing chain, then run the
+    # global search up to five times. Measured tonight that is about 80 s for the load and another
+    # 10-30 s for the search, and it ran before EVERY attempt -- while the robot had not moved, the
+    # map had not changed, and slam_toolbox was still localizing in it from the run before.
+    #
+    # The operator's words: "dont load floor 2 then relocalize each time that is doing too much
+    # when I say go then we just go it is already localized it has always been on floor 2".
+    #
+    # This does not remove a gate. nav() still refuses unless LOCALIZED equals CURRENT_MAP. It
+    # ADOPTS the lock that is already live rather than rebuilding it, and it verifies that lock is
+    # real first -- see adopt_lock. If any check fails it says so and does the full load and search
+    # anyway, so the worst case is the old behaviour.
+    --ready) READY_ON_A=1; shift ;;
     --prepare-floor) PREPARE_FLOOR="$2"; shift 2 ;;
     --in-car) PREPARE_IN_CAR=1; shift ;;
     --from) FROM="$2"; shift 2 ;;
     --to)   TO="$2";   shift 2 ;;
-    *) echo "usage: bash bringup/mission.sh [--dry-run] [--from N] [--to N] [--manual-lift]\n       [--arrival-only] [--prepare-floor N [--in-car]]" >&2; exit 2 ;;
+    *) echo "usage: bash bringup/mission.sh [--dry-run] [--from N] [--to N] [--manual-lift]\n       [--ready] [--arrival-only] [--prepare-floor N [--in-car]]" >&2; exit 2 ;;
   esac
 done
 if [ "$PREPARE_IN_CAR" = 1 ] && [ -z "$PREPARE_FLOOR" ]; then
@@ -672,6 +689,33 @@ print(($agree+1) if (math.hypot(dx,dy)<=$tol and dw<=$told) else 1)")
         Open the doors fully so the scan reaches past the car, or set the pose in RViz."
 }
 
+# adopt_lock <map> -- take the localization that is ALREADY live, if it is real. 0 on success.
+#
+# Three checks, and every one is something a fresh load_map + find_self would have had to
+# establish anyway:
+#   1. the map slam_toolbox is serving is the one this leg wants  (maps/.loaded_map)
+#   2. map -> base_link resolves, so there IS a pose
+#   3. the scan fits the map at that pose at least as well as find_self demands to DRIVE
+# Fail any of them and the caller falls back to the full path. Nothing here moves the robot.
+adopt_lock() {
+    local map="$1" live fit minfit="${UTP_RELOC_MIN_FIT:-55}"
+    live="$(awk 'NR==1{print $1}' "$REPO/maps/.loaded_map" 2>/dev/null)"
+    [ "$live" = "$map" ] || { note "not adopting: slam_toolbox is on '${live:-<none>}', not '$map'"; return 1; }
+    timeout 20 ros2 run tf2_ros tf2_echo map base_link >/dev/null 2>&1 \
+        || { note "not adopting: no map -> base_link transform"; return 1; }
+    fit="$(timeout 90 python3 "$REPO/bringup/relocalise.py" --check 2>&1 \
+           | sed -n 's/.*fit \([0-9.]*\)%.*/\1/p' | tail -1)"
+    [ -n "$fit" ] || { note "not adopting: could not measure the fit at the current pose"; return 1; }
+    if awk -v f="$fit" -v m="$minfit" 'BEGIN{exit !(f < m)}'; then
+        note "not adopting: the live pose fits the map only ${fit}%, under the ${minfit}% needed to drive"
+        return 1
+    fi
+    note "adopting the live localization in '$map': fit ${fit}% at the current pose"
+    event localized "$map adopted, fit ${fit}%"
+    CURRENT_MAP="$map"; LOCALIZED="$map"
+    return 0
+}
+
 localize_on() { load_map "$1"; find_self "$1"; }
 
 # ---------------------------------------------------------------------------- prepare only
@@ -734,7 +778,12 @@ fi
 if [ "$ARRIVAL_ONLY" = 1 ]; then
     say "SKIPPING floor $FROM -- resuming at the arrival on floor $TO"
 else
-localize_on "$A_MAP"
+if [ "$READY_ON_A" = 1 ]; then
+    say "READY -- taking the localization already live on '$A_MAP' (--ready)"
+    adopt_lock "$A_MAP" || { note "falling back to the full load and search"; localize_on "$A_MAP"; }
+else
+    localize_on "$A_MAP"
+fi
 
 # DOORS FIRST, THEN THE PLATE -- the operator's stated order for floor 2. It also puts the robot
 # where it can see the lift before it asks for it, so a failed call is visible immediately rather

@@ -374,6 +374,37 @@ def main() -> int:
             tgt = p_arm - approach * s
             fl = tgt - R_f @ ref_off
             print(f"\n[step {i}/{len(stops)}] marker standoff {s*1000:.0f} mm ...")
+            # ASK THE IK FIRST, THEN CHECK THE ANSWER AGAINST THE OPERATOR'S LIMITS.
+            #
+            # safety/arm_limits.py holds J2 >= -55 deg, set in UFACTORY Studio to keep the arm out
+            # of the laptop on the chassis deck. The CONTROLLER enforces it, and when it does the
+            # move dies as a bare -9 (EMERGENCY_STOP) with the arm in state 4 and no statement of
+            # which joint or why -- arm_limits.py's own header predicts exactly that signature.
+            # It happened on 2026-09-07 20:43: the base had stopped 27 mm closer than on the runs
+            # that worked, so the first Cartesian goal sat lower and nearer the body, the IK
+            # answered with J2 past the limit, and the press aborted on step 1 of 4.
+            #
+            # The headroom check above cannot catch this: it reads the angles the arm is ALREADY
+            # at, and a Cartesian goal's joint solution is not known until the IK is asked. So ask
+            # it. get_inverse_kinematics moves nothing.
+            _ikc, _ik = arm.get_inverse_kinematics(
+                [fl[0]*1000, fl[1]*1000, fl[2]*1000,
+                 start_rpy[0], start_rpy[1], start_rpy[2]], input_is_radian=False,
+                return_is_radian=False)
+            if _ikc == 0 and _ik is not None:
+                from safety.arm_limits import violations as _limit_violations
+                _bad = _limit_violations(list(_ik[:6]))
+                if _bad:
+                    print(f"  REFUSING step {i}: the IK solution for this pose breaks a limit set "
+                          f"in UFACTORY Studio --")
+                    for _b in _bad:
+                        print(f"    {_b}")
+                    print("  The CONTROLLER enforces that, and hitting it aborts the move as a "
+                          "bare -9 with no explanation.")
+                    print("  Move the BASE back a little and re-ground; do not ask the arm to fold "
+                          "under itself.")
+                    failed = True
+                    break
             code = arm.set_position(x=fl[0]*1000, y=fl[1]*1000, z=fl[2]*1000,
                                     roll=start_rpy[0], pitch=start_rpy[1], yaw=start_rpy[2],
                                     speed=speed, is_radian=False, wait=True)
@@ -384,6 +415,11 @@ def main() -> int:
                 # a ControllerError 21 -- a failed trial recorded as a successful one, which is
                 # the worst outcome available to a benchmark. Observed 2026-08-29 at the doors.
                 failed = True
+                if code == -9:
+                    print("  code -9 = EMERGENCY_STOP: the arm was stopped mid-move by the")
+                    print("  CONTROLLER, not by this script. With collision detection off, that is")
+                    print("  almost always a hard joint limit set in UFACTORY Studio -- see")
+                    print("  safety/arm_limits.py. Move the base back and re-ground.")
                 if arm.error_code == 23:
                     print("  error 23 = joint limit. The IK needed a joint past its stop for this")
                     print("  Cartesian goal. Reposition the BASE rather than forcing the arm.")
@@ -422,7 +458,12 @@ def main() -> int:
             print("  That number -- not the marker standoff -- is what makes a press safe.")
             print("  When done:  python3 bringup/approach_target.py --capture "
                   f"{a.capture} --retreat-only --go")
-            return 0
+            # RETURN THE OUTCOME, NOT 0. A `return` inside `finally` DISCARDS whatever the try
+            # block was returning or raising, so this line used to report success for every held
+            # press -- including 2026-09-07 20:43, where the arm emergency-stopped on step 1 of 4
+            # and never came near the button, and mission.sh printed "pressed" over it. Holding is
+            # about where the ARM ends up; it says nothing about whether the press worked.
+            return 1 if failed else 0
         print("\nretreating to start...")
         if not arm.error_code:
             arm.set_position(x=start_xyz[0]*1000, y=start_xyz[1]*1000, z=start_xyz[2]*1000,
