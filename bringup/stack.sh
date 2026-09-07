@@ -389,8 +389,12 @@ if [ "$WANT_NAV" = 1 ]; then
     if ! timeout 8 ros2 topic echo /map nav_msgs/msg/OccupancyGrid --once >/dev/null 2>&1; then
       [ "$STATUS_ONLY" = 1 ] || { note "no /map -- starting slam_toolbox localization on '$MAP_NAME'"
         kill_matching slam_toolbox; sleep 4
+        # map_update_interval frozen: localization must never regenerate the PUBLISHED map, or it stamps
+        # the lift car into the live grid at whatever pose it seeded. Why and the measurements: see the
+        # same override in bringup_all.sh.
         start_bg ros2 run slam_toolbox localization_slam_toolbox_node --ros-args \
           --params-file "$REPO/config/slam_os0.yaml" -p use_sim_time:=false -p mode:=localization \
+          -p map_update_interval:="${UTP_MAP_UPDATE_INTERVAL:-1000000.0}" \
           -p map_file_name:="$REPO/maps/$MAP_NAME" $SEED_ARG
         sleep 20
         # It is a LIFECYCLE node: it comes up unconfigured and publishes nothing until told.

@@ -366,7 +366,7 @@ def do_swap(floor_id: str, go: bool, seed_role: str = "car_facing_out") -> int:
             print(f"  stop pid {pid}  {cmd[:80]}")
         print(f"  rm {LOADED_MAP}")
         print(f"  ros2 run slam_toolbox {SLAM_EXEC} --ros-args --params-file {SLAM_PARAMS} "
-              f"-p mode:=localization -p map_file_name:={stem} "
+              f"-p mode:=localization -p map_update_interval:=1000000.0 -p map_file_name:={stem} "
               f"-p map_start_pose:=[{sx:.4f},{sy:.4f},{syaw:.4f}]")
         print("  then verify the published grid, rewrite .loaded_map, clear the costmaps.")
         print("\nAdd --go to do it.")
@@ -391,6 +391,10 @@ def do_swap(floor_id: str, go: bool, seed_role: str = "car_facing_out") -> int:
            "--params-file", str(SLAM_PARAMS),
            "-p", "use_sim_time:=false",
            "-p", "mode:=localization",
+           # Frozen: localization must never regenerate the PUBLISHED map, or it stamps the lift
+           # car into the live grid at the seed pose and the search then locks onto the box it
+           # just built. Measurements and the full argument: bringup_all.sh, same override.
+           "-p", f"map_update_interval:={os.environ.get('UTP_MAP_UPDATE_INTERVAL', '1000000.0')}",
            "-p", f"map_file_name:={stem}",
            "-p", f"map_start_pose:=[{sx:.4f},{sy:.4f},{syaw:.4f}]"]
     print("  " + " ".join(cmd))

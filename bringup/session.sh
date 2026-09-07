@@ -376,9 +376,13 @@ start_nav() {
     # Same params file as mapping -- a map built with one set of scan-matcher settings and
     # localized with another matches worse for no reason -- overriding only the two that must
     # differ. --ros-args after --params-file wins, so the override is the last word.
+    # map_update_interval frozen: localization must never regenerate the PUBLISHED map, or it stamps
+    # the lift car into the live grid at whatever pose it seeded. Why and the measurements: see the
+    # same override in bringup_all.sh.
     bg ros2 run slam_toolbox localization_slam_toolbox_node --ros-args \
        --params-file "$ROOT/config/slam_os0.yaml" \
        -p use_sim_time:=false -p mode:=localization \
+       -p map_update_interval:="${UTP_MAP_UPDATE_INTERVAL:-1000000.0}" \
        -p map_file_name:="$ROOT/maps/$MAP_NAME"
     sleep 5
     ros2 lifecycle set /slam_toolbox configure >/dev/null 2>&1
