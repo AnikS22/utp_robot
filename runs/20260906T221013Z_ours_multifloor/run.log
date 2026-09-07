@@ -1,0 +1,79 @@
+
+==============================================================
+ 0  PREP   authority, arm, stack
+==============================================================
+  
+  already CAN. Nothing to do -- but do not touch the RC sticks.
+  SDK_VERSION: 1.18.4
+  ROBOT_IP: 192.168.1.221, VERSION: v2.6.0, PROTOCOL: V1, DETAIL: 6,6,XI1305,AC1304,v2.6.0, TYPE1300: [1, 1]
+  change protocol identifier to 3
+  [clean_error], xArm is ready to move
+  arm cleared: state=2 error=0
+  already at stow; nothing to do.
+  goal checker general_goal_checker.xy_goal_tolerance = 0.08
+  goal checker general_goal_checker.yaw_goal_tolerance = 0.10
+
+==============================================================
+ LOCALIZE on 'floor2'
+==============================================================
+  already localizing in 'floor2' -- not restarting SLAM
+
+=== utp bring-up   mode=nav   map=floor2   domain=9   
+  probing (one node, every topic, ~7 s plus TF) ...
+  'floor2' was mapped with the artifact filter -- starting it
+  stopping 1 existing 'cloud_artifact_filter.py' process(es): 1189365
+  waiting for /ouster/points_clean (25s remaining)
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/1199094/cmdline: No such file or directory
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/1199095/cmdline: No such file or directory
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/1199096/cmdline: No such file or directory
+localized map provenance recorded: floor2
+
+  COMPONENT      STATE   DETAIL
+  -------------- ------- ------------------------------------------
+  ethernet       ok      enx00e04c674c60 carrier up
+  net_lidar      ok      192.168.1.119 reachable
+  net_router     ok      192.168.1.1 reachable
+  net_arm        ok      192.168.1.221 reachable
+  can0           ok      ERROR-ACTIVE, ~922 frames/s
+  chassis        ok      /odom 49.95 Hz, odom->base_link present
+  lidar          ok      /ouster/points 9.99 Hz
+  mount_tf       ok      base_link->os_sensor->os_lidar resolves, mount (-0.375, 0.0, 1.146) m
+  filter         ok      /ouster/points_clean 9.96 Hz (matches the 'floor2' chain)
+  projection     ok      /scan_filtered 9.99 Hz from /ouster/points_clean
+  scan           ok      /scan 9.99 Hz (rear mask 0.90 m)
+  scan_nav       ok      /scan_nav 9.99 Hz (temporal filter from /scan)
+  safety         ok      /safety/status 20.23 Hz, arm_stowed 100%, estop_latched 0%
+  waypoints      ok      maps/waypoints.yaml has map-frame waypoints in 'floor2'
+  slam           ok      localizing in 'floor2', lifecycle active, map->odom present
+  map_session    ok      saved map matched to the live SLAM session
+  nav2           ok      navigate_to_pose + bt_navigator/planner/controller/behavior ACTIVE, no keepout mask
+
+  elapsed: 39 seconds
+  everything --mode nav needs is up. Next:
+      python3 bringup/relocalise.py --check        # want >=80% before driving
+      python3 bringup/waypoints.py list            # must be recorded in map 'floor2'
+  global search for the robot on 'floor2' ...
+  current (+2.71,+1.22,+24deg) fit 60.9%
+  searching 2831 free cells on a 0.20 m lattice x 72 headings = 203,832 poses
+  coarse  (+2.71,+1.22,+24deg) fit 60.9%
+  refined (+2.78,+1.27,+24deg) fit 78.2%
+  published /initialpose -- drive slowly for a few metres to let it settle
+  fit 59.7%
+
+==============================================================
+ NAVIGATE  'f2_lift_door'
+==============================================================
+goal 'f2_lift_door' in map: x=5.907 y=2.537 yaw=+55.4 deg (map=floor2)
+DRIVING to 'f2_lift_door' via Nav2. Ctrl-C stops. E-stop is faster.
+arrived at 'f2_lift_door' in 9.8 s
+RESULT {"detail": "Nav2 STATUS_SUCCEEDED", "elapsed_s": 9.78, "status": "arrived", "waypoint": "f2_lift_door"}
+
+==============================================================
+ NAVIGATE  'f2_call_button'
+==============================================================
+goal 'f2_call_button' in map: x=6.499 y=2.119 yaw=+48.6 deg (map=floor2)
+DRIVING to 'f2_call_button' via Nav2. Ctrl-C stops. E-stop is faster.
+blocked: Nav2 ABORTED after 155.4 s (recoveries exhausted)
+RESULT {"detail": "Nav2 STATUS_ABORTED, recoveries exhausted", "elapsed_s": 155.36, "status": "blocked", "waypoint": "f2_call_button"}
+
+STOP: leg to 'f2_call_button' came back 'blocked', not an arrival

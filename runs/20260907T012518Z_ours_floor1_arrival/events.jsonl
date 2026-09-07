@@ -1,0 +1,5 @@
+{"stamp": 1788744330.031243, "kind": "map_load_start", "detail": "floor1"}
+{"stamp": 1788744363.3161569, "kind": "map_load_done", "detail": "floor1"}
+{"stamp": 1788744387.1507466, "kind": "localized", "detail": "floor1 5.8777,-5.8108 yaw -73.80 fit 59.9%"}
+{"stamp": 1788744392.976936, "kind": "leg_start", "detail": "f1_ada_button"}
+{"stamp": 1788744426.4230754, "kind": "leg_end", "detail": "f1_ada_button blocked 34s"}

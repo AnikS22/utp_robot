@@ -1,0 +1,25 @@
+{"stamp": 1788745174.8542137, "kind": "map_load_start", "detail": "floor2"}
+{"stamp": 1788745215.8147075, "kind": "map_load_done", "detail": "floor2"}
+{"stamp": 1788745217.07215, "kind": "scan_informative", "detail": "3.0m"}
+{"stamp": 1788745231.813347, "kind": "localized", "detail": "floor2 5.5155,1.9000 yaw 42.00 fit 83.8%"}
+{"stamp": 1788745231.8347442, "kind": "leg_start", "detail": "f2_lift_door"}
+{"stamp": 1788745235.6311631, "kind": "leg_end", "detail": "f2_lift_door arrived 4s"}
+{"stamp": 1788745235.6488097, "kind": "leg_start", "detail": "f2_lift_door"}
+{"stamp": 1788745237.5543299, "kind": "leg_end", "detail": "f2_lift_door arrived 2s"}
+{"stamp": 1788745237.5769107, "kind": "doors_wait", "detail": "open"}
+{"stamp": 1788745245.90499, "kind": "doors_open", "detail": ""}
+{"stamp": 1788745245.9275935, "kind": "leg_start", "detail": "f2_car_at_panel"}
+{"stamp": 1788745252.5388408, "kind": "leg_end", "detail": "f2_car_at_panel arrived 7s"}
+{"stamp": 1788745252.5615227, "kind": "leg_start", "detail": "f2_car_panel"}
+{"stamp": 1788745259.2424684, "kind": "leg_end", "detail": "f2_car_panel arrived 7s"}
+{"stamp": 1788745259.2649004, "kind": "press_manual", "detail": "floor 1"}
+{"stamp": 1788745279.3283947, "kind": "leg_start", "detail": "f2_car_at_doors"}
+{"stamp": 1788745286.5448458, "kind": "leg_end", "detail": "f2_car_at_doors arrived 7s"}
+{"stamp": 1788745286.565882, "kind": "map_load_start", "detail": "floor1 (background)"}
+{"stamp": 1788745286.5836852, "kind": "doors_wait", "detail": "close"}
+{"stamp": 1788745286.5895576, "kind": "map_load_start", "detail": "floor1"}
+{"stamp": 1788745289.2796276, "kind": "doors_closed", "detail": ""}
+{"stamp": 1788745292.794563, "kind": "ride_start", "detail": "2->1"}
+{"stamp": 1788745342.3644836, "kind": "map_load_done", "detail": "floor1"}
+{"stamp": 1788745342.3884263, "kind": "map_load_done", "detail": "floor1 (background)"}
+{"stamp": 1788745343.212008, "kind": "scan_informative", "detail": "3.0m"}

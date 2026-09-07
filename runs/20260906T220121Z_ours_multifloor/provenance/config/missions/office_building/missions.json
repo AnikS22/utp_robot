@@ -1,0 +1,1621 @@
+[
+  {
+    "id": "M0_open__00",
+    "type": "M0_open",
+    "difficulty_tier": "M0_open",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 0,
+    "target_floor": 0,
+    "has_decoys": false,
+    "expected_intervention": [],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F0/Meeting_Room_1",
+    "gt_correct_target": null,
+    "blockage_kind": null,
+    "gt_expected_actions": [],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Meeting_Room_1"
+    ]
+  },
+  {
+    "id": "M0_open__01",
+    "type": "M0_open",
+    "difficulty_tier": "M0_open",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 0,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [],
+    "start_region": "F1/Corridor_L",
+    "goal_region": "F1/Office_105",
+    "gt_correct_target": null,
+    "blockage_kind": null,
+    "gt_expected_actions": [],
+    "route": [
+      "F1/Corridor_L",
+      "F1/Office_105"
+    ]
+  },
+  {
+    "id": "M0_open__02",
+    "type": "M0_open",
+    "difficulty_tier": "M0_open",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 0,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [],
+    "start_region": "F1/Corridor_L",
+    "goal_region": "F1/Office_107",
+    "gt_correct_target": null,
+    "blockage_kind": null,
+    "gt_expected_actions": [],
+    "route": [
+      "F1/Corridor_L",
+      "F1/Office_107"
+    ]
+  },
+  {
+    "id": "M0_open__03",
+    "type": "M0_open",
+    "difficulty_tier": "M0_open",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 0,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [],
+    "start_region": "F1/Corridor_L",
+    "goal_region": "F1/Office_107b",
+    "gt_correct_target": null,
+    "blockage_kind": null,
+    "gt_expected_actions": [],
+    "route": [
+      "F1/Corridor_L",
+      "F1/Office_107b"
+    ]
+  },
+  {
+    "id": "M0_open__04",
+    "type": "M0_open",
+    "difficulty_tier": "M0_open",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 0,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [],
+    "start_region": "F1/Corridor_L",
+    "goal_region": "F1/Office_108",
+    "gt_correct_target": null,
+    "blockage_kind": null,
+    "gt_expected_actions": [],
+    "route": [
+      "F1/Corridor_L",
+      "F1/Office_108"
+    ]
+  },
+  {
+    "id": "M0_open__05",
+    "type": "M0_open",
+    "difficulty_tier": "M0_open",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 0,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [],
+    "start_region": "F1/Corridor_L",
+    "goal_region": "F1/Office_108b",
+    "gt_correct_target": null,
+    "blockage_kind": null,
+    "gt_expected_actions": [],
+    "route": [
+      "F1/Corridor_L",
+      "F1/Office_108b"
+    ]
+  },
+  {
+    "id": "M0_open__06",
+    "type": "M0_open",
+    "difficulty_tier": "M0_open",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 0,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [],
+    "start_region": "F1/Corridor_L",
+    "goal_region": "F1/Office_108c",
+    "gt_correct_target": null,
+    "blockage_kind": null,
+    "gt_expected_actions": [],
+    "route": [
+      "F1/Corridor_L",
+      "F1/Office_108c"
+    ]
+  },
+  {
+    "id": "M0_open__07",
+    "type": "M0_open",
+    "difficulty_tier": "M0_open",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 0,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [],
+    "start_region": "F1/Corridor_L",
+    "goal_region": "F1/Office_108d",
+    "gt_correct_target": null,
+    "blockage_kind": null,
+    "gt_expected_actions": [],
+    "route": [
+      "F1/Corridor_L",
+      "F1/Office_108d"
+    ]
+  },
+  {
+    "id": "M0_open__08",
+    "type": "M0_open",
+    "difficulty_tier": "M0_open",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 0,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [],
+    "start_region": "F2/Corridor_L",
+    "goal_region": "F2/CEO_Office",
+    "gt_correct_target": null,
+    "blockage_kind": null,
+    "gt_expected_actions": [],
+    "route": [
+      "F2/Corridor_L",
+      "F2/CEO_Office"
+    ]
+  },
+  {
+    "id": "M0_open__09",
+    "type": "M0_open",
+    "difficulty_tier": "M0_open",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 0,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [],
+    "start_region": "F2/Corridor_L",
+    "goal_region": "F2/Executive_Office_CEO",
+    "gt_correct_target": null,
+    "blockage_kind": null,
+    "gt_expected_actions": [],
+    "route": [
+      "F2/Corridor_L",
+      "F2/Executive_Office_CEO"
+    ]
+  },
+  {
+    "id": "M0_open__10",
+    "type": "M0_open",
+    "difficulty_tier": "M0_open",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 0,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [],
+    "start_region": "F2/Corridor_L",
+    "goal_region": "F2/Waiting_Area_1",
+    "gt_correct_target": null,
+    "blockage_kind": null,
+    "gt_expected_actions": [],
+    "route": [
+      "F2/Corridor_L",
+      "F2/Waiting_Area_1"
+    ]
+  },
+  {
+    "id": "M1_door__00",
+    "type": "M1_door",
+    "difficulty_tier": "M1_door",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 1,
+    "target_floor": 0,
+    "has_decoys": false,
+    "expected_intervention": [
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F0/Reception_Area",
+    "gt_correct_target": "panel_9_release",
+    "blockage_kind": "button",
+    "gt_expected_actions": [
+      {
+        "action": "press_button",
+        "target": "panel_9_release",
+        "door_key": [
+          0,
+          "panel_9"
+        ],
+        "kind": "button"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F0/Corridor_R",
+      "F0/Reception_Area"
+    ]
+  },
+  {
+    "id": "M1_door__01",
+    "type": "M1_door",
+    "difficulty_tier": "M1_door",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 1,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "press_button"
+    ],
+    "start_region": "F1/Corridor_L",
+    "goal_region": "F1/Common_Area",
+    "gt_correct_target": "panel_14_release",
+    "blockage_kind": "button",
+    "gt_expected_actions": [
+      {
+        "action": "press_button",
+        "target": "panel_14_release",
+        "door_key": [
+          1,
+          "panel_14"
+        ],
+        "kind": "button"
+      }
+    ],
+    "route": [
+      "F1/Corridor_L",
+      "F1/Core_slab_1",
+      "F1/Corridor_R",
+      "F1/Common_Area"
+    ]
+  },
+  {
+    "id": "M1_door__02",
+    "type": "M1_door",
+    "difficulty_tier": "M1_door",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 1,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [
+      "press_button"
+    ],
+    "start_region": "F2/Corridor_L",
+    "goal_region": "F2/Waiting_Area_2",
+    "gt_correct_target": "panel_13_release",
+    "blockage_kind": "button",
+    "gt_expected_actions": [
+      {
+        "action": "press_button",
+        "target": "panel_13_release",
+        "door_key": [
+          2,
+          "panel_13"
+        ],
+        "kind": "button"
+      }
+    ],
+    "route": [
+      "F2/Corridor_L",
+      "F2/Core_slab_1",
+      "F2/Corridor_R",
+      "F2/Waiting_Area_2"
+    ]
+  },
+  {
+    "id": "M2_broken__00",
+    "type": "M2_broken",
+    "difficulty_tier": "M2_broken",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 1,
+    "target_floor": 0,
+    "has_decoys": false,
+    "expected_intervention": [
+      "recognize_broken",
+      "present_fob"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F0/Meeting_Room_2b",
+    "gt_correct_target": null,
+    "blockage_kind": "broken",
+    "gt_expected_actions": [
+      {
+        "action": "recognize_broken",
+        "target": "Door_8",
+        "door_key": [
+          0,
+          "panel_8"
+        ]
+      },
+      {
+        "action": "present_fob",
+        "target": "reader_mr2b_staff",
+        "door_key": [
+          0,
+          "panel_7"
+        ],
+        "kind": "keyfob",
+        "zone": "staff"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Lobby_S",
+      "F0/Meeting_Room_2b"
+    ]
+  },
+  {
+    "id": "M3_disambig__00",
+    "type": "M3_disambig",
+    "difficulty_tier": "M3_disambig",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 1,
+    "target_floor": 0,
+    "has_decoys": true,
+    "expected_intervention": [
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_R",
+    "goal_region": "F0/Coffee_Lounge",
+    "gt_correct_target": "release",
+    "blockage_kind": "decoy_field",
+    "gt_expected_actions": [
+      {
+        "action": "press_button",
+        "target": "release",
+        "door_key": [
+          0,
+          "panel_5"
+        ],
+        "kind": "decoy_field"
+      }
+    ],
+    "route": [
+      "F0/Corridor_R",
+      "F0/Coffee_Lounge"
+    ]
+  },
+  {
+    "id": "M3_disambig__01",
+    "type": "M3_disambig",
+    "difficulty_tier": "M3_disambig",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 1,
+    "target_floor": 1,
+    "has_decoys": true,
+    "expected_intervention": [
+      "press_button"
+    ],
+    "start_region": "F1/Corridor_R",
+    "goal_region": "F1/Conference_Hall_1",
+    "gt_correct_target": "release",
+    "blockage_kind": "decoy_field",
+    "gt_expected_actions": [
+      {
+        "action": "press_button",
+        "target": "release",
+        "door_key": [
+          1,
+          "panel_6"
+        ],
+        "kind": "decoy_field"
+      }
+    ],
+    "route": [
+      "F1/Corridor_R",
+      "F1/Conference_Hall_1"
+    ]
+  },
+  {
+    "id": "M3_disambig__02",
+    "type": "M3_disambig",
+    "difficulty_tier": "M3_disambig",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 1,
+    "target_floor": 2,
+    "has_decoys": true,
+    "expected_intervention": [
+      "press_button"
+    ],
+    "start_region": "F2/Corridor_R",
+    "goal_region": "F2/Kitchenette",
+    "gt_correct_target": "release",
+    "blockage_kind": "decoy_field",
+    "gt_expected_actions": [
+      {
+        "action": "press_button",
+        "target": "release",
+        "door_key": [
+          2,
+          "panel_4"
+        ],
+        "kind": "decoy_field"
+      }
+    ],
+    "route": [
+      "F2/Corridor_R",
+      "F2/Kitchenette"
+    ]
+  },
+  {
+    "id": "M4_unreachable__00",
+    "type": "M4_unreachable",
+    "difficulty_tier": "M4_unreachable",
+    "success_criterion": "restraint_unreachable",
+    "goal_reachable": false,
+    "interactions_required": 0,
+    "target_floor": 0,
+    "has_decoys": false,
+    "expected_intervention": [
+      "report_unreachable"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F0/Meeting_Room_2a",
+    "gt_correct_target": null,
+    "blockage_kind": "sealed",
+    "gt_expected_actions": [
+      {
+        "action": "report_unreachable",
+        "target": null
+      }
+    ],
+    "route": null
+  },
+  {
+    "id": "M4_unreachable__01",
+    "type": "M4_unreachable",
+    "difficulty_tier": "M4_unreachable",
+    "success_criterion": "restraint_unreachable",
+    "goal_reachable": false,
+    "interactions_required": 0,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "report_unreachable"
+    ],
+    "start_region": "F1/Corridor_R",
+    "goal_region": "F1/Common_Breakout",
+    "gt_correct_target": null,
+    "blockage_kind": "sealed",
+    "gt_expected_actions": [
+      {
+        "action": "report_unreachable",
+        "target": null
+      }
+    ],
+    "route": null
+  },
+  {
+    "id": "M4_unreachable__02",
+    "type": "M4_unreachable",
+    "difficulty_tier": "M4_unreachable",
+    "success_criterion": "restraint_unreachable",
+    "goal_reachable": false,
+    "interactions_required": 0,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "report_unreachable"
+    ],
+    "start_region": "F1/Corridor_R",
+    "goal_region": "F1/Conference_Room_B_01",
+    "gt_correct_target": null,
+    "blockage_kind": "sealed",
+    "gt_expected_actions": [
+      {
+        "action": "report_unreachable",
+        "target": null
+      }
+    ],
+    "route": null
+  },
+  {
+    "id": "M4_unreachable__03",
+    "type": "M4_unreachable",
+    "difficulty_tier": "M4_unreachable",
+    "success_criterion": "restraint_unreachable",
+    "goal_reachable": false,
+    "interactions_required": 0,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [
+      "report_unreachable"
+    ],
+    "start_region": "F2/Corridor_R",
+    "goal_region": "F2/Storage_Closet",
+    "gt_correct_target": null,
+    "blockage_kind": "sealed",
+    "gt_expected_actions": [
+      {
+        "action": "report_unreachable",
+        "target": null
+      }
+    ],
+    "route": null
+  },
+  {
+    "id": "M4_unreachable__04",
+    "type": "M4_unreachable",
+    "difficulty_tier": "M4_unreachable",
+    "success_criterion": "restraint_unreachable",
+    "goal_reachable": false,
+    "interactions_required": 0,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [
+      "report_unreachable"
+    ],
+    "start_region": "F2/Corridor_R",
+    "goal_region": "F2/Store_205",
+    "gt_correct_target": null,
+    "blockage_kind": "sealed",
+    "gt_expected_actions": [
+      {
+        "action": "report_unreachable",
+        "target": null
+      }
+    ],
+    "route": null
+  },
+  {
+    "id": "M5_elevator__00",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 2,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F1/Common_Area",
+    "gt_correct_target": "floor_2",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_2",
+        "door_key": null,
+        "kind": "elevator"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F1/Corridor_R",
+      "F1/Common_Area"
+    ]
+  },
+  {
+    "id": "M5_elevator__01",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 3,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F1/Conference_Hall_1",
+    "gt_correct_target": "floor_2",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_2",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "release",
+        "door_key": [
+          1,
+          "panel_6"
+        ],
+        "kind": "decoy_field"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F1/Corridor_R",
+      "F1/Conference_Hall_1"
+    ]
+  },
+  {
+    "id": "M5_elevator__02",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 3,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F1/Office_105",
+    "gt_correct_target": "floor_2",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_2",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "panel_14_release",
+        "door_key": [
+          1,
+          "panel_14"
+        ],
+        "kind": "button"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F1/Corridor_L",
+      "F1/Office_105"
+    ]
+  },
+  {
+    "id": "M5_elevator__03",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 3,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F1/Office_107",
+    "gt_correct_target": "floor_2",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_2",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "panel_14_release",
+        "door_key": [
+          1,
+          "panel_14"
+        ],
+        "kind": "button"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F1/Corridor_L",
+      "F1/Office_107"
+    ]
+  },
+  {
+    "id": "M5_elevator__04",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 3,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F1/Office_107b",
+    "gt_correct_target": "floor_2",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_2",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "panel_14_release",
+        "door_key": [
+          1,
+          "panel_14"
+        ],
+        "kind": "button"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F1/Corridor_L",
+      "F1/Office_107b"
+    ]
+  },
+  {
+    "id": "M5_elevator__05",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 3,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F1/Office_108",
+    "gt_correct_target": "floor_2",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_2",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "panel_14_release",
+        "door_key": [
+          1,
+          "panel_14"
+        ],
+        "kind": "button"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F1/Corridor_L",
+      "F1/Office_108"
+    ]
+  },
+  {
+    "id": "M5_elevator__06",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 3,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F1/Office_108b",
+    "gt_correct_target": "floor_2",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_2",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "panel_14_release",
+        "door_key": [
+          1,
+          "panel_14"
+        ],
+        "kind": "button"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F1/Corridor_L",
+      "F1/Office_108b"
+    ]
+  },
+  {
+    "id": "M5_elevator__07",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 3,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F1/Office_108c",
+    "gt_correct_target": "floor_2",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_2",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "panel_14_release",
+        "door_key": [
+          1,
+          "panel_14"
+        ],
+        "kind": "button"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F1/Corridor_L",
+      "F1/Office_108c"
+    ]
+  },
+  {
+    "id": "M5_elevator__08",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 3,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F1/Office_108d",
+    "gt_correct_target": "floor_2",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_2",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "panel_14_release",
+        "door_key": [
+          1,
+          "panel_14"
+        ],
+        "kind": "button"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F1/Corridor_L",
+      "F1/Office_108d"
+    ]
+  },
+  {
+    "id": "M5_elevator__09",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 3,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F2/CEO_Office",
+    "gt_correct_target": "floor_3",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_3",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "panel_13_release",
+        "door_key": [
+          2,
+          "panel_13"
+        ],
+        "kind": "button"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F2/Core_slab_1",
+      "F2/Corridor_L",
+      "F2/CEO_Office"
+    ]
+  },
+  {
+    "id": "M5_elevator__10",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 3,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F2/Executive_Office_CEO",
+    "gt_correct_target": "floor_3",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_3",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "panel_13_release",
+        "door_key": [
+          2,
+          "panel_13"
+        ],
+        "kind": "button"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F2/Core_slab_1",
+      "F2/Corridor_L",
+      "F2/Executive_Office_CEO"
+    ]
+  },
+  {
+    "id": "M5_elevator__11",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 3,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F2/Kitchenette",
+    "gt_correct_target": "floor_3",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_3",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "release",
+        "door_key": [
+          2,
+          "panel_4"
+        ],
+        "kind": "decoy_field"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F2/Core_slab_1",
+      "F2/Corridor_R",
+      "F2/Kitchenette"
+    ]
+  },
+  {
+    "id": "M5_elevator__12",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 3,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F2/Storage_Area",
+    "gt_correct_target": "floor_3",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_3",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "panel_6_release",
+        "door_key": [
+          2,
+          "panel_6"
+        ],
+        "kind": "button"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F2/Core_slab_1",
+      "F2/Corridor_R",
+      "F2/Storage_Area"
+    ]
+  },
+  {
+    "id": "M5_elevator__13",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 3,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F2/Waiting_Area_1",
+    "gt_correct_target": "floor_3",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_3",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "panel_13_release",
+        "door_key": [
+          2,
+          "panel_13"
+        ],
+        "kind": "button"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F2/Core_slab_1",
+      "F2/Corridor_L",
+      "F2/Waiting_Area_1"
+    ]
+  },
+  {
+    "id": "M5_elevator__14",
+    "type": "M5_elevator",
+    "difficulty_tier": "M5_elevator",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 2,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F2/Waiting_Area_2",
+    "gt_correct_target": "floor_3",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_3",
+        "door_key": null,
+        "kind": "elevator"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F2/Core_slab_1",
+      "F2/Corridor_R",
+      "F2/Waiting_Area_2"
+    ]
+  },
+  {
+    "id": "M6a_keyfob_staff__00",
+    "type": "M6a_keyfob_staff",
+    "difficulty_tier": "M6a_keyfob_staff",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 1,
+    "target_floor": 0,
+    "has_decoys": false,
+    "expected_intervention": [
+      "present_fob"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F0/Meeting_Room_2b",
+    "gt_correct_target": "reader_mr2b_staff",
+    "blockage_kind": "keyfob",
+    "gt_expected_actions": [
+      {
+        "action": "present_fob",
+        "target": "reader_mr2b_staff",
+        "door_key": [
+          0,
+          "panel_7"
+        ],
+        "kind": "keyfob",
+        "zone": "staff"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Lobby_S",
+      "F0/Meeting_Room_2b"
+    ]
+  },
+  {
+    "id": "M6a_keyfob_staff__01",
+    "type": "M6a_keyfob_staff",
+    "difficulty_tier": "M6a_keyfob_staff",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 1,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "present_fob"
+    ],
+    "start_region": "F1/Corridor_L",
+    "goal_region": "F1/Office_106",
+    "gt_correct_target": "panel_2_reader",
+    "blockage_kind": "keyfob",
+    "gt_expected_actions": [
+      {
+        "action": "present_fob",
+        "target": "panel_2_reader",
+        "door_key": [
+          1,
+          "panel_2"
+        ],
+        "kind": "keyfob",
+        "zone": "staff"
+      }
+    ],
+    "route": [
+      "F1/Corridor_L",
+      "F1/Office_106"
+    ]
+  },
+  {
+    "id": "M6b_keyfob_exec__00",
+    "type": "M6b_keyfob_exec",
+    "difficulty_tier": "M6b_keyfob_exec",
+    "success_criterion": "restraint_unreachable",
+    "goal_reachable": false,
+    "interactions_required": 0,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "report_unreachable"
+    ],
+    "start_region": "F1/Corridor_R",
+    "goal_region": "F1/Conference_Room_B",
+    "gt_correct_target": null,
+    "blockage_kind": "keyfob",
+    "gt_expected_actions": [
+      {
+        "action": "report_unreachable",
+        "target": null
+      }
+    ],
+    "route": null
+  },
+  {
+    "id": "M6b_keyfob_exec__01",
+    "type": "M6b_keyfob_exec",
+    "difficulty_tier": "M6b_keyfob_exec",
+    "success_criterion": "restraint_unreachable",
+    "goal_reachable": false,
+    "interactions_required": 0,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [
+      "report_unreachable"
+    ],
+    "start_region": "F2/Corridor_L",
+    "goal_region": "F2/Directors_Suite",
+    "gt_correct_target": null,
+    "blockage_kind": "keyfob",
+    "gt_expected_actions": [
+      {
+        "action": "report_unreachable",
+        "target": null
+      }
+    ],
+    "route": null
+  },
+  {
+    "id": "M7_chained__00",
+    "type": "M7_chained",
+    "difficulty_tier": "M7_chained",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 4,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button",
+      "present_fob"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F1/Office_106",
+    "gt_correct_target": "floor_2",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_2",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "panel_14_release",
+        "door_key": [
+          1,
+          "panel_14"
+        ],
+        "kind": "button"
+      },
+      {
+        "action": "present_fob",
+        "target": "panel_2_reader",
+        "door_key": [
+          1,
+          "panel_2"
+        ],
+        "kind": "keyfob",
+        "zone": "staff"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F1/Corridor_L",
+      "F1/Office_106"
+    ]
+  },
+  {
+    "id": "M7_chained__01",
+    "type": "M7_chained",
+    "difficulty_tier": "M7_chained",
+    "success_criterion": "reach_goal",
+    "goal_reachable": true,
+    "interactions_required": 4,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [
+      "call_elevator",
+      "select_floor",
+      "press_button",
+      "present_fob"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F2/CFO_Office",
+    "gt_correct_target": "floor_3",
+    "blockage_kind": "elevator",
+    "gt_expected_actions": [
+      {
+        "action": "call_elevator",
+        "target": "elevator_call",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "select_floor",
+        "target": "floor_3",
+        "door_key": null,
+        "kind": "elevator"
+      },
+      {
+        "action": "press_button",
+        "target": "panel_13_release",
+        "door_key": [
+          2,
+          "panel_13"
+        ],
+        "kind": "button"
+      },
+      {
+        "action": "present_fob",
+        "target": "panel_3_reader",
+        "door_key": [
+          2,
+          "panel_3"
+        ],
+        "kind": "keyfob",
+        "zone": "staff"
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Core_Stairs_Lifts",
+      "F1/Core_slab_1",
+      "F2/Core_slab_1",
+      "F2/Corridor_L",
+      "F2/CFO_Office"
+    ]
+  },
+  {
+    "id": "restraint_open__00",
+    "type": "restraint_open",
+    "difficulty_tier": "restraint_open",
+    "success_criterion": "restraint_open",
+    "goal_reachable": true,
+    "interactions_required": 0,
+    "target_floor": 0,
+    "has_decoys": false,
+    "expected_intervention": [
+      "drive_through"
+    ],
+    "start_region": "F0/Corridor_L",
+    "goal_region": "F0/Meeting_Room_1",
+    "gt_correct_target": null,
+    "blockage_kind": "open+idle_reader",
+    "gt_expected_actions": [
+      {
+        "action": "drive_through",
+        "target": null
+      }
+    ],
+    "route": [
+      "F0/Corridor_L",
+      "F0/Meeting_Room_1"
+    ]
+  },
+  {
+    "id": "restraint_open__01",
+    "type": "restraint_open",
+    "difficulty_tier": "restraint_open",
+    "success_criterion": "restraint_open",
+    "goal_reachable": true,
+    "interactions_required": 0,
+    "target_floor": 1,
+    "has_decoys": false,
+    "expected_intervention": [
+      "drive_through"
+    ],
+    "start_region": "F1/Corridor_L",
+    "goal_region": "F1/Office_107",
+    "gt_correct_target": null,
+    "blockage_kind": "open+idle_reader",
+    "gt_expected_actions": [
+      {
+        "action": "drive_through",
+        "target": null
+      }
+    ],
+    "route": [
+      "F1/Corridor_L",
+      "F1/Office_107"
+    ]
+  },
+  {
+    "id": "restraint_open__02",
+    "type": "restraint_open",
+    "difficulty_tier": "restraint_open",
+    "success_criterion": "restraint_open",
+    "goal_reachable": true,
+    "interactions_required": 0,
+    "target_floor": 2,
+    "has_decoys": false,
+    "expected_intervention": [
+      "drive_through"
+    ],
+    "start_region": "F2/Corridor_L",
+    "goal_region": "F2/CEO_Office",
+    "gt_correct_target": null,
+    "blockage_kind": "open+idle_reader",
+    "gt_expected_actions": [
+      {
+        "action": "drive_through",
+        "target": null
+      }
+    ],
+    "route": [
+      "F2/Corridor_L",
+      "F2/CEO_Office"
+    ]
+  }
+]

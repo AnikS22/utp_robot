@@ -1,0 +1,3 @@
+[recorder] /home/weim/utp_robot/runs/20260906T222707Z_ours_multifloor
+[recorder] frames: continuous (2.0 Hz @ 640 px), poses 10.0 Hz, no GPU, no /ouster/points
+[recorder] 240 frames, 1505 poses -> /home/weim/utp_robot/runs/20260906T222707Z_ours_multifloor

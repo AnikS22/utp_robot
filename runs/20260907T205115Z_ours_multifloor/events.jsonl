@@ -1,0 +1,16 @@
+{"stamp": 1788814310.0185664, "kind": "map_load_start", "detail": "floor2"}
+{"stamp": 1788814355.7441823, "kind": "map_load_done", "detail": "floor2"}
+{"stamp": 1788814356.8392806, "kind": "scan_informative", "detail": "3.0m/20deg"}
+{"stamp": 1788814379.7410417, "kind": "localized", "detail": "floor2 2.7755,1.6500 yaw 55.40 fit 63.6%"}
+{"stamp": 1788814379.7869084, "kind": "leg_start", "detail": "f2_lift_door"}
+{"stamp": 1788814393.2077806, "kind": "leg_end", "detail": "f2_lift_door arrived 14s"}
+{"stamp": 1788814393.2592251, "kind": "leg_start", "detail": "f2_call_button"}
+{"stamp": 1788814403.7036228, "kind": "leg_end", "detail": "f2_call_button arrived 10s"}
+{"stamp": 1788814403.7564404, "kind": "press_start", "detail": "the small round blue button on the metal call plate"}
+{"stamp": 1788814442.6831186, "kind": "press_contact", "detail": "the small round blue button on the metal call plate"}
+{"stamp": 1788814444.9036336, "kind": "leg_start", "detail": "f2_lift_door"}
+{"stamp": 1788814456.112636, "kind": "leg_end", "detail": "f2_lift_door arrived 12s"}
+{"stamp": 1788814456.1652846, "kind": "doors_wait", "detail": "open"}
+{"stamp": 1788814462.621889, "kind": "doors_open", "detail": ""}
+{"stamp": 1788814462.674074, "kind": "leg_start", "detail": "f2_car_at_panel"}
+{"stamp": 1788814465.5277097, "kind": "leg_end", "detail": "f2_car_at_panel blocked 3s"}

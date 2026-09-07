@@ -1,0 +1,101 @@
+# The experiment matrix as data (§4). Each method is a config row selecting module
+# implementations. Baselines AND ablations are just rows here — never new code paths.
+#
+# Module option vocabularies (must match the registry):
+#   reasoning    : vlm | heuristic | none
+#   grounding    : decoupled | direct_vlm | pointing | oracle
+#   execution    : on | off
+#   verification : on | off
+#   navigation   : nav2 | scripted
+#
+# `grounding_backend` selects the detector for grounding=decoupled: clip | gdino | owlv2.
+
+# Pinned reasoning model for reproducibility (recorded into every trial).
+vlm:
+  provider: openai
+  model: "openai/gemma4-vibe"   # FAU OwlChat vision id; azure_ai/gpt-5.5 was removed from the endpoint (2026-07-29)
+  model_date: "2026-07-29"    # date THIS model id was verified on the endpoint (vision confirmed); recorded in logs
+  temperature: 0.0
+  max_tokens: 512
+
+defaults:
+  grounding_backend: gdino   # default open-vocab detector for decoupled grounding
+  navigation: scripted       # nav backend for ALL methods unless a row overrides. Flip to `nav2`
+                             # (one line) for nav-in-the-loop isaac trials — see registry
+                             # _build_navigator + utp/pipeline/navigation/nav2.py. Requires the
+                             # Nav2 stack + map_to_odom co-launched on the trial's ROS_DOMAIN_ID
+                             # (nav2_bringup/ranger_nav.launch.py); ignored when world=mock.
+
+methods:
+  # --- baselines + main method (the 2x2 of the paper) ---
+  passive:
+    label: "Passive (Nav2 only)"
+    reasoning: none
+    grounding: none
+    execution: off
+    verification: off
+
+  heuristic:
+    label: "Heuristic baseline"
+    reasoning: heuristic
+    grounding: decoupled
+    execution: on
+    verification: off
+
+  direct_vlm:
+    label: "Direct-VLM (no decoupling)"
+    reasoning: vlm
+    grounding: direct_vlm
+    execution: on
+    verification: off
+
+  ours:
+    label: "Ours (full)"
+    reasoning: vlm
+    grounding: decoupled
+    execution: on
+    verification: on
+
+  # --- ablations of Ours (rows reused where they overlap a baseline) ---
+  ours_no_decoupling:        # == direct_vlm grounding; one run serves both
+    label: "Ours − decoupling"
+    reasoning: vlm
+    grounding: direct_vlm
+    execution: on
+    verification: on
+  ours_no_reasoning:         # == heuristic reasoning
+    label: "Ours − reasoning"
+    reasoning: heuristic
+    grounding: decoupled
+    execution: on
+    verification: on
+  ours_no_execution:
+    label: "Ours − execution"
+    reasoning: vlm
+    grounding: decoupled
+    execution: off
+    verification: on
+  ours_no_verification:
+    label: "Ours − verification"
+    reasoning: vlm
+    grounding: decoupled
+    execution: on
+    verification: off
+
+# Method subsets selected by name from the runner.
+matrices:
+  # UTP_ROBOT ADDITION -- the rows that need NO network. docs/hpc_dispatch.md: "Key-free methods
+  # (passive, heuristic, ours_no_reasoning) run without it." Lets the full 47-mission benchmark run
+  # offline on the rover laptop, and still contains the load-bearing control: a mission is only
+  # valid if `passive` provably fails it.
+  keyfree: [passive, heuristic, ours_no_reasoning]
+
+  smoke: [ours]                                   # one method, for the first trial / CI
+  core:  [passive, heuristic, direct_vlm, ours]   # the headline 4
+  head2head: [direct_vlm, ours]                   # decisive decoupling test: no-decoupling vs ours
+  full:  [passive, heuristic, direct_vlm, ours,
+          ours_no_execution, ours_no_verification]
+  # --- office_building 47-mission campaign (keys MUST match a scenes.sets.<key> of the same name;
+  #     build_cells pairs scenes[key] x methods[key]) ---
+  office47:      [ours]                            # watch/vet all 47 under Ours (the Phase-2 GUI pass)
+  office47_core: [passive, heuristic, direct_vlm, ours]   # the full 4-method sweep over all 47

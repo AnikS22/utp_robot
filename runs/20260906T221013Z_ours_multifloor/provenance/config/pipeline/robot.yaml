@@ -1,0 +1,84 @@
+# Robot configuration: AgileX Ranger Mini 3.0 base + uFactory xArm6.
+base:
+  name: ranger_mini_3
+  drive: four_wheel_steer        # 4WS: supports Ackermann AND spin(0-radius)/traverse(crab) modes
+  # MOTION MODEL (M1.0 GATE): the Ranger is NOT a generic holonomic base. Its 4WS spin+traverse
+  # modes give near-omni capability (the advantage for tight elevator-car entry), but Nav2 must
+  # COMMAND those modes and respect wheel re-steering dynamics — it must never assume free
+  # holonomic motion the base can't smoothly deliver. M1.0 must prove a planned path is EXECUTED
+  # (not just planned), especially the elevator entry. nav_mode is provisional until that gate.
+  # LOCKED: the four official AgileX modes are {spin, traverse, diagonal, ackermann}. Elevator-car
+  # entry uses spin+traverse (near-holonomic). The mode controller (config/ranger_kinematics.yaml)
+  # maps cmd_vel->per-wheel (steer,speed) and enforces each mode's real constraints (M1.0 Part B).
+  nav_mode: spin_traverse        # elevator; ackermann for open-corridor cruising
+  kinematics_config: config/ranger_kinematics.yaml
+  # Exact Ranger Mini 3 (V3) datasheet dims (manual §1.2) — used to build the parametric base.
+  length_m: 0.720
+  width_m: 0.500
+  height_m: 0.345
+  wheelbase_m: 0.494             # axle track (front-rear axle distance)
+  track_m: 0.364                 # left-right wheel separation
+  ground_clearance_m: 0.105
+  wheel_radius_m: 0.11
+  mass_kg: 75
+  min_turn_radius_m: 0.0         # spin mode (0); 0.81 in Ackermann mode
+  footprint_radius_m: 0.44       # circumscribed radius of the 0.72x0.50 body
+  chassis_top_height_m: 0.30     # flat top plate where the arm mounts (rails extend to 0.345)
+
+arm:
+  name: xarm6                    # uFactory xArm6, 6-DOF (CONFIRMED). Reach 0.764 m max / ~0.649 dexterous.
+  dof: 6
+  # MOUNT: FLUSH on the Ranger top plate (~0.30 m) — matches the REAL robot (no riser). The M1.1 gate
+  # shows this reaches buttons up to ~1.08 m at 0.50 m standoff (shoulder at 0.567 m). We therefore
+  # do NOT add a riser; instead the scene generator only spawns interaction targets inside the
+  # reach-validated envelope below, so sim == real hardware and we never place a button the real arm
+  # couldn't press. Trade-off: the highest real-world targets (light switches/top car buttons
+  # ~1.2-1.37 m) are OUT OF SCOPE for this platform — documented, not hidden.
+  riser_height_m: 0.045          # mounted on TOP of the chassis rails (~0.345 m), not sunk flush
+  arm_base_height_m: 0.345       # on the rails; real build adds a small spacer (a little higher)
+  mount_link: chassis_rails_top
+  end_effector: stylus           # rigid finger/stylus for reliable button pressing; or 'gripper'
+  end_effector_len_m: 0.12       # stylus forward length (adds horizontal reach to the wall)
+  reach_m: 0.764                 # max (from URDF); dexterous ~0.649
+  ik: lula                       # in-sim IK for reach-and-press: lula | rmpflow | dls
+
+# Interaction geometry the scene generator MUST respect (reach-validated envelope), and the M1.1
+# Isaac Lula IK sweep confirms on the assembled articulation across scene spawn poses.
+interaction:
+  # Margin-validated envelope (arm base raised onto the rails at 0.345 m, shoulder 0.612 m): at
+  # 0.45 m close-approach standoff, buttons up to ~1.05 m sit at <=0.84 of dexterous reach
+  # (comfortable margin, away from the flaky near-singular boundary). The base approaches closer for
+  # higher targets; the Isaac Lula sweep must also confirm base-front collision clearance at 0.45 m.
+  button_height_range_m: [0.70, 1.05]    # reach-validated WITH margin (arm on rails)
+  standoff_m: 0.45                        # close-approach base-center-to-wall press distance
+  press_depth_m: 0.02
+  # OUT OF SCOPE on this platform: targets above ~1.05 m (high light switches, top car buttons ~1.2-1.37 m).
+
+camera:
+  name: wrist_cam                # RGB-D on the wrist for grounding; plus optional base cam
+  width: 1280
+  height: 720
+  hfov_deg: 70
+  near_m: 0.05
+  far_m: 10.0
+
+lidar:
+  name: base_lidar               # 2D scan for Nav2 (pointcloud -> laserscan)
+  channels: 1
+  horizontal_fov_deg: 270
+  max_range_m: 25.0
+
+# Topic/frame names exposed by the Isaac worker over the ROS2 bridge (M1).
+ros:
+  cmd_vel_topic: /cmd_vel
+  odom_topic: /odom
+  scan_topic: /scan
+  rgb_topic: /wrist_cam/rgb
+  depth_topic: /wrist_cam/depth
+  camera_info_topic: /wrist_cam/camera_info
+  arm_reach_action: /arm_reach
+  scene_state_service: /scene_state
+  base_frame: base_link
+  odom_frame: odom
+  map_frame: map
+  camera_frame: wrist_cam_optical

@@ -1,0 +1,10 @@
+{"stamp": 1788808714.4979944, "kind": "map_load_start", "detail": "floor2"}
+{"stamp": 1788808753.1553903, "kind": "map_load_done", "detail": "floor2"}
+{"stamp": 1788808756.059274, "kind": "scan_informative", "detail": "3.0m/20deg"}
+{"stamp": 1788808771.7116048, "kind": "localized", "detail": "floor2 2.7305,1.4100 yaw 44.00 fit 71.6%"}
+{"stamp": 1788808771.7365432, "kind": "leg_start", "detail": "f2_lift_door"}
+{"stamp": 1788808786.3347156, "kind": "leg_end", "detail": "f2_lift_door arrived 15s"}
+{"stamp": 1788808786.359041, "kind": "leg_start", "detail": "f2_lift_door"}
+{"stamp": 1788808787.3426447, "kind": "leg_end", "detail": "f2_lift_door arrived 1s"}
+{"stamp": 1788808787.3609946, "kind": "doors_wait", "detail": "open"}
+{"stamp": 1788808847.9537666, "kind": "doors_timeout", "detail": "open"}

@@ -1,0 +1,234 @@
+# Scene definitions (§5). Each scene is procedurally built per seed and exposes settable,
+# readable ground-truth state. `expected_intervention` is what a correct reasoner must propose
+# (scores reasoning_correct). `adversarial_against` documents which alternative(s) each scene is
+# built to break — the experiment is meaningless if a scene breaks nothing. Multi-tagging is
+# encouraged: a scene that defends several clauses does more work in the analysis.
+#
+# difficulty_tier describes TASK STRUCTURE (how many transitions / how long-horizon), NOT the
+# specific trick. The "trick" (decoys, broken target, dense panel) is carried by `scene_type`
+# itself, which is logged, so stratified analysis stays clean.
+#
+# success_criterion makes the per-scene definition of "success" EXPLICIT and machine-readable,
+# instead of hiding it in scoring code. This matters most for the negative controls, whose
+# success is INVERTED relative to normal scenes (giving up cleanly is the CORRECT behavior).
+# Vocabulary (consumed by World.evaluate):
+#   reach_goal              -> success iff the robot reached the goal (normal interactive scenes)
+#   restraint_open          -> success iff it drove through WITHOUT a spurious interaction
+#   restraint_unreachable   -> success iff it correctly reported UNREACHABLE without hallucinating
+# WARNING: hand-verify the negative-control scoring on the first runs (a mis-scored negative
+# control silently invalidates the restraint claim — failing to reach an unreachable goal is the
+# RIGHT outcome and must score as success, not failure).
+
+# --------------------------------------------------------------------------------------------
+# Real-environment registry (§ real-env foundation). Each entry names a SHIPPED Isaac env USD
+# (path relative to isaac_assets_root(), base.py:302) plus the CURATION profile that trims/
+# relights it (env_curate.curate_env). A scene opts into a real environment via its own
+# `environment: { env: <key>, anchor: <anchor_id> }` block; scenes WITHOUT that block build the
+# procedural white-box shell exactly as before (env=None path unchanged). The trial server ships
+# this whole dict to base.py inside cfg["environments"] so builders resolve env_usd + profile by
+# `env` key at build time (see the JSON contract in isaac_worker/trial_server.py:do_build).
+environments:
+  hospital_wing_a: { env_usd: "Environments/Hospital/hospital.usd", curate: "hospital_default" }
+  office_floor:    { env_usd: "Environments/Office/office.usd",     curate: "office_default" }
+
+scenes:
+  # ---- core differentiator: full long-horizon cross-floor trip ----
+  elevator:
+    type: elevator
+    success_criterion: reach_goal
+    label: "Standard elevator, multi-floor goal"
+    interactions_required: 4            # call -> enter -> select floor -> exit
+    expected_intervention: [call_elevator, enter, select_floor, exit]
+    relocalize_on_floor_change: true
+    num_buttons: 6                      # ordinary panel (call + a few floors)
+    target_floor: 3
+    # Defends multiple clauses: active>passive; a rule can't sequence the 4 steps robustly;
+    # wrong-floor arrivals need verification to catch.
+    adversarial_against: [passive, heuristic, ours_no_verification]
+    difficulty_tier: cross-floor
+
+  # ---- clean reference loop ----
+  button_door:
+    type: button_door
+    success_criterion: reach_goal
+    label: "Button door"
+    interactions_required: 1            # press the button -> door opens
+    expected_intervention: [press_button]
+    adversarial_against: [passive]
+    difficulty_tier: single-door
+
+  # ---- real-environment smoke test (button_door anchored in a shipped hospital wing) ----
+  # Same state/act/gt contract as `button_door`, but the blocking wall + door + ButtonPanel are
+  # placed at anchor `corridor_door_1` inside the curated hospital env instead of a white-box
+  # shell. Presence of the `environment:` block flips base.py:build() onto the full-env branch;
+  # every existing procedural scene above is untouched. Used by `sets.smoke_env` below.
+  button_door_hospital:
+    type: button_door
+    success_criterion: reach_goal
+    label: "Button door, real hospital wing (anchored)"
+    interactions_required: 1
+    expected_intervention: [press_button]
+    environment: { env: hospital_wing_a, anchor: corridor_door_1 }
+    adversarial_against: [passive]
+    difficulty_tier: single-door
+
+  # ---- proves the VLM is necessary (semantic disambiguation among look-alikes) ----
+  decoy_panel:
+    type: decoy_panel
+    success_criterion: reach_goal
+    label: "Multi-button / decoy panel (single door, ambiguous)"
+    interactions_required: 1
+    num_buttons: 4                      # several plausible buttons; only one opens the door
+    has_decoys: true                    # the trick, carried by scene_type + this attribute
+    expected_intervention: [press_correct_button]
+    # A generic "press a button" heuristic picks a decoy; a VLM names the door-release button.
+    adversarial_against: [heuristic]
+    difficulty_tier: single-door        # structure is one transition; ambiguity is the trick
+
+  # ---- proves decoupling is necessary, IN THE FULL LOOP ----
+  # A real cross-floor elevator trip whose car panel is dense (~15 small buttons), so the
+  # grounding win shows up in end-to-end success, not just isolated IoU. Direct-VLM box drifts
+  # off the small floor-3 target; a dedicated detector stays precise.
+  crowded_panel:
+    type: elevator
+    success_criterion: reach_goal
+    label: "Crowded elevator panel, cross-floor"
+    interactions_required: 4            # full call -> enter -> select floor 3 -> exit
+    expected_intervention: [call_elevator, enter, select_floor, exit]
+    relocalize_on_floor_change: true
+    num_buttons: 15                     # dense, small targets
+    target_floor: 3
+    adversarial_against: [direct_vlm, passive]
+    difficulty_tier: cross-floor
+
+  # ---- isolated grounding probe (answers a narrower question than crowded_panel) ----
+  # Robot already faces the dense panel; task is just "press floor 3". Measures detector
+  # localization (IoU / center error) in isolation, decoupled from navigation. Kept BECAUSE it
+  # answers a different question than crowded_panel; both are legitimate.
+  crowded_panel_probe:
+    type: panel_probe
+    success_criterion: reach_goal
+    label: "Crowded panel, isolated grounding probe"
+    interactions_required: 1            # select floor 3 only
+    num_buttons: 15
+    target_floor: 3
+    expected_intervention: [select_floor]
+    adversarial_against: [direct_vlm]
+    difficulty_tier: probe              # not a navigation task; excluded from success-rate tiers
+
+  # ---- proves verification matters + tests recovery ----
+  broken_button:
+    type: broken_button
+    success_criterion: reach_goal
+    label: "Broken / no-op button"
+    interactions_required: 1
+    button_works: false                 # pressing does nothing -> verification must catch it
+    expected_intervention: [press_button]
+    # Without verification, the method declares success after a no-op press.
+    adversarial_against: [ours_no_verification]
+    difficulty_tier: single-door
+
+  # ---- restraint: two DISTINCT failure modes, scored separately by scene_type ----
+  negative_open:
+    type: negative_open
+    success_criterion: restraint_open
+    label: "Negative control — path already open"
+    interactions_required: 0            # nothing to do; correct behavior is to NOT act
+    expected_intervention: []
+    # Tests: do not hallucinate a blockage / spurious interaction; just drive through.
+    adversarial_against: [overeager]    # 'overeager' = any method that acts when it shouldn't
+    difficulty_tier: single-door
+
+  negative_unreachable:
+    type: negative_unreachable
+    success_criterion: restraint_unreachable   # INVERTED: giving up cleanly == success
+    label: "Negative control — goal genuinely unreachable"
+    interactions_required: 0            # no intervention can help
+    goal_reachable: false
+    expected_intervention: []
+    # Tests: fail cleanly and report why (failure_category != hallucinated success).
+    adversarial_against: [overeager]
+    difficulty_tier: single-door
+
+# --------------------------------------------------------------------------------------------
+# Ablation coverage note (ours_no_execution): there is intentionally NO dedicated scene that
+# uniquely breaks execution-off — "don't act => don't unblock" is near-tautological. We keep the
+# ablation as a SANITY CHECK run on any interactive scene (it should fail wherever an interaction
+# is required), rather than building a bespoke adversarial scene for it. Conscious decision.
+# --------------------------------------------------------------------------------------------
+
+# Scene subsets for the runner. Irreducible core if time-crushed (LOCKED): the three below.
+sets:
+  smoke: [button_door]
+  smoke_env: [button_door_hospital]   # real-environment bring-up smoke (curated hospital wing)
+  core:  [elevator, decoy_panel, crowded_panel]
+  head2head: [decoy_panel, crowded_panel, elevator]   # decisive decoupling test scenes
+  full:  [elevator, button_door, decoy_panel, crowded_panel, crowded_panel_probe,
+          broken_button, negative_open, negative_unreachable]
+
+  # The 47 office_building missions (the shipped benchmark). Each id resolves to the live
+  # office_building.usd world via Config.scene()'s office-mission fallback (no procedural build).
+  # Anchored so the multi-method campaign set (office47_core) reuses the SAME list, not a copy.
+  # Keep in sync with missions/office_building/missions.json (test_office_missions guards this).
+  office47: &office47
+    - M0_open__00
+    - M0_open__01
+    - M0_open__02
+    - M0_open__03
+    - M0_open__04
+    - M0_open__05
+    - M0_open__06
+    - M0_open__07
+    - M0_open__08
+    - M0_open__09
+    - M0_open__10
+    - M1_door__00
+    - M1_door__01
+    - M1_door__02
+    - M2_broken__00
+    - M3_disambig__00
+    - M3_disambig__01
+    - M3_disambig__02
+    - M4_unreachable__00
+    - M4_unreachable__01
+    - M4_unreachable__02
+    - M4_unreachable__03
+    - M4_unreachable__04
+    - M5_elevator__00
+    - M5_elevator__01
+    - M5_elevator__02
+    - M5_elevator__03
+    - M5_elevator__04
+    - M5_elevator__05
+    - M5_elevator__06
+    - M5_elevator__07
+    - M5_elevator__08
+    - M5_elevator__09
+    - M5_elevator__10
+    - M5_elevator__11
+    - M5_elevator__12
+    - M5_elevator__13
+    - M5_elevator__14
+    - M6a_keyfob_staff__00
+    - M6a_keyfob_staff__01
+    - M6b_keyfob_exec__00
+    - M6b_keyfob_exec__01
+    - M7_chained__00
+    - M7_chained__01
+    - restraint_open__00
+    - restraint_open__01
+    - restraint_open__02
+  office47_core: *office47   # same 47 scenes, run under the 4 headline methods
+
+  # UTP_ROBOT ADDITION -- same 47 missions, paired with the key-free method rows in methods.yaml
+  # so the whole benchmark runs offline on the rover laptop. Reuses the SAME anchor, not a copy,
+  # so it cannot drift from office47.
+  keyfree: *office47
+
+# Seeds per (scene x method) cell, with a held-out split for the generalization defense.
+# Development uses dev seeds only; holdout is NEVER inspected until the final eval run.
+seeds_per_cell: 100
+seed_split:
+  dev: [1, 80]            # inclusive range used during development
+  holdout: [81, 100]      # inclusive range, reserved — do not look at until final eval
+seeds_smoke: 1

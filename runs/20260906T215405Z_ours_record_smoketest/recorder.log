@@ -1,0 +1,3 @@
+[recorder] /home/weim/utp_robot/runs/20260906T215405Z_ours_record_smoketest
+[recorder] frames: continuous (2.0 Hz @ 640 px), poses 10.0 Hz, no GPU, no /ouster/points
+[recorder] 98 frames, 637 poses -> /home/weim/utp_robot/runs/20260906T215405Z_ours_record_smoketest

@@ -1,0 +1,69 @@
+{
+  "complete": false,
+  "black_box_complete": false,
+  "black_box_required": [
+    "rosbag",
+    "live_slam_map",
+    "tf_history",
+    "laser_history",
+    "pointcloud_history",
+    "rgb_history",
+    "depth_history",
+    "heatmap_csv",
+    "heatmap_image",
+    "all_observed_topics_bagged"
+  ],
+  "checks": {
+    "meta": false,
+    "trajectory": false,
+    "events": false,
+    "camera_frames": false,
+    "map_snapshot": true,
+    "odom": false,
+    "nav_plan": false,
+    "vlm_captures": false,
+    "vlm_reasoning": false,
+    "rosbag": false,
+    "live_slam_map": false,
+    "tf_history": false,
+    "laser_history": false,
+    "pointcloud_history": false,
+    "rgb_history": false,
+    "depth_history": false,
+    "global_costmap_history": false,
+    "local_costmap_history": false,
+    "heatmap_csv": false,
+    "heatmap_image": false,
+    "all_observed_topics_bagged": false
+  },
+  "counts": {
+    "poses": 0,
+    "events": 0,
+    "camera_frames": 0,
+    "vlm_captures": 0,
+    "reasoning_traces": 0
+  },
+  "csv_outputs": [],
+  "rosbag_topics": {},
+  "observed_topics": [],
+  "missing_bag_topics": [],
+  "note": "nav_plan/VLM fields may be absent when those systems were not used; checks remain explicit",
+  "command": [
+    "bash",
+    "/home/weim/utp_robot/bringup/mission.sh"
+  ],
+  "command_exit_code": 125,
+  "captures_collected": [],
+  "legacy_records_collected": [],
+  "rosbag_mode": "full",
+  "run_kind": "full_trial",
+  "stop_reason": "command_finished_or_operator_stop",
+  "storage": {
+    "initial_free_bytes": 1639964884992,
+    "final_free_bytes": 1639926214656,
+    "run_bytes": 38530689,
+    "reserve_bytes": 100000000000,
+    "max_run_bytes": 500000000000
+  },
+  "dataset_complete": false
+}

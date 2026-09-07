@@ -1,0 +1,81 @@
+
+==============================================================
+ 0  PREP   authority, arm, stack
+==============================================================
+  
+  already CAN. Nothing to do -- but do not touch the RC sticks.
+  SDK_VERSION: 1.18.4
+  ROBOT_IP: 192.168.1.221, VERSION: v2.6.0, PROTOCOL: V1, DETAIL: 6,6,XI1305,AC1304,v2.6.0, TYPE1300: [1, 1]
+  change protocol identifier to 3
+  [clean_error], xArm is ready to move
+  arm cleared: state=2 error=0
+  already at stow; nothing to do.
+  goal checker general_goal_checker.xy_goal_tolerance = 0.14
+  goal checker general_goal_checker.yaw_goal_tolerance = 0.20
+
+==============================================================
+ SKIPPING floor 2 -- resuming at the arrival on floor 1
+==============================================================
+
+==============================================================
+ LOAD MAP 'floor1'
+==============================================================
+  already on 'floor1' -- not restarting SLAM
+
+=== utp bring-up   mode=nav   map=floor1   domain=9   
+  probing (one node, every topic, ~7 s plus TF) ...
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/1371115/cmdline: No such file or directory
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/1371116/cmdline: No such file or directory
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/1371117/cmdline: No such file or directory
+localized map provenance recorded: floor1
+
+  COMPONENT      STATE   DETAIL
+  -------------- ------- ------------------------------------------
+  ethernet       ok      enx00e04c674c60 carrier up
+  net_lidar      ok      192.168.1.119 reachable
+  net_router     ok      192.168.1.1 reachable
+  net_arm        ok      192.168.1.221 reachable
+  can0           ok      ERROR-ACTIVE, ~922 frames/s
+  chassis        ok      /odom 50.00 Hz, odom->base_link present
+  lidar          ok      /ouster/points 10.00 Hz
+  mount_tf       ok      base_link->os_sensor->os_lidar resolves, mount (-0.375, 0.0, 1.146) m
+  filter         skip    raw /ouster/points: matches the 'floor1' mapping chain
+  projection     ok      /scan_filtered 10.00 Hz from /ouster/points
+  scan           ok      /scan 10.00 Hz (rear mask 0.90 m)
+  scan_nav       ok      /scan_nav 10.00 Hz (temporal filter from /scan)
+  safety         ok      /safety/status 20.00 Hz, arm_stowed 100%, estop_latched 0%
+  waypoints      ok      maps/waypoints.yaml has map-frame waypoints in 'floor1'
+  slam           ok      localizing in 'floor1', lifecycle active, map->odom present
+  map_session    ok      saved map matched to the live SLAM session
+  nav2           ok      navigate_to_pose + bt_navigator/planner/controller/behavior ACTIVE, no keepout mask
+
+  elapsed: 22 seconds
+  everything --mode nav needs is up. Next:
+      python3 bringup/relocalise.py --check        # want >=80% before driving
+      python3 bringup/waypoints.py list            # must be recorded in map 'floor1'
+
+==============================================================
+ DOORS -- the car is on floor 1 -- they must be OPEN before the search
+==============================================================
+  cleared /global_costmap/clear_entirely_global_costmap
+  cleared /local_costmap/clear_entirely_local_costmap
+  lidar still sees them shut after 60s
+  cleared /global_costmap/clear_entirely_global_costmap
+  cleared /local_costmap/clear_entirely_local_costmap
+
+==============================================================
+ FIND SELF on 'floor1'   (needs 3 of 5 searches to agree)
+==============================================================
+  search 1: (0.4196,0.3801) yaw -29.99  fit 51.8%
+  search 2: (5.8877,-5.9608) yaw -72.40  fit 55.8%
+  search 3: (5.8877,-5.9508) yaw -73.00  fit 47.1%
+  search 4: (5.8877,-5.9608) yaw -72.80  fit 54.3%
+  3 searches agree within 0.30 m / 15 deg at (5.8877,-5.9608), fit 54.3%
+  cleared /global_costmap/clear_entirely_global_costmap
+  cleared /local_costmap/clear_entirely_local_costmap
+
+==============================================================
+ NAVIGATE  'f1_ada_button'
+==============================================================
+goal 'f1_ada_button' in map: x=7.971 y=3.310 yaw=+44.2 deg (map=floor1)
+DRIVING to 'f1_ada_button' via Nav2. Ctrl-C stops. E-stop is faster.

@@ -1,0 +1,95 @@
+
+==============================================================
+ 0  PREP   authority, arm, stack
+==============================================================
+  
+  already CAN. Nothing to do -- but do not touch the RC sticks.
+  SDK_VERSION: 1.18.4
+  ROBOT_IP: 192.168.1.221, VERSION: v2.6.0, PROTOCOL: V1, DETAIL: 6,6,XI1305,AC1304,v2.6.0, TYPE1300: [1, 1]
+  change protocol identifier to 3
+  [clean_error], xArm is ready to move
+  arm cleared: state=2 error=0
+  already at stow; nothing to do.
+  goal checker general_goal_checker.xy_goal_tolerance = 0.14
+  goal checker general_goal_checker.yaw_goal_tolerance = 0.20
+
+==============================================================
+ LOAD MAP 'floor2'
+==============================================================
+  already on 'floor2' -- not restarting SLAM
+
+=== utp bring-up   mode=nav   map=floor2   domain=9   
+  probing (one node, every topic, ~7 s plus TF) ...
+  'floor2' was mapped with the artifact filter -- starting it
+  stopping 1 existing 'cloud_artifact_filter.py' process(es): 2198372
+  waiting for /ouster/points_clean (25s remaining)
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/2202784/cmdline: No such file or directory
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/2202785/cmdline: No such file or directory
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/2202786/cmdline: No such file or directory
+localized map provenance recorded: floor2
+
+  COMPONENT      STATE   DETAIL
+  -------------- ------- ------------------------------------------
+  ethernet       ok      enx00e04c674c60 carrier up
+  net_lidar      ok      192.168.1.119 reachable
+  net_router     ok      192.168.1.1 reachable
+  net_arm        ok      192.168.1.221 reachable
+  can0           ok      ERROR-ACTIVE, ~921 frames/s
+  chassis        ok      /odom 49.99 Hz, odom->base_link present
+  lidar          ok      /ouster/points 10.00 Hz
+  mount_tf       ok      base_link->os_sensor->os_lidar resolves, mount (-0.375, 0.0, 1.146) m
+  filter         ok      /ouster/points_clean 9.99 Hz (matches the 'floor2' chain)
+  projection     ok      /scan_filtered 10.00 Hz from /ouster/points_clean
+  scan           ok      /scan 10.00 Hz (rear mask 0.90 m)
+  scan_nav       ok      /scan_nav 10.00 Hz (temporal filter from /scan)
+  safety         ok      /safety/status 20.00 Hz, arm_stowed 100%, estop_latched 0%
+  waypoints      ok      maps/waypoints.yaml has map-frame waypoints in 'floor2'
+  slam           ok      localizing in 'floor2', lifecycle active, map->odom present
+  map_session    ok      saved map matched to the live SLAM session
+  nav2           ok      navigate_to_pose + bt_navigator/planner/controller/behavior ACTIVE, no keepout mask
+
+  elapsed: 37 seconds
+  everything --mode nav needs is up. Next:
+      python3 bringup/relocalise.py --check        # want >=80% before driving
+      python3 bringup/waypoints.py list            # must be recorded in map 'floor2'
+
+==============================================================
+ FIND SELF on 'floor2'   (needs 3 of 5 searches to agree)
+==============================================================
+  waiting for a way out (>= 40 returns past 3.0 m spanning >= 20 deg)
+  the way out is open after 3s -- searching now
+  search 1: (2.7305,1.4100) yaw 44.20  fit 74.6%
+  search 2: (2.7505,1.4100) yaw 44.40  fit 69.4%
+  search 3: (2.7305,1.4100) yaw 44.00  fit 71.6%
+  3 searches agree within 0.30 m / 15 deg at (2.7305,1.4100), fit 71.6%
+
+==============================================================
+ NAVIGATE  'f2_lift_door'
+==============================================================
+goal 'f2_lift_door' in map: x=5.907 y=2.537 yaw=+55.4 deg (map=floor2)
+DRIVING to 'f2_lift_door' via Nav2. Ctrl-C stops. E-stop is faster.
+arrived at 'f2_lift_door' in 13.5 s
+RESULT {"detail": "Nav2 STATUS_SUCCEEDED", "elapsed_s": 13.501, "status": "arrived", "waypoint": "f2_lift_door"}
+
+==============================================================
+ CALL PLATE -- the operator presses it; the robot waits at the doors
+==============================================================
+  skipping the drive to 'f2_call_button' and its press (--manual-call)
+  press the call button now; the lidar below is watching the doorway
+
+==============================================================
+ NAVIGATE  'f2_lift_door'
+==============================================================
+goal 'f2_lift_door' in map: x=5.907 y=2.537 yaw=+55.4 deg (map=floor2)
+DRIVING to 'f2_lift_door' via Nav2. Ctrl-C stops. E-stop is faster.
+arrived at 'f2_lift_door' in 0.1 s
+RESULT {"detail": "Nav2 STATUS_SUCCEEDED", "elapsed_s": 0.091, "status": "arrived", "waypoint": "f2_lift_door"}
+
+==============================================================
+ DOORS -- waiting for the car -- the lidar is watching the doorway now
+==============================================================
+  cleared /global_costmap/clear_entirely_global_costmap
+  cleared /local_costmap/clear_entirely_local_costmap
+  lidar still sees them shut after 60s
+
+STOP: the doors never opened; not driving at a closed lift

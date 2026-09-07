@@ -1,0 +1,16 @@
+{
+  "scene": "multifloor",
+  "method": "ours",
+  "map": "floor2",
+  "started_utc": "2026-09-07T01:39:27.758543+00:00",
+  "git_sha": "ac63f6addadcec5645927a6d4cb21c250c183da3",
+  "host": "weim-Dell-Pro-Max-16-Plus-MB16250",
+  "ros_domain_id": "9",
+  "camera_ns": "mast_cam",
+  "frame_fps": 2.0,
+  "frame_width": 640,
+  "note": "poses.jsonl is the trajectory; events.jsonl is appended by the route, not by this process",
+  "ended_utc": "2026-09-07T01:42:42.696474+00:00",
+  "n_frames": 0,
+  "n_poses": 1691
+}

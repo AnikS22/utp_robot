@@ -1,0 +1,23 @@
+detail,kind,stamp
+floor2,map_load_start,1788742603.2357414
+floor2,map_load_done,1788742671.3368418
+"floor2 5.3754,1.7800 yaw 224.20 fit 67.4%",localized,1788742693.9632695
+f2_lift_door,leg_start,1788742693.9806528
+f2_lift_door arrived 10s,leg_end,1788742703.3737507
+f2_lift_door,leg_start,1788742703.3962083
+f2_lift_door arrived 1s,leg_end,1788742704.6814024
+open,doors_wait,1788742704.703174
+,doors_open,1788742711.749105
+f2_car_at_panel,leg_start,1788742711.767002
+f2_car_at_panel arrived 7s,leg_end,1788742718.7946258
+f2_car_panel,leg_start,1788742718.8125584
+f2_car_panel arrived 6s,leg_end,1788742724.9845235
+floor 1,press_manual,1788742725.007942
+f2_car_at_doors,leg_start,1788742745.0728402
+f2_car_at_doors arrived 8s,leg_end,1788742753.26816
+close,doors_wait,1788742753.2939956
+,doors_closed,1788742754.1307666
+floor1,map_load_start,1788742757.8881388
+floor1,map_load_done,1788742814.7988448
+2->1,ride_start,1788742814.820139
+open,doors_wait,1788742814.839191

@@ -1,0 +1,11 @@
+detail,kind,stamp
+floor2,map_load_start,1788808714.4979944
+floor2,map_load_done,1788808753.1553903
+3.0m/20deg,scan_informative,1788808756.059274
+"floor2 2.7305,1.4100 yaw 44.00 fit 71.6%",localized,1788808771.7116048
+f2_lift_door,leg_start,1788808771.7365432
+f2_lift_door arrived 15s,leg_end,1788808786.3347156
+f2_lift_door,leg_start,1788808786.359041
+f2_lift_door arrived 1s,leg_end,1788808787.3426447
+open,doors_wait,1788808787.3609946
+open,doors_timeout,1788808847.9537666

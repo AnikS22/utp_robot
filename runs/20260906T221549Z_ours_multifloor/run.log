@@ -1,0 +1,188 @@
+
+==============================================================
+ 0  PREP   authority, arm, stack
+==============================================================
+  
+  already CAN. Nothing to do -- but do not touch the RC sticks.
+  SDK_VERSION: 1.18.4
+  ROBOT_IP: 192.168.1.221, VERSION: v2.6.0, PROTOCOL: V1, DETAIL: 6,6,XI1305,AC1304,v2.6.0, TYPE1300: [1, 1]
+  change protocol identifier to 3
+  [clean_error], xArm is ready to move
+  arm cleared: state=2 error=0
+  already at stow; nothing to do.
+  goal checker general_goal_checker.xy_goal_tolerance = 0.14
+  goal checker general_goal_checker.yaw_goal_tolerance = 0.20
+
+==============================================================
+ LOCALIZE on 'floor2'
+==============================================================
+  already localizing in 'floor2' -- not restarting SLAM
+
+=== utp bring-up   mode=nav   map=floor2   domain=9   
+  probing (one node, every topic, ~7 s plus TF) ...
+  'floor2' was mapped with the artifact filter -- starting it
+  stopping 1 existing 'cloud_artifact_filter.py' process(es): 1198988
+  waiting for /ouster/points_clean (25s remaining)
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/1206059/cmdline: No such file or directory
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/1206060/cmdline: No such file or directory
+/home/weim/utp_robot/bringup/bringup_all.sh: line 568: /proc/1206061/cmdline: No such file or directory
+localized map provenance recorded: floor2
+
+  COMPONENT      STATE   DETAIL
+  -------------- ------- ------------------------------------------
+  ethernet       ok      enx00e04c674c60 carrier up
+  net_lidar      ok      192.168.1.119 reachable
+  net_router     ok      192.168.1.1 reachable
+  net_arm        ok      192.168.1.221 reachable
+  can0           ok      ERROR-ACTIVE, ~923 frames/s
+  chassis        ok      /odom 50.00 Hz, odom->base_link present
+  lidar          ok      /ouster/points 10.00 Hz
+  mount_tf       ok      base_link->os_sensor->os_lidar resolves, mount (-0.375, 0.0, 1.146) m
+  filter         ok      /ouster/points_clean 10.00 Hz (matches the 'floor2' chain)
+  projection     ok      /scan_filtered 10.00 Hz from /ouster/points_clean
+  scan           ok      /scan 10.00 Hz (rear mask 0.90 m)
+  scan_nav       ok      /scan_nav 10.00 Hz (temporal filter from /scan)
+  safety         ok      /safety/status 20.00 Hz, arm_stowed 100%, estop_latched 0%
+  waypoints      ok      maps/waypoints.yaml has map-frame waypoints in 'floor2'
+  slam           ok      localizing in 'floor2', lifecycle active, map->odom present
+  map_session    ok      saved map matched to the live SLAM session
+  nav2           ok      navigate_to_pose + bt_navigator/planner/controller/behavior ACTIVE, no keepout mask
+
+  elapsed: 38 seconds
+  everything --mode nav needs is up. Next:
+      python3 bringup/relocalise.py --check        # want >=80% before driving
+      python3 bringup/waypoints.py list            # must be recorded in map 'floor2'
+  global search for the robot on 'floor2' ...
+  current (+6.42,+2.17,+47deg) fit 56.6%
+  searching 2771 free cells on a 0.20 m lattice x 72 headings = 199,512 poses
+  coarse  (+6.44,+2.20,+50deg) fit 61.0%
+  refined (+6.39,+2.22,+50deg) fit 78.7%
+  published /initialpose -- drive slowly for a few metres to let it settle
+  fit 66.2%
+
+==============================================================
+ NAVIGATE  'f2_lift_door'
+==============================================================
+goal 'f2_lift_door' in map: x=5.907 y=2.537 yaw=+55.4 deg (map=floor2)
+DRIVING to 'f2_lift_door' via Nav2. Ctrl-C stops. E-stop is faster.
+arrived at 'f2_lift_door' in 8.5 s
+RESULT {"detail": "Nav2 STATUS_SUCCEEDED", "elapsed_s": 8.489, "status": "arrived", "waypoint": "f2_lift_door"}
+
+==============================================================
+ NAVIGATE  'f2_call_button'
+==============================================================
+goal 'f2_call_button' in map: x=6.499 y=2.119 yaw=+48.6 deg (map=floor2)
+DRIVING to 'f2_call_button' via Nav2. Ctrl-C stops. E-stop is faster.
+arrived at 'f2_call_button' in 8.7 s
+RESULT {"detail": "Nav2 STATUS_SUCCEEDED", "elapsed_s": 8.701, "status": "arrived", "waypoint": "f2_call_button"}
+
+==============================================================
+ PRESS  'the small round blue button on the metal call plate'
+==============================================================
+
+==============================================================
+ 2/6  LOOK      capturing an aligned RGB-D frame
+==============================================================
+captured -> /home/weim/utp_robot/captures/press_181713
+  rgb   (720, 1280, 3) uint8
+  depth (720, 1280)  96.0% valid, range 0.90-17.45 m
+  frame mast_cam_color_optical_frame  fx=910.1 fy=909.5 cx=646.2 cy=379.4
+  rgb/depth skew 0 ms
+
+==============================================================
+ 3/6  GROUND    running the shipped detector on that frame
+==============================================================
+frame  : /home/weim/utp_robot/captures/press_181713
+  rgb (720, 1280, 3)  depth (720, 1280)  96.0% valid
+
+Loading weights:   0%|          | 0/1182 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 1182/1182 [00:00<00:00, 16910.67it/s]
+backend: gdino on cuda:0   load 3.4s   infer 757ms
+query  : 'the small round blue button on the metal call plate'
+
+WINNER  score 0.558
+  bbox   (756, 669) -> (783, 700)   27x30px, 0.09% of image
+  3D     x=+0.128 y=+0.316 z=+0.939 m  in mast_cam_color_optical_frame
+         (ROS optical frame: +x right, +y down, +z FORWARD, so z is the distance to the control)
+
+RANKING (2 candidates, best first) -- this is the evidence that
+separates 'could not see it' from 'saw it and preferred a decoy':
+  #0  score 0.558     27x30   px   0.09% area  center=(770,685)  <- chosen
+  #1  score 0.327    199x232  px   5.01% area  center=(839,222)
+
+annotated: /home/weim/utp_robot/captures/press_181713/detection.png   (green = chosen, orange = runners-up)
+detection: /home/weim/utp_robot/captures/press_181713/detection.json   (this is what the arm aims at)
+
+Loading weights:   0%|          | 0/1182 [00:00<?, ?it/s]
+Loading weights:  88%|████████▊ | 1038/1182 [00:00<00:00, 10378.67it/s]
+Loading weights: 100%|██████████| 1182/1182 [00:00<00:00, 10739.78it/s]
+SAFE: clear (0 of 4 forbidden queries on the target; best forbidden hit 0.649 lands elsewhere)
+  'a red fire alarm pull station': (740.3348388671875, 106.41545104980469, 936.7444458007812, 334.78662109375) score 0.336
+  'a fire alarm activation lever': (708.3279418945312, 562.0315551757812, 825.2542114257812, 716.7260131835938) score 0.439
+  'an emergency stop button': (740.3753051757812, 104.64366912841797, 936.7536010742188, 336.50311279296875) score 0.649
+  'a red emergency call button': (755.40673828125, 669.6848754882812, 783.3948364257812, 700.736328125) score 0.411
+
+==============================================================
+ 4/6  SHOW      opening what the detector chose
+==============================================================
+  /home/weim/utp_robot/captures/press_181713/detection.png   (green = chosen, orange = runners-up)
+
+==============================================================
+ 4b/6 READY     wrist to the press orientation -- AFTER grounding
+==============================================================
+SDK_VERSION: 1.18.4
+ROBOT_IP: 192.168.1.221, VERSION: v2.6.0, PROTOCOL: V1, DETAIL: 6,6,XI1305,AC1304,v2.6.0, TYPE1300: [1, 1]
+change protocol identifier to 3
+ joint      now    ready    delta
+  J1       0.0      0.0     +0.0
+  J2     -54.0    -44.6     -9.4
+  J3      -9.9    -45.0    +35.1
+  J4       0.0      0.0     +0.0
+  J5      68.0      2.2    +65.8
+  J6      -0.0      0.0     -0.0
+
+at ready now: False   (tolerance 5.0 deg)
+set_servo_angle -> 0 (0 = ok)
+now: [0.0, -44.6, -45.0, 0.0, 2.3, 0.0]
+at ready: True
+
+==============================================================
+ 5/6  REACH     60 mm marker standoff, then retreat
+==============================================================
+target from detection.json: 'the small round blue button on the metal call plate' score 0.558 via gdino
+target offset    : [ 0.003 -0.02   0.04 ] m from calib/handeye.json (default)
+target (camera) : [0.12775033 0.3155722  0.93900001]
+target (link_base): [ 0.5847 -0.0946  0.3675]   |from base| 0.697 m
+approach dir     : [ 0.995  0.04  -0.094]
+SDK_VERSION: 1.18.4
+ROBOT_IP: 192.168.1.221, VERSION: v2.6.0, PROTOCOL: V1, DETAIL: 6,6,XI1305,AC1304,v2.6.0, TYPE1300: [1, 1]
+change protocol identifier to 3
+
+start flange [0.4501 0.0089 0.6455]  marker [0.3561 0.0082 0.6762]
+start headroom 55.0 deg on J3
+marker is 252 mm from the target along the approach axis
+
+1 steps, stopping at 60 mm standoff:
+  step 1: marker standoff     60 mm -> flange [ 0.6191 -0.0963  0.3424]
+
+[step 1/1] marker standoff 60 mm ...
+  joints [-18.2, 14.2, -46.2, -22.1, -57.2, 10.0]
+  headroom 39.8 deg on J5
+
+retreating to start...
+
+ 6/6  STOW      SKIPPED -- UTP_NO_STOW=1, the caller folds the arm while the base drives
+
+done. frame + detection kept in /home/weim/utp_robot/captures/press_181713
+
+==============================================================
+ NAVIGATE  'f2_lift_door'
+==============================================================
+goal 'f2_lift_door' in map: x=5.907 y=2.537 yaw=+55.4 deg (map=floor2)
+DRIVING to 'f2_lift_door' via Nav2. Ctrl-C stops. E-stop is faster.
+arrived at 'f2_lift_door' in 27.4 s
+RESULT {"detail": "Nav2 STATUS_SUCCEEDED", "elapsed_s": 27.44, "status": "arrived", "waypoint": "f2_lift_door"}
+
+==============================================================
+ DOORS -- waiting for the car -- the lidar is watching the doorway now
+==============================================================

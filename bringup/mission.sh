@@ -35,7 +35,7 @@ source "$REPO/bringup/env.sh" >/dev/null 2>&1 || { echo "env.sh failed" >&2; exi
 source "$REPO/bringup/run_event.sh"
 
 FROM=2; TO=1; DRY=""; ARRIVAL_ONLY=0; MANUAL_CALL=0; MANUAL_SELECT=0; PREPARE_FLOOR=""; PREPARE_IN_CAR=0
-READY_ON_A=0
+READY_ON_A=0; FROM_CAR=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY="--dry-run"; shift ;;
@@ -83,11 +83,20 @@ while [ $# -gt 0 ]; do
     # real first -- see adopt_lock. If any check fails it says so and does the full load and search
     # anyway, so the worst case is the old behaviour.
     --ready) READY_ON_A=1; shift ;;
+    # RESUME FROM INSIDE THE CAR. The robot is already in the lift on the departure floor, still
+    # localized, arm stowed -- a run that got that far and stopped. Skip the call plate and the
+    # entry, pick up at the floor-select press, and finish: ride, relocalize, do the far floor.
+    #
+    # Added 2026-09-07 21:00, when a run pressed the call button, entered the car, and then had its
+    # entry leg refused by Nav2 in 47 ms for the honest reason that the robot was ALREADY at the
+    # goal -- 4 cm and 0.5 deg away, inside a 14 cm tolerance. Everything about that run was good
+    # except the last check, and there was no way to continue it without redoing the whole floor.
+    --from-car) FROM_CAR=1; shift ;;
     --prepare-floor) PREPARE_FLOOR="$2"; shift 2 ;;
     --in-car) PREPARE_IN_CAR=1; shift ;;
     --from) FROM="$2"; shift 2 ;;
     --to)   TO="$2";   shift 2 ;;
-    *) echo "usage: bash bringup/mission.sh [--dry-run] [--from N] [--to N] [--manual-lift]\n       [--ready] [--arrival-only] [--prepare-floor N [--in-car]]" >&2; exit 2 ;;
+    *) echo "usage: bash bringup/mission.sh [--dry-run] [--from N] [--to N] [--manual-lift]\n       [--ready] [--from-car] [--arrival-only] [--prepare-floor N [--in-car]]" >&2; exit 2 ;;
   esac
 done
 if [ "$PREPARE_IN_CAR" = 1 ] && [ -z "$PREPARE_FLOOR" ]; then
@@ -98,7 +107,7 @@ fi
 # nav2_goto.py and the Nav2 goal running with nobody reading the result, a background map load
 # half done, and the arm wherever the press left it. Children are killed by PARENT PID -- never by
 # a name pattern -- then a zero twist goes out on the servo input, which outranks Nav2 at the mux.
-PRESS_FAILED=""
+PRESS_FAILED=""; LEGS_FAILED=""
 cleanup() {
     local rc=$?
     trap - EXIT INT TERM
@@ -168,13 +177,66 @@ nav() {
     fi
     event leg_start "$wp"
     [ -n "$DRY" ] && { python3 "$REPO/bringup/nav2_goto.py" "$wp" || true; return 0; }
-    out="$(mktemp)"
-    python3 "$REPO/bringup/nav2_goto.py" "$wp" --go --timeout "${UTP_NAV_TIMEOUT:-180}" 2>&1 | tee "$out"
-    status="$(sed -n 's/^RESULT //p' "$out" | tail -1 | python3 -c \
-        'import sys,json; d=sys.stdin.read().strip(); print(json.loads(d).get("status","") if d else "")' 2>/dev/null)"
-    rm -f "$out"
+    # A GOAL YOU ARE ALREADY STANDING ON IS AN ARRIVAL, and it has to be decided HERE, because
+    # Nav2's answer to it is indistinguishable from a real failure. 2026-09-07, the best run of the
+    # night: the robot pressed the call button, the doors opened, the entry drive carried it all the
+    # way into the car -- and the next leg, to the pose inside the car, came back `blocked` after 47
+    # MILLISECONDS while standing 4 cm and 0.5 deg from the goal. Nothing was wrong with anything.
+    # The run died one step from the floor button and the whole floor had to be redone.
+    if at_wp "$wp"; then
+        note "already at '$wp' -- no drive needed"
+        event leg_end "$wp already-there 0s"
+        return 0
+    fi
+    local tries="${UTP_NAV_TRIES:-2}" try
+    for try in $(seq 1 "$tries"); do
+        out="$(mktemp)"
+        python3 "$REPO/bringup/nav2_goto.py" "$wp" --go --timeout "${UTP_NAV_TIMEOUT:-180}" 2>&1 | tee "$out"
+        status="$(sed -n 's/^RESULT //p' "$out" | tail -1 | python3 -c \
+            'import sys,json; d=sys.stdin.read().strip(); print(json.loads(d).get("status","") if d else "")' 2>/dev/null)"
+        rm -f "$out"
+        [ "$status" = "arrived" ] && break
+        # CLOSE ENOUGH TO WORK FROM. A leg that aborts having got most of the way there is not the
+        # same as one that never started, and the press chain re-grounds from wherever the base
+        # actually stops, so a pose this close is a place the task can still be done from.
+        if at_wp "$wp" "${UTP_NAV_ACCEPT_M:-0.30}" "${UTP_NAV_ACCEPT_DEG:-20}"; then
+            note "'$status', but the robot is inside ${UTP_NAV_ACCEPT_M:-0.30} m of '$wp' -- taking it"
+            status="arrived"; break
+        fi
+        if [ "$try" -lt "$tries" ]; then
+            note "leg to '$wp' came back '${status:-no RESULT}' -- clearing the costmaps and retrying"
+            event leg_retry "$wp $status"
+            clear_costmaps
+        fi
+    done
     event leg_end "$wp ${status:-none} $(( SECONDS - t0 ))s"
-    [ "$status" = "arrived" ] || die "leg to '$wp' came back '${status:-no RESULT}', not an arrival"
+    # DO NOT END THE RUN OVER ONE LEG. This used to die, so a single blocked drive threw away
+    # everything the run had already done -- the call press, the ride, the localization -- and the
+    # operator had to restart from the map load. The operator's instruction, 2026-09-07: "in the
+    # event that it does break like mid thing ... dont do the whole re-init of the map just force it
+    # to continue and hit the buttons".
+    #
+    # Continuing is safe in a way that a bad LOCALIZATION never is, and the difference matters: the
+    # drive gate above is untouched, so nothing moves on an unverified pose; a leg that fails with a
+    # good lock leaves the robot somewhere known, just not where it wanted. The press chain then
+    # re-grounds from there and refuses on reach if the control is too far, rather than swinging at
+    # a wall. The failure is recorded and the mission exits non-zero at the end.
+    if [ "$status" != "arrived" ]; then
+        echo "  LEG FAILED: '$wp' came back '${status:-no RESULT}' after $tries attempts" >&2
+        note "continuing anyway -- the run keeps what it has already done; this is reported at the end"
+        LEGS_FAILED="${LEGS_FAILED:+$LEGS_FAILED, }$wp(${status:-none})"
+        return 1
+    fi
+    return 0
+}
+
+# at_wp <waypoint> [tol_m] [tol_deg] -- is the robot already there? Tolerances default to the
+# controller's own goal checker, so this can never skip a leg the robot genuinely has to drive.
+at_wp() {
+    [ -n "$DRY" ] && return 1
+    timeout 60 python3 "$REPO/bringup/at_waypoint.py" "$1" \
+        --tol-m "${2:-${UTP_XY_TOL:-0.14}}" --tol-deg "${3:-11.5}" 2>&1 | sed 's/^/    /'
+    return "${PIPESTATUS[0]}"
 }
 
 # CONTACT IS THE PRESS SUCCEEDING. There is no force sensor -- get_ft_sensor_data answers zeros --
@@ -701,7 +763,7 @@ adopt_lock() {
     local map="$1" live fit minfit="${UTP_RELOC_MIN_FIT:-55}"
     live="$(awk 'NR==1{print $1}' "$REPO/maps/.loaded_map" 2>/dev/null)"
     [ "$live" = "$map" ] || { note "not adopting: slam_toolbox is on '${live:-<none>}', not '$map'"; return 1; }
-    timeout 20 ros2 run tf2_ros tf2_echo map base_link >/dev/null 2>&1 \
+    timeout 30 python3 "$REPO/bringup/tf_has_map.py" 20 \
         || { note "not adopting: no map -> base_link transform"; return 1; }
     fit="$(timeout 90 python3 "$REPO/bringup/relocalise.py" --check 2>&1 \
            | sed -n 's/.*fit \([0-9.]*\)%.*/\1/p' | tail -1)"
@@ -778,7 +840,14 @@ fi
 if [ "$ARRIVAL_ONLY" = 1 ]; then
     say "SKIPPING floor $FROM -- resuming at the arrival on floor $TO"
 else
-if [ "$READY_ON_A" = 1 ]; then
+if [ "$FROM_CAR" = 1 ]; then
+    # NO LOAD, NO SEARCH. --from-car resumes inside the lift car, and find_self must never run
+    # there: the doorway gate exists precisely to refuse that geometry, and when it does not refuse
+    # it agrees with itself about the wrong place -- 2026-09-07, three searches within 10 cm at a
+    # pose 8 m out, and the robot drove on it. The pose to resume from is the one the robot DROVE
+    # here on. It is checked below, where --from-car is handled, not rebuilt.
+    :
+elif [ "$READY_ON_A" = 1 ]; then
     say "READY -- taking the localization already live on '$A_MAP' (--ready)"
     adopt_lock "$A_MAP" || { note "falling back to the full load and search"; localize_on "$A_MAP"; }
 else
@@ -788,13 +857,30 @@ fi
 # DOORS FIRST, THEN THE PLATE -- the operator's stated order for floor 2. It also puts the robot
 # where it can see the lift before it asks for it, so a failed call is visible immediately rather
 # than after a drive.
+if [ "$FROM_CAR" = 1 ]; then
+    say "FROM CAR -- already inside the lift on floor $FROM; resuming at the floor-select press"
+    # THE POSE IS NOT ASSUMED, IT IS CHECKED. Same two structural checks adopt_lock makes: the map
+    # being served is this leg's, and there IS a map -> base_link. The FIT check is deliberately
+    # not applied here and this is the one place that is right: the robot is sealed in a metal box,
+    # which is exactly the geometry find_self refuses to search from, and its pose is not a guess --
+    # it drove here on a verified lock and Nav2 confirmed the arrival. Re-searching from inside the
+    # car is the failure this repo spent a night on.
+    _live="$(awk 'NR==1{print $1}' "$REPO/maps/.loaded_map" 2>/dev/null)"
+    [ "$_live" = "$A_MAP" ] || die "--from-car: slam_toolbox is on '${_live:-<none>}', not '$A_MAP'.
+        The pose in the car is only meaningful in the map it was driven in."
+    timeout 30 python3 "$REPO/bringup/tf_has_map.py" 20 \
+        || die "--from-car: no map -> base_link transform, so there is no pose to resume from."
+    CURRENT_MAP="$A_MAP"; LOCALIZED="$A_MAP"
+    note "trusting the in-car pose: it was driven to on a verified lock in '$A_MAP'"
+    event resumed_in_car "$A_MAP"
+else
 [ -n "${A_DOOR_FACING:-}" ] && nav "$A_DOOR_FACING"
 if [ "$MANUAL_CALL" = 1 ]; then
     say "CALL PLATE -- the operator presses it; the robot waits at the doors"
     note "skipping the drive to '$A_CALL_BUTTON' and its press (--manual-call)"
     note "press the call button now; the lidar below is watching the doorway"
 else
-    nav   "$A_CALL_BUTTON"
+    nav   "$A_CALL_BUTTON" || true
     press "$A_CALL_QUERY" \
         || note "the robot could not confirm the call press -- PRESS THE CALL BUTTON if the lift is not coming; the lidar decides when the doors are open"
 fi
@@ -809,13 +895,14 @@ ENTRY_POSE="${A_CAR_FACING_IN:-${A_CAR_FACING_OUT:-}}"
 # Same error as at the ADA plate on floor 1. A door check is only meaningful from a pose that
 # faces the door, and ENTRY_APPROACH is that pose by definition.
 wait_stow
-nav   "$ENTRY_APPROACH"
+nav   "$ENTRY_APPROACH" || true
 # READ THE STATUS. doors() was changed to return rather than die so the CALLER could decide, and
 # then no caller decided -- the entry leg ran unconditionally on a door timeout.
 doors "waiting for the car -- the lidar is watching the doorway now" \
     || die "the doors never opened; not driving at a closed lift"
-nav   "$ENTRY_POSE"
-nav   "$A_CAR_PANEL"
+nav   "$ENTRY_POSE" || true
+fi
+nav   "$A_CAR_PANEL" || true
 
 # The in-car button belongs to the DESTINATION floor, and gets the offset measured on it.
 wait_stow
@@ -829,13 +916,25 @@ if [ "$MANUAL_SELECT" = 1 ]; then
         done; echo
     fi
 else
-    press "$B_SELECT_QUERY" lift_car_select "${B_SELECT_INDEX:-}" \
+    # NO OFFSET PROFILE ANY MORE, BUT KEEP THE SPATIAL PICK.
+    #
+    # This used to pass lift_car_select [0.011, -0.038, 0.040]. That was tuned by hand against this
+    # 25 mm button while approach_target aimed the CALIBRATION MARKER, and 40 mm of it is the same
+    # upward compensation the global offset carried for the same reason -- see the note in
+    # calib/handeye.json. With the fingertip aimed, that compensation is error, and it has never
+    # been re-measured under the new aiming. The global default HAS been: [0, 0, 0.015],
+    # operator-verified to land dead centre on the floor-2 call button on 2026-09-07.
+    #
+    # The button INDEX is a different question and it stays. --pick-from-bottom is geometry, not
+    # calibration: the lift's "1" and "2" are 34 px apart and the same blue, so language cannot
+    # separate them and the detector will happily take either.
+    press "$B_SELECT_QUERY" "" "${B_SELECT_INDEX:-}" \
         || note "the robot could not confirm the floor press -- PRESS FLOOR $TO if the car does not move"
 fi
 
 # Face the doors NOW, while still localized in a map the robot is genuinely in.
 wait_stow
-nav   "$A_CAR_FACING_OUT"
+nav   "$A_CAR_FACING_OUT" || true
 
 # ---------------------------------------------------------------------------- 2  the ride
 # START THE SWAP NOW, IN THE BACKGROUND. It used to run after the doors closed, sequentially,
@@ -932,19 +1031,21 @@ find_self "$B_MAP" "${UTP_ARRIVAL_MASK_M:-1.5}"
 clear_costmaps
 
 if [ "$B_KIND" = "task" ]; then
-    nav   "$B_TASK_BUTTON"
+    nav   "$B_TASK_BUTTON" || true
     press "$B_TASK_QUERY" || note "task press failed -- still driving out so the run ends where it should"
     # NOTHING between the press and the drive. The opener is already swinging; a check here is a
     # check against a closing door, and all three that were tried were slower than the event.
-    nav   "$B_TASK_EXIT"
+    nav   "$B_TASK_EXIT" || true
 else
-    nav   "$B_EXIT"
+    nav   "$B_EXIT" || true
 fi
 
 wait_stow
-if [ -n "${PRESS_FAILED:-}" ]; then
-    event mission_complete "$FROM->$TO press failed: $PRESS_FAILED"
-    say "MISSION ENDED -- floor $FROM to floor $TO, but these presses made NO CONTACT: $PRESS_FAILED"
+if [ -n "${PRESS_FAILED:-}" ] || [ -n "${LEGS_FAILED:-}" ]; then
+    event mission_complete "$FROM->$TO presses:[${PRESS_FAILED:-none}] legs:[${LEGS_FAILED:-none}]"
+    say "MISSION ENDED -- floor $FROM to floor $TO, with failures"
+    [ -n "${PRESS_FAILED:-}" ] && note "presses that made NO CONTACT: $PRESS_FAILED"
+    [ -n "${LEGS_FAILED:-}" ] && note "legs that never arrived: $LEGS_FAILED"
     exit 1
 fi
 event mission_complete "$FROM->$TO"

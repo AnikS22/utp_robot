@@ -1,0 +1,141 @@
+[INFO] [1788745167.659107452] [rosbag2_recorder]: Event publisher thread: Started
+[INFO] [1788745167.663815919] [rosbag2_recorder]: Starting recording to '/home/weim/utp_robot/runs/20260907T013926Z_ours_multifloor/rosbag'
+[INFO] [1788745167.666089684] [rosbag2_recorder]: Subscribed to topic '/rosout'
+[INFO] [1788745167.666341135] [rosbag2_recorder]: Subscribed to topic '/parameter_events'
+[INFO] [1788745167.666630782] [rosbag2_recorder]: Subscribed to topic '/events/write_split'
+[INFO] [1788745167.666694241] [rosbag2_recorder]: Listening for topics...
+[INFO] [1788745167.666700419] [rosbag2_recorder]: Recording...
+[INFO] [1788745167.666730407] [rosbag2_recorder]: Topics discovery started.
+[INFO] [1788745167.770138813] [rosbag2_recorder]: Subscribed to topic '/bt_navigator/transition_event'
+[INFO] [1788745167.774320871] [rosbag2_recorder]: Subscribed to topic '/ouster/points_clean'
+[INFO] [1788745167.776242277] [rosbag2_recorder]: Subscribed to topic '/safety/arm_stowed'
+[INFO] [1788745167.778952063] [rosbag2_recorder]: Subscribed to topic '/scan'
+[INFO] [1788745167.781605937] [rosbag2_recorder]: Subscribed to topic '/planner_server/transition_event'
+[INFO] [1788745167.782301578] [rosbag2_recorder]: Subscribed to topic '/safety/status'
+[INFO] [1788745167.782721412] [rosbag2_recorder]: Subscribed to topic '/ouster/points'
+[INFO] [1788745167.783418356] [rosbag2_recorder]: Subscribed to topic '/cmd_vel'
+[INFO] [1788745167.784268032] [rosbag2_recorder]: Subscribed to topic '/goal_pose'
+[INFO] [1788745167.784824629] [rosbag2_recorder]: Subscribed to topic '/clicked_point'
+[INFO] [1788745167.785307926] [rosbag2_recorder]: Subscribed to topic '/scan_filtered'
+[WARN] [1788745167.785959189] [rosbag2_recorder]: New publisher discovered on topic '/ouster/points', offering incompatible QoS. No messages will be sent to it. Last incompatible policy: RELIABILITY_QOS_POLICY
+[INFO] [1788745167.786066047] [rosbag2_recorder]: Subscribed to topic '/initialpose'
+[INFO] [1788745167.786699953] [rosbag2_recorder]: Subscribed to topic '/scan_nav'
+[WARN] [1788745167.787664036] [rosbag2_recorder]: A new publisher for subscribed topic /ouster/points was found offering RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT, but rosbag already subscribed requesting RMW_QOS_POLICY_RELIABILITY_RELIABLE. Messages from this new publisher will not be recorded.
+[WARN] [1788745167.787754555] [rosbag2_cpp]: Message definition for topic '/navigate_to_pose/_action/status' with type 'action_msgs/msg/GoalStatusArray' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.788619815] [rosbag2_recorder]: Subscribed to topic '/navigate_to_pose/_action/status'
+[INFO] [1788745167.789742026] [rosbag2_recorder]: Subscribed to topic '/diagnostics'
+[WARN] [1788745167.789802394] [rosbag2_cpp]: Message definition for topic '/navigate_through_poses/_action/status' with type 'action_msgs/msg/GoalStatusArray' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.790391864] [rosbag2_recorder]: Subscribed to topic '/navigate_through_poses/_action/status'
+[INFO] [1788745167.791320265] [rosbag2_recorder]: Subscribed to topic '/motion_state'
+[WARN] [1788745167.791364204] [rosbag2_cpp]: Message definition for topic '/mast_cam/triggered_calibration/_action/status' with type 'action_msgs/msg/GoalStatusArray' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.791910333] [rosbag2_recorder]: Subscribed to topic '/mast_cam/triggered_calibration/_action/status'
+[WARN] [1788745167.791952749] [rosbag2_cpp]: Message definition for topic '/mast_cam/triggered_calibration/_action/feedback' with type 'realsense2_camera_msgs/action/TriggeredCalibration_FeedbackMessage' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.793517945] [rosbag2_recorder]: Subscribed to topic '/mast_cam/triggered_calibration/_action/feedback'
+[INFO] [1788745167.795152144] [rosbag2_recorder]: Subscribed to topic '/bond'
+[INFO] [1788745167.795729790] [rosbag2_recorder]: Subscribed to topic '/mast_cam/depth/metadata'
+[INFO] [1788745167.796451543] [rosbag2_recorder]: Subscribed to topic '/mast_cam/depth/image_rect_raw'
+[INFO] [1788745167.796928469] [rosbag2_recorder]: Subscribed to topic '/mast_cam/color/metadata'
+[INFO] [1788745167.797350700] [rosbag2_recorder]: Subscribed to topic '/mast_cam/color/image_raw'
+[WARN] [1788745167.797386464] [rosbag2_cpp]: Message definition for topic '/compute_path_to_pose/_action/status' with type 'action_msgs/msg/GoalStatusArray' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.797772112] [rosbag2_recorder]: Subscribed to topic '/compute_path_to_pose/_action/status'
+[INFO] [1788745167.798336259] [rosbag2_recorder]: Subscribed to topic '/mast_cam/extrinsics/depth_to_color'
+[INFO] [1788745167.801408250] [rosbag2_recorder]: Subscribed to topic '/behavior_tree_log'
+[INFO] [1788745167.802142583] [rosbag2_recorder]: Subscribed to topic '/global_costmap/costmap_raw_updates'
+[INFO] [1788745167.802942976] [rosbag2_recorder]: Subscribed to topic '/global_costmap/costmap'
+[INFO] [1788745167.809015926] [rosbag2_recorder]: Subscribed to topic '/global_costmap/costmap_raw'
+[INFO] [1788745167.809774599] [rosbag2_recorder]: Subscribed to topic '/mast_cam/aligned_depth_to_color/camera_info'
+[INFO] [1788745167.810811497] [rosbag2_recorder]: Subscribed to topic '/global_costmap/costmap_updates'
+[INFO] [1788745167.811234211] [rosbag2_recorder]: Subscribed to topic '/global_costmap/global_costmap/transition_event'
+[INFO] [1788745167.811633470] [rosbag2_recorder]: Subscribed to topic '/global_costmap/obstacle_layer_raw_updates'
+[INFO] [1788745167.812189748] [rosbag2_recorder]: Subscribed to topic '/ouster/imu'
+[INFO] [1788745167.813527021] [rosbag2_recorder]: Subscribed to topic '/waypoint_markers'
+[INFO] [1788745167.814756194] [rosbag2_recorder]: Subscribed to topic '/tf'
+[INFO] [1788745167.815080607] [rosbag2_recorder]: Subscribed to topic '/safety/override'
+[INFO] [1788745167.815503942] [rosbag2_recorder]: Subscribed to topic '/global_costmap/static_layer_updates'
+[INFO] [1788745167.815906887] [rosbag2_recorder]: Subscribed to topic '/slam_toolbox/scan_visualization'
+[INFO] [1788745167.816434282] [rosbag2_recorder]: Subscribed to topic '/plan'
+[INFO] [1788745167.816855789] [rosbag2_recorder]: Subscribed to topic '/map'
+[INFO] [1788745167.817329718] [rosbag2_recorder]: Subscribed to topic '/system_state'
+[INFO] [1788745167.817943702] [rosbag2_recorder]: Subscribed to topic '/actuator_state'
+[INFO] [1788745167.818346316] [rosbag2_recorder]: Subscribed to topic '/global_costmap/obstacle_layer'
+[INFO] [1788745167.818864813] [rosbag2_recorder]: Subscribed to topic '/ouster/metadata'
+[INFO] [1788745167.819594959] [rosbag2_recorder]: Subscribed to topic '/odom'
+[INFO] [1788745167.821073390] [rosbag2_recorder]: Subscribed to topic '/slam_toolbox/transition_event'
+[INFO] [1788745167.821451832] [rosbag2_recorder]: Subscribed to topic '/global_costmap/obstacle_layer_updates'
+[INFO] [1788745167.822042269] [rosbag2_recorder]: Subscribed to topic '/tf_static'
+[INFO] [1788745167.822861328] [rosbag2_recorder]: Subscribed to topic '/slam_toolbox/update'
+[INFO] [1788745167.823274913] [rosbag2_recorder]: Subscribed to topic '/slam_toolbox/graph_visualization'
+[WARN] [1788745167.823303038] [rosbag2_cpp]: Message definition for topic '/compute_path_to_pose/_action/feedback' with type 'nav2_msgs/action/ComputePathToPose_FeedbackMessage' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.823753095] [rosbag2_recorder]: Subscribed to topic '/compute_path_to_pose/_action/feedback'
+[INFO] [1788745167.824236118] [rosbag2_recorder]: Subscribed to topic '/pose'
+[INFO] [1788745167.824612986] [rosbag2_recorder]: Subscribed to topic '/ouster/scan'
+[INFO] [1788745167.824983514] [rosbag2_recorder]: Subscribed to topic '/ouster/os_driver/transition_event'
+[INFO] [1788745167.825373249] [rosbag2_recorder]: Subscribed to topic '/mast_cam/aligned_depth_to_color/image_raw'
+[WARN] [1788745167.825398350] [rosbag2_cpp]: Message definition for topic '/backup/_action/feedback' with type 'nav2_msgs/action/BackUp_FeedbackMessage' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.825833986] [rosbag2_recorder]: Subscribed to topic '/backup/_action/feedback'
+[INFO] [1788745167.826413539] [rosbag2_recorder]: Subscribed to topic '/global_costmap/published_footprint'
+[INFO] [1788745167.826996295] [rosbag2_recorder]: Subscribed to topic '/cmd_vel_nav'
+[INFO] [1788745167.827494067] [rosbag2_recorder]: Subscribed to topic '/safety/estop'
+[INFO] [1788745167.828179986] [rosbag2_recorder]: Subscribed to topic '/battery_state'
+[INFO] [1788745167.828609374] [rosbag2_recorder]: Subscribed to topic '/mast_cam/depth/camera_info'
+[WARN] [1788745167.828637264] [rosbag2_cpp]: Message definition for topic '/navigate_to_pose/_action/feedback' with type 'nav2_msgs/action/NavigateToPose_FeedbackMessage' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.829144724] [rosbag2_recorder]: Subscribed to topic '/navigate_to_pose/_action/feedback'
+[INFO] [1788745167.829652085] [rosbag2_recorder]: Subscribed to topic '/mast_cam/color/camera_info'
+[INFO] [1788745167.830085725] [rosbag2_recorder]: Subscribed to topic '/local_costmap/costmap_updates'
+[INFO] [1788745167.830519706] [rosbag2_recorder]: Subscribed to topic '/global_costmap/static_layer'
+[INFO] [1788745167.830925357] [rosbag2_recorder]: Subscribed to topic '/local_costmap/published_footprint'
+[INFO] [1788745167.831218069] [rosbag2_recorder]: Subscribed to topic '/cmd_vel_servo'
+[INFO] [1788745167.831527278] [rosbag2_recorder]: Subscribed to topic '/safety/enable'
+[INFO] [1788745167.831940381] [rosbag2_recorder]: Subscribed to topic '/global_costmap/static_layer_raw_updates'
+[INFO] [1788745167.832376919] [rosbag2_recorder]: Subscribed to topic '/behavior_server/transition_event'
+[INFO] [1788745167.832785356] [rosbag2_recorder]: Subscribed to topic '/local_costmap/costmap'
+[INFO] [1788745167.833202122] [rosbag2_recorder]: Subscribed to topic '/local_costmap/local_costmap/transition_event'
+[INFO] [1788745167.833616712] [rosbag2_recorder]: Subscribed to topic '/local_costmap/costmap_raw'
+[INFO] [1788745167.834041932] [rosbag2_recorder]: Subscribed to topic '/local_costmap/costmap_raw_updates'
+[INFO] [1788745167.834506267] [rosbag2_recorder]: Subscribed to topic '/map_metadata'
+[INFO] [1788745167.834909968] [rosbag2_recorder]: Subscribed to topic '/global_costmap/obstacle_layer_raw'
+[INFO] [1788745167.835372726] [rosbag2_recorder]: Subscribed to topic '/global_costmap/static_layer_raw'
+[INFO] [1788745167.835672326] [rosbag2_recorder]: Subscribed to topic '/map_updates'
+[INFO] [1788745167.835969965] [rosbag2_recorder]: Subscribed to topic '/cmd_vel_teleop'
+[WARN] [1788745167.835995475] [rosbag2_cpp]: Message definition for topic '/navigate_through_poses/_action/feedback' with type 'nav2_msgs/action/NavigateThroughPoses_FeedbackMessage' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.836570799] [rosbag2_recorder]: Subscribed to topic '/navigate_through_poses/_action/feedback'
+[INFO] [1788745167.837028550] [rosbag2_recorder]: Subscribed to topic '/controller_server/transition_event'
+[INFO] [1788745167.839080313] [rosbag2_recorder]: Subscribed to topic '/local_costmap/obstacle_layer_raw_updates'
+[INFO] [1788745167.839486726] [rosbag2_recorder]: Subscribed to topic '/local_costmap/obstacle_layer_updates'
+[WARN] [1788745167.839515102] [rosbag2_cpp]: Message definition for topic '/wait/_action/status' with type 'action_msgs/msg/GoalStatusArray' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.839873660] [rosbag2_recorder]: Subscribed to topic '/wait/_action/status'
+[INFO] [1788745167.840230799] [rosbag2_recorder]: Subscribed to topic '/global_costmap/footprint'
+[WARN] [1788745167.840257258] [rosbag2_cpp]: Message definition for topic '/follow_path/_action/status' with type 'action_msgs/msg/GoalStatusArray' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.840640097] [rosbag2_recorder]: Subscribed to topic '/follow_path/_action/status'
+[INFO] [1788745167.841183815] [rosbag2_recorder]: Subscribed to topic '/trajectories'
+[INFO] [1788745167.841641600] [rosbag2_recorder]: Subscribed to topic '/local_costmap/obstacle_layer_raw'
+[INFO] [1788745167.842086896] [rosbag2_recorder]: Subscribed to topic '/transformed_global_plan'
+[INFO] [1788745167.842594128] [rosbag2_recorder]: Subscribed to topic '/slam_toolbox/feedback'
+[INFO] [1788745167.842990644] [rosbag2_recorder]: Subscribed to topic '/optimal_trajectory'
+[WARN] [1788745167.843019912] [rosbag2_cpp]: Message definition for topic '/follow_path/_action/feedback' with type 'nav2_msgs/action/FollowPath_FeedbackMessage' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.843494047] [rosbag2_recorder]: Subscribed to topic '/follow_path/_action/feedback'
+[WARN] [1788745167.843523457] [rosbag2_cpp]: Message definition for topic '/wait/_action/feedback' with type 'nav2_msgs/action/Wait_FeedbackMessage' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.843988090] [rosbag2_recorder]: Subscribed to topic '/wait/_action/feedback'
+[INFO] [1788745167.844301053] [rosbag2_recorder]: Subscribed to topic '/controller_selector'
+[WARN] [1788745167.844326933] [rosbag2_cpp]: Message definition for topic '/drive_on_heading/_action/feedback' with type 'nav2_msgs/action/DriveOnHeading_FeedbackMessage' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.844759155] [rosbag2_recorder]: Subscribed to topic '/drive_on_heading/_action/feedback'
+[WARN] [1788745167.844789306] [rosbag2_cpp]: Message definition for topic '/compute_path_through_poses/_action/feedback' with type 'nav2_msgs/action/ComputePathThroughPoses_FeedbackMessage' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.845224329] [rosbag2_recorder]: Subscribed to topic '/compute_path_through_poses/_action/feedback'
+[WARN] [1788745167.845257336] [rosbag2_cpp]: Message definition for topic '/compute_path_through_poses/_action/status' with type 'action_msgs/msg/GoalStatusArray' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.845859819] [rosbag2_recorder]: Subscribed to topic '/compute_path_through_poses/_action/status'
+[WARN] [1788745167.845910512] [rosbag2_cpp]: Message definition for topic '/drive_on_heading/_action/status' with type 'action_msgs/msg/GoalStatusArray' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.847076772] [rosbag2_recorder]: Subscribed to topic '/drive_on_heading/_action/status'
+[INFO] [1788745167.847545260] [rosbag2_recorder]: Subscribed to topic '/local_costmap/obstacle_layer'
+[INFO] [1788745167.847931420] [rosbag2_recorder]: Subscribed to topic '/planner_selector'
+[INFO] [1788745167.848260824] [rosbag2_recorder]: Subscribed to topic '/local_costmap/footprint'
+[INFO] [1788745167.848690518] [rosbag2_recorder]: Subscribed to topic '/speed_limit'
+[WARN] [1788745167.848720334] [rosbag2_cpp]: Message definition for topic '/backup/_action/status' with type 'action_msgs/msg/GoalStatusArray' not found. Message definition will be left empty in bag.
+[INFO] [1788745167.849092038] [rosbag2_recorder]: Subscribed to topic '/backup/_action/status'
+[INFO] [1788745167.967329297] [rosbag2_recorder]: Subscribed to topic '/local_plan'
+[INFO] [1788745324.418920580] [rosbag2_cpp]: Writing remaining messages from cache to the bag. It may take a while
+[INFO] [1788745362.481978026] [rosbag2_recorder]: Topics discovery stopped.
+[INFO] [1788745362.482379642] [rosbag2_recorder]: Pausing recording.
+[INFO] [1788745362.483481469] [rosbag2_cpp]: Writing remaining messages from cache to the bag. It may take a while
+[INFO] [1788745362.511587694] [rosbag2_recorder]: Recording stopped
+[WARN] [1788745362.511613721] [rosbag2_recorder]: Number of messages lost on the transport layer: 2318
+[INFO] [1788745362.527441323] [rosbag2_recorder]: Event publisher thread: Exited

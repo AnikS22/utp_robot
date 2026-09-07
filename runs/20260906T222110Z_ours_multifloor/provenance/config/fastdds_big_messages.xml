@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  Why this file exists.
+
+  The OS0-128 at 512x10 produces a 65,536-point cloud; at 48 bytes per point that is a 3.1 MB
+  PointCloud2 on every /ouster/points message. Fast DDS delivers same-host traffic over shared
+  memory, and its DEFAULT SHM segment is 512 KB — six times too small to hold one cloud.
+
+  The failure is silent and it does not look like a network problem, which is why it survived
+  for weeks. Measured 2026-09-06 with the sensor healthy:
+
+      NIC in            8.2 MB/s, 320 reassembled datagrams/s  == exactly 32 pkts x 10 Hz
+      Udp.InErrors      0        Udp.RcvbufErrors 0        Ip.ReasmFails 0
+      NIC rx_dropped    0        rx_missed        0
+      loopback          0.02 MB/s   — so DDS was NOT falling back to UDP
+      /ouster/points    3.58 Hz  /scan_filtered 1.79 Hz  /scan_nav 1.79 Hz
+
+  Every one of the ten frames per second arrived at the driver. The kernel lost nothing. The
+  clouds died going into a 549,408-byte /dev/shm segment. Two independent subscribers seeing
+  DIFFERENT rates off one stream (3.58 vs 1.79) is the tell: a slow producer starves everyone
+  equally, transport loss does not.
+
+  Why the rate is not a cosmetic complaint: bringup/relocalise.py exists because slam_toolbox
+  loses its lock when the robot turns faster than the scan rate can follow, and that was written
+  when /scan ran 4.6-6.4 Hz. At 1.79 Hz a brisk turn puts 20+ degrees between consecutive scans
+  against a 2-degree coarse_angle_resolution. The pose walks off and keeps publishing a
+  confident TF — the 4.6 m error measured 2026-09-01.
+
+  Sizing: 64 MB segment holds ~20 clouds in flight. /dev/shm is a 32 GB tmpfs and the segments
+  are sparse, so the declared size costs nothing until it is used.
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <transport_descriptors>
+
+      <transport_descriptor>
+        <transport_id>utp_shm</transport_id>
+        <type>SHM</type>
+        <segment_size>67108864</segment_size>
+        <maxMessageSize>8388608</maxMessageSize>
+        <port_queue_capacity>1024</port_queue_capacity>
+        <healthy_check_timeout_ms>1000</healthy_check_timeout_ms>
+      </transport_descriptor>
+
+      <!-- Kept alongside SHM so anything off-host (and any participant that did not load this
+           profile) still has a common transport. Buffers raised to match net.core.rmem_max. -->
+      <transport_descriptor>
+        <transport_id>utp_udp</transport_id>
+        <type>UDPv4</type>
+        <sendBufferSize>4194304</sendBufferSize>
+        <receiveBufferSize>4194304</receiveBufferSize>
+      </transport_descriptor>
+
+    </transport_descriptors>
+
+    <participant profile_name="utp_big_messages" is_default_profile="true">
+      <rtps>
+        <userTransports>
+          <transport_id>utp_shm</transport_id>
+          <transport_id>utp_udp</transport_id>
+        </userTransports>
+        <useBuiltinTransports>false</useBuiltinTransports>
+      </rtps>
+    </participant>
+
+  </profiles>
+</dds>

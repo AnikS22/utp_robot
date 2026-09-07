@@ -1,0 +1,41 @@
+# Ranger Mini 3 (V3) kinematic parameters — single source for the 4WS base + mode controller.
+# Values RESOLVED against authoritative sources (user-confirmed 2026-06-30). SOURCE annotations are
+# mandatory; anything still unverified is marked UNVERIFIED and must NOT be silently trusted.
+
+geometry:
+  # Manual §1.2 is the authority for track + wheelbase (public specs don't publish track separately).
+  track_m: 0.364          # SOURCE: manual §1.2 (AUTHORITY). NOTE: official URDF model ~0.39 (wrong) -> controller uses 0.364.
+  wheelbase_m: 0.494      # SOURCE: manual §1.2 (=500mm body length corroborated; URDF model ~0.50 OK)
+  wheel_radius_m: 0.100   # SOURCE: measured from official wheel_link mesh (extent 0.201 -> r 0.100).
+                          #         Cross-check vs manual §4 Product Size tire dia (drawing not legible at extract res).
+  kingpin_offset_m: 0.019 # SOURCE: measured in model. NEAR-center-pivot (small scrub radius), not exactly 0.
+
+limits:
+  max_linear_speed_mps: 1.5      # SOURCE: driver RangerMiniV3 = operating cap (use for planning).
+  max_linear_speed_ceiling_mps: 2.0  # SOURCE: manual §1.2 7.2 km/h hardware ceiling.
+  max_angular_speed_radps: 4.8   # SOURCE: driver RangerMiniV3
+  max_steer_angle_ackermann_rad: 0.4782   # SOURCE: driver RangerMiniV3 (27.4 deg)
+  max_steer_angle_parallel_rad: 1.5708    # SOURCE: driver RangerMiniV3 (90 deg) -> crab/traverse
+  max_round_angle_spin_rad: 0.935671      # SOURCE: driver RangerMiniV3 (53.6 deg) -> spin
+  steer_joint_range_rad: 2.1              # SOURCE: official URDF (+-120.3 deg); covers all modes
+  min_turn_radius_spin_m: 0.0             # SOURCE: manual §1.2 (Spin mode = 0 mm). Ackermann mode ~0.81 m (manual).
+  max_steer_rate_radps: 2.0               # SOURCE: 4x 100W harmonic-drive steering (1:51) gives ~90-120 deg/s
+                                          # unladen transition (~<1s for a 90deg crab pivot); ROS2/Nav2/CAN
+                                          # practice clamps steer joint angular velocity to 1.5-2.0 rad/s to
+                                          # avoid tire scrub / mechanical stress / over-current. URDF's 6.28
+                                          # (2*pi) is too fast -> the controller clamps to this 2.0.
+
+# The FOUR official motion modes (AgileX) — the mode controller's target set:
+#   spin       -> SPINNING(2):    rotate in place, 0 mm radius          (wheels tangent to center)
+#   traverse   -> PARALLEL(1):    strafe sideways, no rotation           (all wheels ~90 deg)
+#   diagonal   -> PARALLEL @ phi: translate at an angle, no rotation     (all wheels at phi)
+#   ackermann  -> DUAL_ACKERMAN(0): car-like, turning coupled to speed
+# Elevator-car entry uses SPIN + TRAVERSE (the near-holonomic capability). Body-twist models in
+# ranger_ros2 kinematics_model.hpp; driver enum in ranger_msgs MotionState.msg.
+modes: [spin, traverse, diagonal, ackermann]
+elevator_modes: [spin, traverse]
+
+# Model-fidelity flags (USD model vs authoritative numbers) — resolve or accept consciously:
+#   - model track ~0.39 vs real 0.364 (~13mm/side too wide); controller uses 0.364.
+#   - rr steer-joint origin asymmetric in the official URDF (~0.23/0.206 vs 0.25/0.19 elsewhere).
+#   - kingpin offset 19mm -> spin is near-zero-radius, small wheel scrub (not ideal 0).
