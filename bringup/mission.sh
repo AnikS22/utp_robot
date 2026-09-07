@@ -34,7 +34,7 @@ source "$REPO/bringup/env.sh" >/dev/null 2>&1 || { echo "env.sh failed" >&2; exi
 # code path.
 source "$REPO/bringup/run_event.sh"
 
-FROM=2; TO=1; DRY=""; ARRIVAL_ONLY=0; MANUAL_CALL=0; MANUAL_SELECT=0
+FROM=2; TO=1; DRY=""; ARRIVAL_ONLY=0; MANUAL_CALL=0; MANUAL_SELECT=0; PREPARE_FLOOR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY="--dry-run"; shift ;;
@@ -58,9 +58,18 @@ while [ $# -gt 0 ]; do
     # behind an arm question.
     --manual-select) MANUAL_SELECT=1; shift ;;
     --manual-lift) MANUAL_CALL=1; MANUAL_SELECT=1; shift ;;
+    # PUT THE ROBOT ON A FLOOR AND STOP. Load that floor's map onto slam_toolbox, wait for a clear
+    # view, localize until the searches agree, then exit -- no driving, no arm.
+    #
+    # This exists because doing it by hand is where nearly every failure tonight started. The two
+    # steps live inside this script as load_map and find_self, so every ad-hoc invocation meant
+    # extracting shell functions with sed into a wrapper: fragile, easy to interrupt half way, and
+    # twice it left slam_toolbox killed but not restarted, which then looked like a localization
+    # bug. One flag, the same code path the mission uses, nothing to reassemble.
+    --prepare-floor) PREPARE_FLOOR="$2"; shift 2 ;;
     --from) FROM="$2"; shift 2 ;;
     --to)   TO="$2";   shift 2 ;;
-    *) echo "usage: bash bringup/mission.sh [--dry-run] [--from N] [--to N]" >&2; exit 2 ;;
+    *) echo "usage: bash bringup/mission.sh [--dry-run] [--from N] [--to N] [--manual-lift]\n       [--arrival-only] [--prepare-floor N]" >&2; exit 2 ;;
   esac
 done
 
@@ -458,6 +467,20 @@ print(($agree+1) if (math.hypot(dx,dy)<=$tol and dw<=$told) else 1)")
 }
 
 localize_on() { load_map "$1"; find_self "$1"; }
+
+# ---------------------------------------------------------------------------- prepare only
+if [ -n "$PREPARE_FLOOR" ]; then
+    case "$PREPARE_FLOOR" in
+        "$FROM") _pmap="$A_MAP" ;;
+        "$TO")   _pmap="$B_MAP" ;;
+        *) die "floor '$PREPARE_FLOOR' is not one of this itinerary's floors ($FROM, $TO)" ;;
+    esac
+    say "PREPARE floor $PREPARE_FLOOR  (map '$_pmap') -- no driving, no arm"
+    load_map "$_pmap"
+    find_self "$_pmap"
+    say "READY on floor $PREPARE_FLOOR: map '$_pmap' loaded and the pose is verified"
+    exit 0
+fi
 
 # ---------------------------------------------------------------------------- 0  PREP
 say "0  PREP   authority, arm, stack"
