@@ -34,7 +34,7 @@ source "$REPO/bringup/env.sh" >/dev/null 2>&1 || { echo "env.sh failed" >&2; exi
 # code path.
 source "$REPO/bringup/run_event.sh"
 
-FROM=2; TO=1; DRY=""; ARRIVAL_ONLY=0; MANUAL_CALL=0; MANUAL_SELECT=0; PREPARE_FLOOR=""
+FROM=2; TO=1; DRY=""; ARRIVAL_ONLY=0; MANUAL_CALL=0; MANUAL_SELECT=0; PREPARE_FLOOR=""; PREPARE_IN_CAR=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY="--dry-run"; shift ;;
@@ -67,11 +67,15 @@ while [ $# -gt 0 ]; do
     # twice it left slam_toolbox killed but not restarted, which then looked like a localization
     # bug. One flag, the same code path the mission uses, nothing to reassemble.
     --prepare-floor) PREPARE_FLOOR="$2"; shift 2 ;;
+    --in-car) PREPARE_IN_CAR=1; shift ;;
     --from) FROM="$2"; shift 2 ;;
     --to)   TO="$2";   shift 2 ;;
-    *) echo "usage: bash bringup/mission.sh [--dry-run] [--from N] [--to N] [--manual-lift]\n       [--arrival-only] [--prepare-floor N]" >&2; exit 2 ;;
+    *) echo "usage: bash bringup/mission.sh [--dry-run] [--from N] [--to N] [--manual-lift]\n       [--arrival-only] [--prepare-floor N [--in-car]]" >&2; exit 2 ;;
   esac
 done
+if [ "$PREPARE_IN_CAR" = 1 ] && [ -z "$PREPARE_FLOOR" ]; then
+    echo "--in-car requires --prepare-floor" >&2; exit 2
+fi
 
 say()  { echo; echo "=============================================================="; \
          echo " $*"; echo "=============================================================="; }
@@ -308,29 +312,10 @@ load_map() {
     event map_load_start "$map"
     CURRENT_MAP="$map"; LOCALIZED=""
     [ -n "$DRY" ] && return 0
-    local pat; pat=$(printf 'slam_%s' 'toolbox')
     local live=""
     [ -f "$REPO/maps/.loaded_map" ] && live="$(awk '{print $1}' "$REPO/maps/.loaded_map")"
     if [ "$live" != "$map" ]; then
-        # KILL AND THEN VERIFY. A slam_toolbox that segfaulted mid-configure leaves a process that
-        # no longer carries this repo's env markers; bringup_all.sh then refuses to touch it --
-        # correctly, it cannot prove whose it is -- and refuses to start a second copy, so the run
-        # dies with "1 process(es) matching 'slam_toolbox' are NOT ours".
-        local tries
-        for tries in 1 2 3; do
-            local found=0
-            for p in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
-                [ "$(cat /proc/$p/comm 2>/dev/null)" = "bash" ] && continue
-                local c; c=$(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null) || continue
-                case "$c" in
-                    *"$pat"*) found=1
-                              if [ "$tries" = 1 ]; then kill -INT "$p" 2>/dev/null
-                              else kill -TERM "$p" 2>/dev/null; fi ;;
-                esac
-            done
-            [ "$found" = 0 ] && break
-            sleep 4
-        done
+        python3 "$REPO/bringup/stop_localizer.py" || die "localizer did not stop"
         rm -f "$REPO/maps/.loaded_map"
     else
         note "already on '$map' -- not restarting SLAM"
@@ -355,7 +340,7 @@ load_map() {
 # did not. A high score means "this scan matches the map well HERE", and inside a lift car a
 # doorway-sized gap matches a lot of places well.
 #
-# What a wrong lock cannot fake is AGREEMENT. The search starts from the live scan each time, so
+# Repeated agreement alone cannot distinguish a persistent wrong lock. The search starts from the live scan each time, so
 # repeating it and demanding the answers land in the same place is a far stronger test than any one
 # score: a correct lock reconverges to within centimetres, a spurious one wanders between the
 # candidates that happened to match. So this runs the search up to UTP_RELOC_TRIES times and
@@ -405,8 +390,8 @@ find_self() {
     #   * and the converse fails too: 78.2% and 75.0% each preceded a Nav2 abort.
     #
     # Score does not separate good locks from bad in either direction, so it cannot carry a safety
-    # gate on its own. It is kept only as a floor against the obviously degenerate. The real signal
-    # is the AGREEMENT of repeated searches above, and the scan-quality test before them.
+    # gate on its own. It is kept only as a floor against the obviously degenerate. Each search now also rejects competing locations with similar scores.
+    # Agreement and scan quality remain additional checks, not proof of physical correctness.
     local minfit="${UTP_RELOC_MIN_FIT:-55}"
     say "FIND SELF on '$map'   (needs $need of $tries searches to agree)${minr:+   [near-field mask ${minr} m]}"
     [ -n "$DRY" ] && { LOCALIZED="$map"; return 0; }
@@ -506,8 +491,15 @@ PYSEE
         # second of actual search. Nearly all the wall clock was process startup, spent standing
         # in a lift doorway. The search already prints its own converged score on the "refined"
         # line, so the second call was asking a question it had just been told the answer to.
-        fit="$(python3 "$REPO/bringup/relocalise.py" ${minr:+--min-range "$minr"} 2>&1 \
-               | sed -n 's/.*refined .* fit \([0-9.]*\)%.*/\1/p' | tail -1)"
+        local search_output
+        if ! search_output="$(python3 "$REPO/bringup/relocalise.py" --expected-map "$map" \
+                --min-fit "$minfit" ${minr:+--min-range "$minr"} 2>&1)"; then
+            note "$search_output"
+            agree=1; px=""; py=""; pw=""
+            event localization_rejected "$map attempt $i"
+            continue
+        fi
+        fit="$(printf '%s\n' "$search_output" | sed -n 's/.*refined .* fit \([0-9.]*\)%.*/\1/p' | tail -1)"
         sleep 1
         read -r x y w <<<"$(python3 - <<'PY'
 import rclpy, math, time, tf2_ros, rclpy.time, subprocess, os, re
@@ -567,8 +559,12 @@ if [ -n "$PREPARE_FLOOR" ]; then
     esac
     say "PREPARE floor $PREPARE_FLOOR  (map '$_pmap') -- no driving, no arm"
     load_map "$_pmap"
-    find_self "$_pmap"
-    say "READY on floor $PREPARE_FLOOR: map '$_pmap' loaded and the pose is verified"
+    if [ "$PREPARE_IN_CAR" = 1 ]; then
+        find_self "$_pmap" "${UTP_ARRIVAL_MASK_M:-1.5}"
+    else
+        find_self "$_pmap"
+    fi
+    say "READY on floor $PREPARE_FLOOR: map '$_pmap' loaded and scan checks passed; verify alignment before driving"
     exit 0
 fi
 

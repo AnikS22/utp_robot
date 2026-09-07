@@ -1058,8 +1058,10 @@ if [ "$WANT_NAV" = 1 ]; then
         else
           note "no maps/${MAP_NAME}_keepout.yaml -- no keepout filter; nothing on this floor is forbidden"
         fi
+        _keepout_args=()
+        [ -n "$KEEPOUT" ] && _keepout_args+=("keepout:=$KEEPOUT")
         start_bg ros2 launch "$REPO/nav2_bringup/ranger_nav.launch.py" \
-          params_file:="$RUNTIME" localization:=slam keepout:="$KEEPOUT"
+          params_file:="$RUNTIME" localization:=slam "${_keepout_args[@]}"
         _nav_deadline=$((SECONDS + 60))
         while :; do
           nav_probe

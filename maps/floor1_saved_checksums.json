@@ -1,0 +1,34 @@
+{
+  "floor1.pgm": {
+    "bytes": 693059,
+    "sha256": "a890829b07cb696242e593652f92a933aade9b3c27a3594b0de1caf569b328e5"
+  },
+  "floor1.yaml": {
+    "bytes": 130,
+    "sha256": "6670bfed1b22229d4d96f8edc1023266c13834fd7a6eeb81be2b9ff282766a5c"
+  },
+  "floor1.posegraph": {
+    "bytes": 27940613,
+    "sha256": "471feb30a8b0b0a3e29fef866d8e659670ec37c087a88fce7ffa0bf7103ca273"
+  },
+  "floor1.data": {
+    "bytes": 9737015,
+    "sha256": "7f3322ebeb9148f177db999b508c6a649a8b8cb0062887aa5e522dd6c615268d"
+  },
+  "floor1_frozen_20260905.pgm": {
+    "bytes": 693059,
+    "sha256": "a890829b07cb696242e593652f92a933aade9b3c27a3594b0de1caf569b328e5"
+  },
+  "floor1_frozen_20260905.yaml": {
+    "bytes": 146,
+    "sha256": "a4fe5a30d139efd8958711513ba84c8bfca6ea604e99c215da18aa2160b3047b"
+  },
+  "floor1_frozen_20260905.posegraph": {
+    "bytes": 27940613,
+    "sha256": "471feb30a8b0b0a3e29fef866d8e659670ec37c087a88fce7ffa0bf7103ca273"
+  },
+  "floor1_frozen_20260905.data": {
+    "bytes": 9737015,
+    "sha256": "7f3322ebeb9148f177db999b508c6a649a8b8cb0062887aa5e522dd6c615268d"
+  }
+}

@@ -15,9 +15,9 @@ what AMCL does once: score the live scan against the map over free cells x headi
 and publish it as /initialpose -- which localization mode accepts. MAPPING MODE IGNORES IT, which
 is why RViz's 2D Pose Estimate appears to do nothing there.
 
-A fit above ~80% is localized. 50% is lost. The number matters more than it looks: a waypoint
-recorded at 51% is indistinguishable in the file from one recorded at 88%, and sends the arm at a
-wall.
+A high endpoint fit alone does not establish localization: repeated searches can agree on a
+wrong location. Refine competing hypotheses and reject low or ambiguous scores before publishing.
+The score-gap test is a heuristic, not proof that the pose is physically correct.
 """
 import argparse, math, sys, time
 
@@ -31,6 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ros_env import require_ros
 require_ros()
+from localization_search import ScanMatcher, acceptance
 import numpy as np, rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
@@ -47,8 +48,32 @@ def main() -> int:
     ap.add_argument("--min-range", type=float, default=0.0, metavar="M",
                     help="ignore returns closer than M metres. For the lift arrival, where ~90%% "
                          "of the scan is car wall that is not in the map. 0 = off (default).")
+    ap.add_argument("--dry-run", action="store_true", help="search and validate without publishing")
+    ap.add_argument("--expected-map", help="refuse unless slam_toolbox has this map loaded")
+    ap.add_argument("--min-fit", type=float, default=55.0)
+    ap.add_argument("--min-margin", type=float, default=5.0,
+                    help="minimum percentage-point gap to a distinct competing location")
     a = ap.parse_args()
+    if not (math.isfinite(a.min_range) and a.min_range >= 0 and
+            0 <= a.min_fit <= 100 and 0 < a.min_margin <= 100):
+        ap.error("invalid range, fit, or margin")
     rclpy.init(); n = Node("utp_relocalise")
+    if a.expected_map:
+        from rclpy.parameter_client import AsyncParameterClient
+        client = AsyncParameterClient(n, "/slam_toolbox")
+        if not client.wait_for_services(timeout_sec=5):
+            print("rejected: cannot verify loaded map", file=sys.stderr); return 1
+        future = client.get_parameters(["map_file_name", "mode"])
+        rclpy.spin_until_future_complete(n, future, timeout_sec=5)
+        result = future.result() if future.done() else None
+        expected = Path(a.expected_map)
+        if not expected.is_absolute():
+            expected = Path(__file__).resolve().parents[1] / "maps" / expected
+        if (result is None or len(result.values) != 2 or
+                Path(result.values[0].string_value).resolve() != expected.resolve() or
+                result.values[1].string_value != "localization"):
+            print(f"rejected: localizer must be in localization mode on {expected}", file=sys.stderr)
+            return 1
     buf = tf2_ros.Buffer(); tf2_ros.TransformListener(buf, n)
     q = QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST,
                    reliability=QoSReliabilityPolicy.RELIABLE,
@@ -103,9 +128,17 @@ def main() -> int:
     mp, sc = d["map"], d["scan"]; info = mp.info; res = info.resolution
     _min_range = max(float(a.min_range), sc.range_min) if a.min_range else sc.range_min
     if a.min_range:
-        _kept = sum(1 for r in sc.ranges if r == r and _min_range < r < 15)
+        _kept = sum(1 for r in sc.ranges if r == r and _min_range < r < min(15, sc.range_max))
         print(f"  near-field mask: dropping returns under {_min_range:.2f} m "
               f"-- {_kept} of {len(sc.ranges)} rays kept")
+    if (sc.header.frame_id != "base_link" or mp.header.frame_id != "map" or
+            abs(info.origin.orientation.x) > 1e-6 or
+            abs(info.origin.orientation.y) > 1e-6 or abs(info.origin.orientation.z) > 1e-6):
+        print("rejected: search requires base_link scan and unrotated map origin", file=sys.stderr)
+        return 1
+    stamp = sc.header.stamp.sec + sc.header.stamp.nanosec * 1e-9
+    if not -0.2 <= time.time() - stamp <= 2.0:
+        print("rejected: scan is stale or timestamp is in the future", file=sys.stderr); return 1
     ox, oy = info.origin.position.x, info.origin.position.y
     W, H = info.width, info.height
     grid = np.array(mp.data, dtype=np.int8).reshape(H, W)
@@ -114,18 +147,18 @@ def main() -> int:
     ang = sc.angle_min
     for r in sc.ranges:
         aa = ang; ang += sc.angle_increment
-        if r == r and _min_range < r < 15:
+        if r == r and _min_range < r < min(15, sc.range_max):
             rs.append(r); angs.append(aa)
     # BEFORE the subsample, deliberately. If the near field were dropped after this line the
     # thinning would already have spent most of its 120 slots on car wall.
     st = max(1, len(rs) // BEAMS)
     rs = np.array(rs[::st]); angs = np.array(angs[::st])
 
-    def fit(px, py, yw):
-        ii = ((px - ox) / res + rs * np.cos(angs + yw) / res).astype(np.int32)
-        jj = ((py - oy) / res + rs * np.sin(angs + yw) / res).astype(np.int32)
-        m = (ii >= 0) & (ii < W) & (jj >= 0) & (jj < H)
-        return int(occ[jj[m], ii[m]].sum()) if m.any() else 0
+    try:
+        matcher = ScanMatcher(grid, res, (ox, oy), rs, angs)
+    except ValueError as exc:
+        print(f"rejected: {exc}", file=sys.stderr); return 1
+    fit = matcher.fit
 
     try:
         t = buf.lookup_transform("map", "base_link", rclpy.time.Time())
@@ -136,57 +169,25 @@ def main() -> int:
     except Exception:
         cx = cy = cw = 0.0
         print("  no map->base_link yet")
+        if a.check:
+            return 1
     if a.check:
         return 0
 
-    # GLOBAL SEARCH. Candidates come from a LATTICE over the free cells, not from `free[::step]`.
-    #
-    # The old line was `cand = free[:: max(1, len(free)//4000)]`. np.argwhere returns cells in
-    # raster order, so striding it walks along rows: on floor1's 186,858 free cells that is every
-    # 46th cell, leaving candidates ~2.3 m apart ALONG A ROW while the refine stage below only
-    # searches +/-0.4 m around the winner. A true pose landing between two candidates cannot be
-    # found at any score, and the tool reports "lost" for a robot sitting in plain view. Measured
-    # 2026-09-06 on floor1: raster striding returned 40.5% and picked the arbitrary seed it was
-    # given; the lattice below returned the real pose, and a later sweep of 831,312 poses could
-    # not beat it -- which is what a converged global search is supposed to look like.
-    #
-    # Uniform in x AND y, so the worst-case distance from any pose to the nearest candidate is
-    # bounded by the lattice step and the refine span can be sized against it honestly.
-    step = max(1, int(round(LATTICE_M / res)))          # cells
-    cj, ci = np.where(grid[::step, ::step] == 0)
-    cj = (cj * step).astype(np.int32); ci = (ci * step).astype(np.int32)
-    print(f"  searching {len(ci)} free cells on a {step*res:.2f} m lattice x "
-          f"{len(range(0,360,YAW_STEP_DEG))} headings = {len(ci)*len(range(0,360,YAW_STEP_DEG)):,} poses")
-
-    # Scored a heading at a time, all candidates at once. The per-candidate Python loop it
-    # replaces is what made a dense search unaffordable and forced the sparse stride in the
-    # first place.
-    best = (fit(cx, cy, cw), cx, cy, cw)
-    for yd in range(0, 360, YAW_STEP_DEG):
-        yw = math.radians(yd)
-        di = rs * np.cos(angs + yw) / res
-        dj = rs * np.sin(angs + yw) / res
-        ii = (ci[:, None] + di[None, :]).astype(np.int32)
-        jj = (cj[:, None] + dj[None, :]).astype(np.int32)
-        inb = (ii >= 0) & (ii < W) & (jj >= 0) & (jj < H)
-        np.clip(ii, 0, W - 1, out=ii); np.clip(jj, 0, H - 1, out=jj)
-        sc_ = (occ[jj, ii] & inb).sum(axis=1)
-        k = int(sc_.argmax())
-        if sc_[k] > best[0]:
-            best = (int(sc_[k]), ox + (ci[k] + 0.5) * res, oy + (cj[k] + 0.5) * res, yw)
-    s, bx, by, bw = best
-    print(f"  coarse  ({bx:+.2f},{by:+.2f},{math.degrees(bw):+.0f}deg) fit {100*s/len(rs):.1f}%")
-    for span, stp, yr in ((LATTICE_M, 0.05, range(-6, 7)), (0.08, 0.02, range(-3, 4))):
-        b = (s, bx, by, bw)
-        rr = [i * stp for i in range(-int(span / stp), int(span / stp) + 1)]
-        for ddx in rr:
-            for ddy in rr:
-                for k in yr:
-                    v = fit(bx + ddx, by + ddy, bw + math.radians(k))
-                    if v > b[0]:
-                        b = (v, bx + ddx, by + ddy, bw + math.radians(k))
-        s, bx, by, bw = b
+    try:
+        hypotheses = matcher.search(initial=(cx, cy, cw))
+    except ValueError as exc:
+        print(f"rejected: {exc}", file=sys.stderr); return 1
+    s, bx, by, bw = hypotheses[0]
     print(f"  refined ({bx:+.2f},{by:+.2f},{math.degrees(bw):+.0f}deg) fit {100*s/len(rs):.1f}%")
+    for score, x, y, yaw in hypotheses[1:3]:
+        print(f"  alternative ({x:+.2f},{y:+.2f},{math.degrees(yaw):+.0f}deg) fit {100*score/len(rs):.1f}%")
+    accepted, reason = acceptance(hypotheses, len(rs), a.min_fit, a.min_margin)
+    if not accepted:
+        print(f"rejected: {reason}; no pose published", file=sys.stderr); return 2
+    if a.dry_run:
+        print(f"  dry run: {reason}; no pose published")
+        return 0
     m = PoseWithCovarianceStamped()
     m.header.frame_id = "map"; m.header.stamp = n.get_clock().now().to_msg()
     m.pose.pose.position.x = float(bx); m.pose.pose.position.y = float(by)
@@ -194,7 +195,7 @@ def main() -> int:
     m.pose.covariance[0] = m.pose.covariance[7] = 0.1; m.pose.covariance[35] = 0.05
     for _ in range(4):
         pub.publish(m); rclpy.spin_once(n, timeout_sec=0.2); time.sleep(0.25)
-    print("  published /initialpose -- drive slowly for a few metres to let it settle")
+    print("  published /initialpose -- verify the physical pose before navigation")
     return 0
 
 
