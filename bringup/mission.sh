@@ -99,6 +99,18 @@ PY
 nav() {
     local wp="$1" out status t0=$SECONDS
     say "NAVIGATE  '$wp'"
+    # NO DRIVING ON AN UNVERIFIED POSE, EVER. load_map seeds slam_toolbox at 0,0,0 -- a placeholder,
+    # not a position -- and until find_self has agreed with itself the robot's map pose is that
+    # placeholder. Driving to a waypoint then means driving to a coordinate measured from an origin
+    # the robot is not standing on. Measured 2026-09-06: three arrivals ended with the robot on
+    # floor 1 still holding the seed because the run died before find_self, and a nav at that point
+    # would have driven at the map's origin. LOCALIZED is set only by find_self, and cleared by
+    # load_map, so this cannot be satisfied by a stale success on the previous floor.
+    if [ "${LOCALIZED:-}" != "${CURRENT_MAP:-}" ] || [ -z "${LOCALIZED:-}" ]; then
+        die "refusing to drive to '$wp': the robot has not localized in '${CURRENT_MAP:-<none>}'
+        since that map was loaded. Its map pose is still load_map's 0,0,0 seed, so this waypoint
+        names a place measured from an origin it is not standing on."
+    fi
     event leg_start "$wp"
     [ -n "$DRY" ] && { python3 "$REPO/bringup/nav2_goto.py" "$wp" || true; return 0; }
     out="$(mktemp)"
@@ -273,6 +285,7 @@ load_map() {
     local map="$1"
     say "LOAD MAP '$map'"
     event map_load_start "$map"
+    CURRENT_MAP="$map"; LOCALIZED=""
     [ -n "$DRY" ] && return 0
     local pat; pat=$(printf 'slam_%s' 'toolbox')
     local live=""
@@ -307,6 +320,9 @@ load_map() {
     SEED_POSE="${SEED_POSE:-0.0,0.0,0.0}" bash "$REPO/bringup/bringup_all.sh" \
         --mode nav --map "$map" || die "could not bring the stack up on '$map'"
     python3 "$REPO/bringup/startup_mark_map.py" "$map" >/dev/null 2>&1 || true
+    # A NEW MAP INVALIDATES THE OLD LOCK. The pose that was verified on the previous floor says
+    # nothing about this one, and the seed this node just started with is 0,0,0.
+    CURRENT_MAP="$map"; LOCALIZED=""
     event map_load_done "$map"
 }
 
@@ -332,12 +348,19 @@ find_self() {
     local tol="${UTP_RELOC_TOL_M:-0.30}" told="${UTP_RELOC_TOL_DEG:-15}"
     local minfit="${UTP_RELOC_MIN_FIT:-40}"
     say "FIND SELF on '$map'   (needs $need of $tries searches to agree)"
-    [ -n "$DRY" ] && return 0
+    [ -n "$DRY" ] && { LOCALIZED="$map"; return 0; }
     local i agree=1 px="" py="" pw="" fit=""
     for i in $(seq 1 "$tries"); do
-        python3 "$REPO/bringup/relocalise.py" >/dev/null 2>&1 || true
-        sleep 2
-        read -r x y w fit <<<"$(python3 - <<'PY'
+        # ONE INVOCATION PER ATTEMPT, NOT TWO. This ran relocalise.py to search and then AGAIN
+        # with --check to read the fit -- two ROS node startups, two /map and /scan discoveries
+        # and two TF settles per attempt, around ten of each across five attempts, to wrap about a
+        # second of actual search. Nearly all the wall clock was process startup, spent standing
+        # in a lift doorway. The search already prints its own converged score on the "refined"
+        # line, so the second call was asking a question it had just been told the answer to.
+        fit="$(python3 "$REPO/bringup/relocalise.py" 2>&1 \
+               | sed -n 's/.*refined .* fit \([0-9.]*\)%.*/\1/p' | tail -1)"
+        sleep 1
+        read -r x y w <<<"$(python3 - <<'PY'
 import rclpy, math, time, tf2_ros, rclpy.time, subprocess, os, re
 from rclpy.node import Node
 rclpy.init(); n=Node("utp_find_self"); b=tf2_ros.Buffer(); tf2_ros.TransformListener(b,n)
@@ -355,7 +378,6 @@ except Exception:
 rclpy.shutdown()
 PY
 )"
-        fit="$(python3 "$REPO/bringup/relocalise.py" --check 2>&1 | sed -n 's/.*fit \([0-9.]*\)%.*/\1/p' | tail -1)"
         note "search $i: (${x},${y}) yaw ${w}  fit ${fit:-?}%"
         if [ -n "$px" ]; then
             agree=$(python3 -c "
@@ -371,6 +393,7 @@ print(($agree+1) if (math.hypot(dx,dy)<=$tol and dw<=$told) else 1)")
                 confident and consistently wrong is the failure this check exists to catch."
             note "$need searches agree within ${tol} m / ${told} deg at (${x},${y}), fit ${fit}%"
             event localized "$map ${x},${y} yaw ${w} fit ${fit}%"
+            LOCALIZED="$map"
             return 0
         fi
     done
@@ -506,8 +529,15 @@ cat <<'RIDE'
   The scan inside the car matches every floor equally well, and would match just as
   well if the lift were stuck.
 RIDE
-DOORS_OPEN=1
-doors "the car has arrived -- they must be OPEN before anything below runs" open || DOORS_OPEN=0
+# NO DOOR GATE BEFORE THE SEARCH. Three separate runs died here without ever computing a pose:
+# once facing the car wall (the forward sector read 0.64 m), once with a person in the doorway,
+# once on a plain timeout while the doors were open. Each time the robot ended up on the far floor
+# still believing its 0,0,0 seed, which is the least useful state it can be in.
+#
+# By the time the map has finished loading the ride is over and the doors are open -- the loading
+# IS the wait. And relocalising costs nothing to be wrong about: it publishes /initialpose and
+# moves not one wheel. The gate that matters is find_self's own agreement test, and after that
+# Nav2 refuses a blocked route on its own, from the layer that can actually see the obstruction.
 fi
 
 # ---------------------------------------------------------------------------- 3  floor TO
@@ -524,7 +554,6 @@ fi
 # but the robot is parked anyway), THEN wait for the doors, THEN search.
 if [ "$ARRIVAL_ONLY" = 1 ]; then
     load_map "$B_MAP"
-    doors "the car is on floor $TO -- they must be OPEN before the search"
 elif [ -n "${SWAP_PID:-}" ]; then
     # Collect the background swap. If it was still running when the doors opened, the overlap did
     # not cover the whole ride -- worth saying, because that is the number to tune.
@@ -539,12 +568,6 @@ fi
 # LOCALIZE EVEN IF THE DOORS TIMED OUT. Knowing where it is costs nothing and is what an operator
 # needs in order to see the problem in RViz; only driving is gated below.
 find_self "$B_MAP"
-
-if [ "${DOORS_OPEN:-1}" != "1" ]; then
-    die "localized on '$B_MAP', but the doors never read open, so nothing drives. The pose above
-        is now correct and visible in RViz -- open the doors and re-run with --arrival-only, or
-        set UTP_DOORS_OVERRIDE=1 if the lidar is wrong about them."
-fi
 
 # CLEAR BEFORE THE FIRST LEG ON THE NEW FLOOR, ALWAYS. The obstacle layer still holds the lift
 # doors as a lethal band across the only way out -- they were shut for the whole ride, and the
