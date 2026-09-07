@@ -399,10 +399,26 @@ find_self() {
     #
     # So: require a minimum number of returns beyond UTP_SEE_M. Direction-free, and it fails
     # exactly in the case that produced the wrong lock.
+    # A FRACTION, NOT A COUNT. The first version asked for >= 25 returns beyond 3 m, and that
+    # passed from inside the lift car with the doors open -- 85 returns reached down the corridor
+    # through the doorway, comfortably over 25. But the scan as a whole was 853 returns of which
+    # 765 (90%) were under 1.5 m: the car walls, plus the operator and a chair riding down with
+    # the robot. None of that is in the map, so the matcher was fitting 90% noise against
+    # geometry that does not exist and landed on whichever enclosed pocket matched -- the same
+    # (5.88,-5.93) every time, 56% -> 68% as the scene shifted.
+    #
+    # What separates the cases is how much of the scan is ROOM rather than BOX:
+    #
+    #     inside the car, doors open   median 1.12 m,  10% of returns beyond 3 m
+    #     floor-2 lobby                median 2.22 m,  much higher fraction
+    #
+    # The median is the honest summary: it cannot be rescued by a few long rays down a doorway,
+    # which is exactly how the count-based gate was fooled.
     local swait="${UTP_SEE_WAIT:-90}" seem="${UTP_SEE_M:-3.0}" seen="${UTP_SEE_N:-25}" c0=$SECONDS
-    note "waiting until the scan sees structure (>= ${seen} returns beyond ${seem} m; a sealed car has none)"
+    local seemed="${UTP_SEE_MEDIAN_M:-1.8}"
+    note "waiting until the scan is mostly ROOM not BOX (median >= ${seemed} m and >= ${seen} returns beyond ${seem} m)"
     while :; do
-        if python3 - "$seem" "$seen" <<'PYSEE' >/dev/null 2>&1; then
+        if UTP_SEE_MEDIAN_M="$seemed" python3 - "$seem" "$seen" <<'PYSEE' >/dev/null 2>&1; then
 import rclpy, sys, time, math, numpy as np
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -417,7 +433,10 @@ ok = False
 if "s" in d:
     r = np.array(d["s"].ranges)
     r = r[np.isfinite(r) & (r > d["s"].range_min)]
-    ok = int((r >= far_m).sum()) >= need
+    if r.size:
+        import os
+        med_min = float(os.environ.get("UTP_SEE_MEDIAN_M", "1.8"))
+        ok = (int((r >= far_m).sum()) >= need) and (float(np.median(r)) >= med_min)
 rclpy.shutdown()
 sys.exit(0 if ok else 1)
 PYSEE
