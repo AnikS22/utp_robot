@@ -346,9 +346,59 @@ load_map() {
 find_self() {
     local map="$1" tries="${UTP_RELOC_TRIES:-5}" need="${UTP_RELOC_AGREE:-3}"
     local tol="${UTP_RELOC_TOL_M:-0.30}" told="${UTP_RELOC_TOL_DEG:-15}"
-    local minfit="${UTP_RELOC_MIN_FIT:-40}"
+    # 40 -> 72. THIS THRESHOLD LET THE ROBOT DRIVE AT THE OPERATOR.
+    #
+    # 2026-09-07, arriving on floor 1: three searches agreed within 10 cm at (5.878,-5.811) with
+    # fit 59.9% -- and the robot was ~8 m from there, in the lift car. Agreement was satisfied, the
+    # gate opened, and it drove at a coordinate measured from a pose it was not standing on, into
+    # the operator. It had to be stopped by hand.
+    #
+    # Agreement alone cannot catch this: sealed in a metal box the scan matches several places
+    # CONSISTENTLY, so repeating the search reproduces the same wrong answer. What does separate
+    # them, measured across every localization tonight, is the score:
+    #
+    #     correct locks   79.9  80.7  84.4  84.6   (verified by driving from them)
+    #     wrong locks     51.1  55.1  59.9  62.8   (drove into a wall, or into a person)
+    #
+    # There is a clean gap. 72 sits in it. This is a floor for DRIVING, not for reporting -- a
+    # lower score is still computed, still logged, and still shown in RViz, because a known-bad
+    # pose is more useful to an operator than no pose. It just may not move the robot.
+    local minfit="${UTP_RELOC_MIN_FIT:-72}"
     say "FIND SELF on '$map'   (needs $need of $tries searches to agree)"
     [ -n "$DRY" ] && { LOCALIZED="$map"; return 0; }
+
+    # THE SCAN MUST BE ABLE TO SEE OUT BEFORE ANY OF THIS MEANS ANYTHING.
+    #
+    # A global search is only as good as the geometry it is given. Sealed in a lift car the scan is
+    # a metal box roughly 1.3 m on a side, and a box matches many places on a building map -- and
+    # matches them CONSISTENTLY, so repeating the search reproduces the same wrong answer and the
+    # agreement test is satisfied by it. That is not hypothetical: on 2026-09-07 three searches
+    # agreed within 10 cm at 59.9% while the robot was 8 m away in the car, the gate opened, and it
+    # drove at the operator.
+    #
+    # There is no way to ask the building whether its doors are open. There IS a way to ask whether
+    # this robot can see anything: the forward clear distance. Out of the car, or facing an open
+    # doorway, the scan reaches metres down a corridor. Boxed in, it does not. So that measurement
+    # is the precondition, checked HERE rather than as a separate step a caller can skip -- and it
+    # is a property of the scan, not a claim about the doors, which is the thing actually required.
+    local cwait="${UTP_CLEAR_WAIT:-90}" cm="${UTP_CLEAR_M:-2.0}" c0=$SECONDS
+    note "waiting for the view to open up (need ${cm} m ahead; a sealed car gives ~1.3 m)"
+    while :; do
+        if python3 "$REPO/bringup/doors_open_lidar.py" --once --quiet --clear-m "$cm" >/dev/null 2>&1; then
+            note "front is clear after $(( SECONDS - c0 ))s -- the scan can see real structure now"
+            event front_clear "${cm}m"
+            break
+        fi
+        if [ $(( SECONDS - c0 )) -ge "$cwait" ]; then
+            event front_blocked "${cm}m"
+            die "the view has not opened up in ${cwait}s: less than ${cm} m clear ahead, which is
+        what the inside of a closed lift car looks like. Localizing from here produces a pose that
+        agrees with itself and is wrong -- measured 2026-09-07, three searches within 10 cm at
+        59.9% while the robot was 8 m from where they said, after which it drove at the operator.
+        Open the doors, or turn the robot to face out, then re-run."
+        fi
+        sleep 1
+    done
     local i agree=1 px="" py="" pw="" fit=""
     for i in $(seq 1 "$tries"); do
         # ONE INVOCATION PER ATTEMPT, NOT TWO. This ran relocalise.py to search and then AGAIN
@@ -389,8 +439,12 @@ print(($agree+1) if (math.hypot(dx,dy)<=$tol and dw<=$told) else 1)")
         px="$x"; py="$y"; pw="$w"
         if [ "$agree" -ge "$need" ]; then
             awk -v f="${fit:-0}" -v m="$minfit" 'BEGIN{exit !(f < m)}' && \
-                die "the searches AGREE at (${x},${y}) but only score ${fit}% -- consistently
-                confident and consistently wrong is the failure this check exists to catch."
+                die "the searches AGREE at (${x},${y}) but only score ${fit}%, under the ${minfit}%
+                needed to DRIVE. Consistently confident and consistently wrong is exactly this
+                failure: on 2026-09-07 three searches agreed to within 10 cm at 59.9% while the
+                robot was 8 m away in the lift car, and it drove at a person. The pose has been
+                published and is visible in RViz -- move the robot somewhere it can see real
+                structure, or set the pose by hand, then re-run."
             note "$need searches agree within ${tol} m / ${told} deg at (${x},${y}), fit ${fit}%"
             event localized "$map ${x},${y} yaw ${w} fit ${fit}%"
             LOCALIZED="$map"
