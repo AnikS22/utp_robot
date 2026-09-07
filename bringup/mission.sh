@@ -949,19 +949,21 @@ if [ "$MANUAL_SELECT" = 1 ]; then
         done; echo
     fi
 else
-    # NO OFFSET PROFILE ANY MORE, BUT KEEP THE SPATIAL PICK.
+    # THE PROFILE IS BACK, AND IT IS A DIFFERENT NUMBER NOW. lift_car_select was [0.011, -0.038,
+    # 0.040] -- tuned against this same 25 mm button, but while approach_target aimed the
+    # CALIBRATION MARKER, so 40 mm of it was the marker-vs-fingertip compensation and it was
+    # dropped when the aiming was fixed. It has since been re-walked from scratch under tip
+    # aiming, on the button, by the operator: [0, -0.023, 0.015], 2026-09-07.
     #
-    # This used to pass lift_car_select [0.011, -0.038, 0.040]. That was tuned by hand against this
-    # 25 mm button while approach_target aimed the CALIBRATION MARKER, and 40 mm of it is the same
-    # upward compensation the global offset carried for the same reason -- see the note in
-    # calib/handeye.json. With the fingertip aimed, that compensation is error, and it has never
-    # been re-measured under the new aiming. The global default HAS been: [0, 0, 0.015],
-    # operator-verified to land dead centre on the floor-2 call button on 2026-09-07.
+    # It stays a PROFILE and never becomes the default. That is the whole lesson of the old value:
+    # a correction measured on one 25 mm button was promoted to the global offset and then applied
+    # to every press the rig makes, including the ADA plate and the hall call, neither of which it
+    # was ever checked against.
     #
     # The button INDEX is a different question and it stays. --pick-from-bottom is geometry, not
     # calibration: the lift's "1" and "2" are 34 px apart and the same blue, so language cannot
     # separate them and the detector will happily take either.
-    press "$B_SELECT_QUERY" "" "${B_SELECT_INDEX:-}" \
+    press "$B_SELECT_QUERY" lift_car_select "${B_SELECT_INDEX:-}" \
         || note "the robot could not confirm the floor press -- PRESS FLOOR $TO if the car does not move"
 fi
 

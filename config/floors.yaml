@@ -64,7 +64,11 @@ floors:
     # select_query IS required here, and it is not a contradiction. It names the button INSIDE the
     # car that sends the car to THIS floor -- the "1" -- and that button is pressed from floor 2 on
     # the way down. It belongs to the floor it selects, not to the floor you press it on.
-    select_query: "the blue elevator button"
+    select_query: "the round blue button with a number on it"   # NOT "blue elevator button":
+      # that let the four key switches above the NO SMOKING sign outscore the floor buttons,
+      # and pick-from-bottom then took the lowest of THOSE -- which check_press_safe refused
+      # as overlapping an emergency control (86%). 2026-09-07. This query proposes both floor
+      # buttons, and the spatial pick takes the lower one.
 
     # WHICH BUTTON, COUNTED FROM THE BOTTOM OF THE PANEL COLUMN. Floor 1 is the lowest.
     #
@@ -158,4 +162,8 @@ floors:
     # evidence that this query is discriminative. If it needs to be, the honest fix is a spatial
     # one -- the panel's buttons are vertically ordered and their order is known -- and that is a
     # geometry question for the grounder's output, not a better sentence.
-    select_query: "the blue elevator button"
+    select_query: "the round blue button with a number on it"   # NOT "blue elevator button":
+      # that let the four key switches above the NO SMOKING sign outscore the floor buttons,
+      # and pick-from-bottom then took the lowest of THOSE -- which check_press_safe refused
+      # as overlapping an emergency control (86%). 2026-09-07. This query proposes both floor
+      # buttons, and the spatial pick takes the lower one.
