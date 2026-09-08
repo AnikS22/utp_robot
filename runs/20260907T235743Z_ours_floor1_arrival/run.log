@@ -1,0 +1,318 @@
+
+==============================================================
+ 0  PREP   authority, arm, stack
+==============================================================
+  
+  already CAN. Nothing to do -- but do not touch the RC sticks.
+  SDK_VERSION: 1.18.4
+  ROBOT_IP: 192.168.1.221, VERSION: v2.6.0, PROTOCOL: V1, DETAIL: 6,6,XI1305,AC1304,v2.6.0, TYPE1300: [1, 1]
+  change protocol identifier to 3
+  [clean_error], xArm is ready to move
+  arm cleared: state=2 error=0
+  already at stow; nothing to do.
+  goal tolerance now 0.30 m / 0.35 rad
+
+==============================================================
+ SKIPPING floor 2 -- resuming at the arrival on floor 1
+==============================================================
+
+==============================================================
+ LOAD MAP 'floor1'
+==============================================================
+Localization processes stopped: 2; remaining: []
+
+=== utp bring-up   mode=nav   map=floor1   domain=9   
+  probing (one node, every topic, ~7 s plus TF) ...
+/home/weim/utp_robot/bringup/bringup_all.sh: line 576: /proc/88525/cmdline: No such file or directory
+/home/weim/utp_robot/bringup/bringup_all.sh: line 576: /proc/88526/cmdline: No such file or directory
+/home/weim/utp_robot/bringup/bringup_all.sh: line 576: /proc/88527/cmdline: No such file or directory
+  starting slam_toolbox in LOCALIZATION mode on 'floor1'
+  waiting for /map (30s remaining)
+localized map provenance recorded: floor1
+
+  COMPONENT      STATE   DETAIL
+  -------------- ------- ------------------------------------------
+  ethernet       ok      enx00e04c674c60 carrier up
+  net_lidar      ok      192.168.1.119 reachable
+  net_router     ok      192.168.1.1 reachable
+  net_arm        ok      192.168.1.221 reachable
+  can0           ok      ERROR-ACTIVE, ~907 frames/s
+  chassis        ok      /odom 49.83 Hz, odom->base_link present
+  lidar          ok      /ouster/points 9.97 Hz
+  mount_tf       ok      base_link->os_sensor->os_lidar resolves, mount (-0.375, 0.0, 1.146) m
+  filter         skip    raw /ouster/points: matches the 'floor1' mapping chain
+  projection     ok      /scan_filtered 10.22 Hz from /ouster/points
+  scan           ok      /scan 10.22 Hz (rear mask 0.90 m)
+  scan_nav       ok      /scan_nav 10.22 Hz (temporal filter from /scan)
+  safety         ok      /safety/status 20.18 Hz, arm_stowed 100%, estop_latched 0%
+  camera         ok      camera_info 30.15 Hz
+  waypoints      ok      maps/waypoints.yaml has map-frame waypoints in 'floor1'
+  slam           ok      localizing in 'floor1', lifecycle active, map->odom present
+  map_session    ok      saved map matched to the live SLAM session
+  nav2           ok      navigate_to_pose + bt_navigator/planner/controller/behavior ACTIVE, no keepout mask
+
+  elapsed: 46 seconds
+  everything --mode nav needs is up. Next:
+      python3 bringup/relocalise.py --check        # want >=80% before driving
+      python3 bringup/waypoints.py list            # must be recorded in map 'floor1'
+
+==============================================================
+ FIND SELF on 'floor1'   (needs 3 of 5 searches to agree)   [near-field mask 1.5 m]
+==============================================================
+  waiting for a way out (>= 40 returns past 3.0 m spanning >= 20 deg)
+  the way out is open after 1s -- searching now
+  search 1: (2.3877,0.5692) yaw -77.80  fit 72.4%
+  search 2: (2.3877,0.5692) yaw -77.80  fit 66.7%
+  search 3: (2.3877,0.5592) yaw -77.60  fit 72.3%
+  3 searches agree within 0.30 m / 15 deg at (2.3877,0.5592), fit 72.3%
+  cleared /global_costmap/clear_entirely_global_costmap
+  cleared /local_costmap/clear_entirely_local_costmap
+
+==============================================================
+ NAVIGATE  'f1_ada_button'
+==============================================================
+    since the last leg: map moved 0.00 m, odom moved 0.00 m
+  goal tolerance now 0.25 m / 0.30 rad
+    622 cm and 121.8 deg from 'f1_ada_button'
+goal 'f1_ada_button' in map: x=7.971 y=3.310 yaw=+44.2 deg (map=floor1)
+DRIVING to 'f1_ada_button' via Nav2. Ctrl-C stops. E-stop is faster.
+arrived at 'f1_ada_button' in 24.3 s
+RESULT {"detail": "Nav2 STATUS_SUCCEEDED", "elapsed_s": 24.326, "status": "arrived", "waypoint": "f1_ada_button"}
+
+==============================================================
+ PRESS  'the accessible door push button'
+==============================================================
+
+==============================================================
+ 2/6  LOOK      capturing an aligned RGB-D frame
+==============================================================
+captured -> /home/weim/utp_robot/captures/press_195945
+  rgb   (720, 1280, 3) uint8
+  depth (720, 1280)  97.7% valid, range 1.04-22.69 m
+  frame mast_cam_color_optical_frame  fx=910.1 fy=909.5 cx=646.2 cy=379.4
+  rgb/depth skew 0 ms
+
+==============================================================
+ 3/6  GROUND    running the shipped detector on that frame
+==============================================================
+frame  : /home/weim/utp_robot/captures/press_195945
+  rgb (720, 1280, 3)  depth (720, 1280)  97.7% valid
+
+Loading weights:   0%|          | 0/1182 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 1182/1182 [00:00<00:00, 13393.42it/s]
+backend: gdino on cuda:0   load 2.9s   infer 717ms
+query  : 'the accessible door push button'
+
+WINNER  score 0.548
+  bbox   (666, 410) -> (804, 543)   138x133px, 2.00% of image
+  3D     x=+0.110 y=+0.120 z=+1.125 m  in mast_cam_color_optical_frame
+         (ROS optical frame: +x right, +y down, +z FORWARD, so z is the distance to the control)
+
+RANKING (5 candidates, best first) -- this is the evidence that
+separates 'could not see it' from 'saw it and preferred a decoy':
+  #0  score 0.548    138x133  px   2.00% area  center=(735,476)  <- chosen
+  #1  score 0.299     96x121  px   1.26% area  center=(982,496)
+  #2  score 0.224     24x22   px   0.06% area  center=(1012,542)
+  #3  score 0.204     34x55   px   0.20% area  center=(216,534)
+  #4  score 0.170    992x713  px  76.74% area  center=(722,358)
+
+annotated: /home/weim/utp_robot/captures/press_195945/detection.png   (green = chosen, orange = runners-up)
+detection: /home/weim/utp_robot/captures/press_195945/detection.json   (this is what the arm aims at)
+
+Loading weights:   0%|          | 0/1182 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 1182/1182 [00:00<00:00, 14251.21it/s]
+SAFE: clear (0 of 4 forbidden queries on the target; best forbidden hit 0.756 lands elsewhere)
+  'a red fire alarm pull station': (933.0634765625, 434.4034118652344, 1030.19580078125, 557.5687255859375) score 0.756
+  'a fire alarm activation lever': (934.596923828125, 435.55224609375, 1029.65283203125, 556.5704956054688) score 0.509
+  'an emergency stop button': (933.61767578125, 434.1883239746094, 1030.8253173828125, 557.50634765625) score 0.591
+  'a red emergency call button': (934.3753662109375, 434.4346618652344, 1029.9434814453125, 557.0050659179688) score 0.726
+
+==============================================================
+ 4/6  SHOW      opening what the detector chose
+==============================================================
+  /home/weim/utp_robot/captures/press_195945/detection.png   (green = chosen, orange = runners-up)
+
+==============================================================
+ 4b/6 READY     wrist to the press orientation -- AFTER grounding
+==============================================================
+SDK_VERSION: 1.18.4
+ROBOT_IP: 192.168.1.221, VERSION: v2.6.0, PROTOCOL: V1, DETAIL: 6,6,XI1305,AC1304,v2.6.0, TYPE1300: [1, 1]
+change protocol identifier to 3
+ joint      now    ready    delta
+  J1       0.0      0.0     +0.0
+  J2     -54.0    -44.6     -9.4
+  J3      -9.9    -45.0    +35.1
+  J4       0.0      0.0     +0.0
+  J5      68.0      2.2    +65.8
+  J6      -0.0      0.0     -0.0
+
+at ready now: False   (tolerance 5.0 deg)
+set_servo_angle -> 0 (0 = ok)
+now: [-0.0, -44.6, -45.0, -0.0, 2.3, 0.0]
+at ready: True
+
+==============================================================
+ 5/6  REACH     -45 mm marker standoff, then retreat
+==============================================================
+target from detection.json: 'the accessible door push button' score 0.548 via gdino
+target offset    : [ 0.    -0.008  0.015] m from calib/handeye.json (default)
+target (camera) : [0.10978904 0.1195505  1.125     ]
+target (link_base): [ 0.7845 -0.0589  0.5204]   |from base| 0.943 m
+approach dir     : [ 0.995  0.04  -0.094]
+
+NOT REACHING: target is 0.97 m from base_link and the arm reaches 0.88 m -- 0.09 m short. Commanding this faults the arm (ControllerError 21, measured). Move the BASE closer; do not ask the arm for reach it does not have.
+  (with a 30 mm margin; measured 0.943 m)
+SHORTFALL_M 0.093
+  out of reach by 0.093 m -- stepping the base in 0.193 m, then grounding again
+      target in base_link: x=+0.785 y=-0.051 z=+1.245
+      range 0.79 m, bearing -3.7 deg
+      arm reach is 0.88 m -> ALREADY IN REACH; no base move needed
+      plan: turn -3.7 deg, then advance +0.24 m to a 0.55 m standoff
+      --advance: stepping in 0.19 m toward the target instead
+      target in odom: (+8.311, +2.688)   press standoff 0.55 m
+      approach: ok positioned: 0.62 m from the target, -0.4 deg off the press axis
+      (relative to the grounded point from 0.79 m, score 0.548 -- a lateral error in THAT grounding is a lateral error here. reach_control re-grounds from the press pose and corrects.)
+      target in base_link now: (+0.615, -0.004, +1.245)  range 0.61 m, bearing -0.4 deg
+      camera frame           : (+0.056, +0.136, +0.958)  pixel (700, 509)
+      -> /home/weim/utp_robot/captures/press_target.json
+    
+      positioned. RE-GROUND from here before reaching -- the old 3D point was measured from the pose you just left.
+
+==============================================================
+ 2/6  LOOK      capturing an aligned RGB-D frame
+==============================================================
+captured -> /home/weim/utp_robot/captures/press_200005
+  rgb   (720, 1280, 3) uint8
+  depth (720, 1280)  98.9% valid, range 0.93-1.95 m
+  frame mast_cam_color_optical_frame  fx=910.1 fy=909.5 cx=646.2 cy=379.4
+  rgb/depth skew 33 ms
+
+==============================================================
+ 3/6  GROUND    running the shipped detector on that frame
+==============================================================
+frame  : /home/weim/utp_robot/captures/press_200005
+  rgb (720, 1280, 3)  depth (720, 1280)  98.9% valid
+
+Loading weights:   0%|          | 0/1182 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 1182/1182 [00:00<00:00, 12733.32it/s]
+backend: gdino on cuda:0   load 3.1s   infer 671ms
+query  : 'the accessible door push button'
+
+WINNER  score 0.533
+  bbox   (619, 420) -> (777, 577)   158x157px, 2.70% of image
+  3D     x=+0.055 y=+0.126 z=+0.963 m  in mast_cam_color_optical_frame
+         (ROS optical frame: +x right, +y down, +z FORWARD, so z is the distance to the control)
+
+RANKING (5 candidates, best first) -- this is the evidence that
+separates 'could not see it' from 'saw it and preferred a decoy':
+  #0  score 0.533    158x157  px   2.70% area  center=(698,498)  <- chosen
+  #1  score 0.285    111x138  px   1.65% area  center=(980,518)
+  #2  score 0.267     27x25   px   0.07% area  center=(1015,571)
+  #3  score 0.215     43x68   px   0.32% area  center=(85,565)
+  #4  score 0.174    164x165  px   2.93% area  center=(682,227)
+
+annotated: /home/weim/utp_robot/captures/press_200005/detection.png   (green = chosen, orange = runners-up)
+detection: /home/weim/utp_robot/captures/press_200005/detection.json   (this is what the arm aims at)
+  cross-check: direct grounding vs odometry-reprojected target differ by 1.2 cm
+
+Loading weights:   0%|          | 0/1182 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 1182/1182 [00:00<00:00, 11981.09it/s]
+SAFE: clear (1 of 4 forbidden queries on the target; best forbidden hit 0.766 lands elsewhere)
+  'a red fire alarm pull station': (923.5091552734375, 446.71380615234375, 1036.033203125, 587.4642944335938) score 0.766
+  'a fire alarm activation lever': (619.0615234375, 419.9107666015625, 776.5047607421875, 576.1953125) score 0.519
+  'an emergency stop button': (923.96044921875, 447.33837890625, 1036.2169189453125, 587.5980224609375) score 0.586
+  'a red emergency call button': (924.3643188476562, 447.9101867675781, 1035.6810302734375, 586.848876953125) score 0.693
+
+==============================================================
+ 4/6  SHOW      opening what the detector chose
+==============================================================
+  /home/weim/utp_robot/captures/press_200005/detection.png   (green = chosen, orange = runners-up)
+
+==============================================================
+ 4b/6 READY     wrist to the press orientation -- AFTER grounding
+==============================================================
+SDK_VERSION: 1.18.4
+ROBOT_IP: 192.168.1.221, VERSION: v2.6.0, PROTOCOL: V1, DETAIL: 6,6,XI1305,AC1304,v2.6.0, TYPE1300: [1, 1]
+change protocol identifier to 3
+ joint      now    ready    delta
+  J1       0.0      0.0     +0.0
+  J2     -54.0    -44.6     -9.4
+  J3      -9.9    -45.0    +35.1
+  J4       0.0      0.0     +0.0
+  J5      68.0      2.2    +65.8
+  J6      -0.0      0.0     -0.0
+
+at ready now: False   (tolerance 5.0 deg)
+set_servo_angle -> 0 (0 = ok)
+now: [-0.0, -44.6, -45.0, -0.0, 2.3, 0.0]
+at ready: True
+
+==============================================================
+ 5/6  REACH     -45 mm marker standoff, then retreat
+==============================================================
+target from detection.json: 'the accessible door push button' score 0.533 via gdino
+target offset    : [ 0.    -0.008  0.015] m from calib/handeye.json (default)
+target (camera) : [0.05482697 0.12563025 0.963     ]
+target (link_base): [ 0.6207 -0.0105  0.5303]   |from base| 0.816 m
+approach dir     : [ 0.995  0.04  -0.094]
+SDK_VERSION: 1.18.4
+ROBOT_IP: 192.168.1.221, VERSION: v2.6.0, PROTOCOL: V1, DETAIL: 6,6,XI1305,AC1304,v2.6.0, TYPE1300: [1, 1]
+change protocol identifier to 3
+
+start flange [0.2783 0.0081 0.6534]  marker [0.1842 0.0074 0.6842]
+start headroom 55.0 deg on J3
+reference point : tool tip (172 mm past the flange) -> [0.4501 0.0089 0.6455]
+  the marker sits 268 mm behind it along the approach axis; aiming the marker instead would drive the tip that far past the target
+reference point is 180 mm from the target along the approach axis
+
+4 steps, stopping at -45 mm standoff:
+  step 1: marker standoff    120 mm -> flange [ 0.3298 -0.0161  0.5495]
+  step 2: marker standoff     60 mm -> flange [ 0.3894 -0.0137  0.5438]
+  step 3: marker standoff     -0 mm -> flange [ 0.4491 -0.0113  0.5382]
+  step 4: marker standoff    -45 mm -> flange [ 0.4936 -0.0095  0.534 ]
+
+[step 1/4] marker standoff 120 mm ...
+  joints [6.9, -33.8, -37.2, 37.6, -16.7, -36.2]
+  headroom 47.2 deg on J3
+
+[step 2/4] marker standoff 60 mm ...
+  joints [-3.3, -20.4, -43.7, -1.8, -23.3, 0.7]
+  headroom 53.7 deg on J3
+
+[step 3/4] marker standoff -0 mm ...
+  joints [-4.9, -7.9, -54.8, -11.5, -25.0, 9.4]
+  headroom 64.8 deg on J3
+
+[step 4/4] marker standoff -45 mm ...
+ControllerError, code: 31
+  joints [-3.6, -2.8, -63.1, -8.5, -24.8, 6.7]
+  headroom 72.2 deg on J5
+
+HOLDING at the final standoff. The arm is still extended.
+  Measure the gap from the TOOL TIP to the wall now, with a ruler.
+  That number -- not the marker standoff -- is what makes a press safe.
+  When done:  python3 bringup/approach_target.py --capture /home/weim/utp_robot/captures/press_200005 --retreat-only --go
+
+done. frame + detection kept in /home/weim/utp_robot/captures/press_200005
+  CONTACT (controller error 31) -- the gripper met the plate
+  SDK_VERSION: 1.18.4
+  ROBOT_IP: 192.168.1.221, VERSION: v2.6.0, PROTOCOL: V1, DETAIL: 6,6,XI1305,AC1304,v2.6.0, TYPE1300: [1, 1]
+  change protocol identifier to 3
+  [motion_enable], xArm is not ready to move
+  [set_state], xArm is ready to move
+  arm cleared: state=0 error=0
+
+==============================================================
+ NAVIGATE  'f1_outside'
+==============================================================
+    since the last leg: map moved 0.15 m, odom moved 0.17 m
+  goal tolerance now 0.30 m / 0.35 rad
+    285 cm and 10.0 deg from 'f1_outside'
+goal 'f1_outside' in map: x=10.772 y=3.410 yaw=+34.0 deg (map=floor1)
+DRIVING to 'f1_outside' via Nav2. Ctrl-C stops. E-stop is faster.
+arrived at 'f1_outside' in 20.2 s
+RESULT {"detail": "Nav2 STATUS_SUCCEEDED", "elapsed_s": 20.201, "status": "arrived", "waypoint": "f1_outside"}
+
+==============================================================
+ MISSION COMPLETE -- floor 2 to floor 1
+==============================================================

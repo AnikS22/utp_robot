@@ -1,0 +1,11 @@
+
+==============================================================
+ 0  PREP   authority, arm, stack
+==============================================================
+    Fallback that is known to work: transmitter ON with sticks untouched,
+    power-cycle the rover (it boots to STANDBY), then run this again immediately.
+
+STOP: the chassis is not taking commands from the computer. Flip SWB UP on the
+        transmitter, then re-run. Until then every command is discarded in firmware while odom,
+        the mux and /cmd_vel all look healthy.
+  (mission exited with status 1 -- children stopped, base halted; check the arm)

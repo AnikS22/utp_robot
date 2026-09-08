@@ -1,0 +1,13 @@
+detail,kind,stamp
+floor1,map_load_start,1788825474.7101054
+floor1,map_load_done,1788825522.6931016
+3.0m/20deg,scan_informative,1788825523.2578962
+"floor1 2.3877,0.5592 yaw -77.60 fit 72.3%",localized,1788825542.570911
+f1_ada_button,leg_start,1788825551.2833772
+f1_ada_button arrived 33s,leg_end,1788825584.4210126
+the accessible door push button,press_start,1788825585.3432896
+the accessible door push button shortfall 0.093 advance 0.193,press_creep,1788825599.2070158
+the accessible door push button,press_contact,1788825634.7722814
+f1_outside,leg_start,1788825634.886261
+f1_outside arrived 27s,leg_end,1788825661.3511364
+2->1,mission_complete,1788825662.2681475

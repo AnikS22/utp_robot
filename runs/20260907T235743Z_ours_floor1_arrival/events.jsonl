@@ -1,0 +1,12 @@
+{"stamp": 1788825474.7101054, "kind": "map_load_start", "detail": "floor1"}
+{"stamp": 1788825522.6931016, "kind": "map_load_done", "detail": "floor1"}
+{"stamp": 1788825523.2578962, "kind": "scan_informative", "detail": "3.0m/20deg"}
+{"stamp": 1788825542.570911, "kind": "localized", "detail": "floor1 2.3877,0.5592 yaw -77.60 fit 72.3%"}
+{"stamp": 1788825551.2833772, "kind": "leg_start", "detail": "f1_ada_button"}
+{"stamp": 1788825584.4210126, "kind": "leg_end", "detail": "f1_ada_button arrived 33s"}
+{"stamp": 1788825585.3432896, "kind": "press_start", "detail": "the accessible door push button"}
+{"stamp": 1788825599.2070158, "kind": "press_creep", "detail": "the accessible door push button shortfall 0.093 advance 0.193"}
+{"stamp": 1788825634.7722814, "kind": "press_contact", "detail": "the accessible door push button"}
+{"stamp": 1788825634.886261, "kind": "leg_start", "detail": "f1_outside"}
+{"stamp": 1788825661.3511364, "kind": "leg_end", "detail": "f1_outside arrived 27s"}
+{"stamp": 1788825662.2681475, "kind": "mission_complete", "detail": "2->1"}
