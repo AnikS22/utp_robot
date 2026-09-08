@@ -52,6 +52,23 @@ while [ $# -gt 0 ]; do
 done
 CAP="$REPO/captures/$NAME"
 
+# SAY WHEN NOTHING IS RECORDING THIS.
+#
+# 2026-09-07: the in-car floor button was pressed with contact four times while the aim was being
+# dialled in, and not one of them was recorded, because those presses were run straight through
+# this script instead of under bringup/run_dataset.py. The bag was the whole point -- the operator
+# needed exactly that footage, the arm hitting the panel and the lift then going down -- and the
+# only thing left of it is the still frame in captures/.
+#
+# A press is the moment a trial is about. It costs nothing to say out loud that nobody is filming.
+if [ -z "${UTP_RUN_DIR:-}" ]; then
+    echo
+    echo "  NOTE: nothing is recording this press. No rosbag, no video, no events.jsonl --"
+    echo "  only the still frame and detection in $CAP."
+    echo "  To record it:  python3 bringup/run_dataset.py --scene <name> --method ours -- <command>"
+    echo
+fi
+
 # READY BEFORE LOOKING. The camera is on the mast, and with the arm STOWED the folded arm sits
 # in the lower-centre of the frame -- exactly where a plate 0.7 m dead ahead appears. Measured
 # 2026-08-29: from the press pose the grounder returned the FIRE alarm because the plate was behind
