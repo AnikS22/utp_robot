@@ -1,0 +1,37 @@
+
+==============================================================
+ 0  PREP  arm to stow
+==============================================================
+
+==============================================================
+ NAVIGATE 'f5_call_button'
+==============================================================
+arrived at 'f5_call_button' in 56.2 s
+RESULT {"detail": "Nav2 STATUS_SUCCEEDED", "elapsed_s": 56.228, "status": "arrived", "waypoint": "f5_call_button"}
+
+==============================================================
+ PRESS the call button
+==============================================================
+WINNER  score 0.425
+target (link_base): [0.6334 0.0919 0.3788]   |from base| 0.744 m
+[step 1/2] marker standoff -21 mm ...
+[step 2/2] marker standoff -45 mm ...
+
+==============================================================
+ NAVIGATE 'f5_elevator_doors'
+==============================================================
+arrived at 'f5_elevator_doors' in 9.4 s
+RESULT {"detail": "Nav2 STATUS_SUCCEEDED", "elapsed_s": 9.4, "status": "arrived", "waypoint": "f5_elevator_doors"}
+
+==============================================================
+ DOORS -- waiting for the car
+==============================================================
+OPEN: 2.73 m clear ahead over 30 deg (threshold 1.60 m)
+  going NOW
+
+==============================================================
+ NAVIGATE 'f5_car_at_panel'
+==============================================================
+blocked: Nav2 ABORTED after 101.7 s (recoveries exhausted)
+RESULT {"detail": "Nav2 STATUS_ABORTED, recoveries exhausted", "elapsed_s": 101.661, "status": "blocked", "waypoint": "f5_car_at_panel"}
+STOP: could not get into the car

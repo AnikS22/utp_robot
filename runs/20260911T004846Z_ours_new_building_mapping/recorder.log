@@ -1,0 +1,3 @@
+[recorder] /home/weim/utp_robot/runs/20260911T004846Z_ours_new_building_mapping
+[recorder] frames: continuous (2.0 Hz @ 640 px), poses 10.0 Hz, no GPU, no /ouster/points
+[recorder] 1083 frames, 4290 poses -> /home/weim/utp_robot/runs/20260911T004846Z_ours_new_building_mapping

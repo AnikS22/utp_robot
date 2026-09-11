@@ -1,0 +1,16 @@
+{
+  "scene": "f5_lift_entry",
+  "method": "ours",
+  "map": "f2_clean_20260910",
+  "started_utc": "2026-09-11T02:51:02.235976+00:00",
+  "git_sha": "42cdf187c7784582dfbd0fb6da265ace373716d8",
+  "host": "weim-Dell-Pro-Max-16-Plus-MB16250",
+  "ros_domain_id": "9",
+  "camera_ns": "mast_cam",
+  "frame_fps": 2.0,
+  "frame_width": 640,
+  "note": "poses.jsonl is the trajectory; events.jsonl is appended by the route, not by this process",
+  "ended_utc": "2026-09-11T02:54:43.215248+00:00",
+  "n_frames": 0,
+  "n_poses": 2191
+}

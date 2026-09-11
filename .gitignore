@@ -57,3 +57,18 @@ runs/*/rosbag/
 runs/*/telemetry/
 *.mcap
 *.db3
+
+# Rendered video from a run. bringup/run_video.py and run_replay.py write these into
+# runs/<run>/artifacts/, and they are 100-300 MB each -- GitHub hard-rejects any single file over
+# 100 MB, so one `git add runs/` would make the repo unpushable. Same policy as the rosbags above:
+# they are DERIVED, and the bag they came from is the record. Re-render with
+#   python3 bringup/run_video.py runs/<run>
+#   python3 bringup/run_replay.py runs/<run> --map <name>
+runs/*/artifacts/*.mp4
+
+# run_dataset.py snapshots the maps a run used into runs/<run>/provenance/maps/. That copies the
+# posegraph and .data too -- 28 MB and 10 MB apiece -- under a path the maps/*.posegraph rule above
+# does not match. The grid and yaml are small and worth keeping; the binaries are not, and the
+# originals are in maps/ anyway.
+runs/*/provenance/maps/*.posegraph
+runs/*/provenance/maps/*.data

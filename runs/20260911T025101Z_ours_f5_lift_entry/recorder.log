@@ -1,0 +1,4 @@
+[recorder] /home/weim/utp_robot/runs/20260911T025101Z_ours_f5_lift_entry
+[recorder] frames: on-event (2.0 Hz @ 640 px, 2.5s window), poses 10.0 Hz, no GPU, no /ouster/points
+[recorder] the image reader exists ONLY around events, so the grounder does not share the topic with a second full-rate subscriber
+[recorder] 0 frames, 2191 poses -> /home/weim/utp_robot/runs/20260911T025101Z_ours_f5_lift_entry

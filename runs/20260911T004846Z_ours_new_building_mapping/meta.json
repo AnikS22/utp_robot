@@ -1,0 +1,16 @@
+{
+  "scene": "new_building_mapping",
+  "method": "ours",
+  "map": "floor1",
+  "started_utc": "2026-09-11T00:48:47.364500+00:00",
+  "git_sha": "fd009361920cdae41250ca90254da23ca3a46b23",
+  "host": "weim-Dell-Pro-Max-16-Plus-MB16250",
+  "ros_domain_id": "9",
+  "camera_ns": "mast_cam",
+  "frame_fps": 2.0,
+  "frame_width": 640,
+  "note": "poses.jsonl is the trajectory; events.jsonl is appended by the route, not by this process",
+  "ended_utc": "2026-09-11T00:58:08.376158+00:00",
+  "n_frames": 1083,
+  "n_poses": 4290
+}
