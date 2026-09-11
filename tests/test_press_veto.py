@@ -94,3 +94,50 @@ def test_partial_overlap_at_the_threshold_vetoes():
     """These boxes are small and two queries rarely frame identically, hence a low threshold."""
     ok, _ = check((84, 430, 137, 501), [("x", (90, 435, 140, 505), 0.4)])
     assert not ok
+
+
+# ---------------------------------------------------------------------------------------------
+# 2026-09-11, floor 1 of the new building, the ADA door plate. Both frames are REAL: same robot,
+# same wall, same four forbidden queries, ~60 s apart. Between them the arm was moved to its ready
+# pose, which put it in front of the mast camera and changed which object won the target query.
+# Together they are the tightest discriminator this guard has: the same detector, on the same
+# wall, labelling the alarm and the plate.
+
+ADA_PLATE = (645.7, 461.0, 813.8, 629.3)   # square push plate, 168x168 px
+ADA_ALARM = (446.3, 446.4, 488.0, 543.9)   # the real pull station, narrow, ~200 px to the left
+
+
+def test_the_real_2026_09_11_ada_plate_is_pressable():
+    """One query confused a square plate for an emergency stop, at LOWER confidence than the
+    target. Three others correctly placed the alarm 200 px away. That must not veto.
+
+    The old rule refused this frame twice; the press only happened after the operator confirmed
+    the plate by eye and authorised a bypass."""
+    hits = [("a red fire alarm pull station", (445.88, 444.62, 489.23, 572.82), 0.527),
+            ("a fire alarm activation lever", (446.58, 445.88, 487.94, 572.58), 0.524),
+            ("an emergency stop button",      (645.62, 459.94, 813.95, 630.18), 0.593),
+            ("a red emergency call button",   (447.06, 444.90, 488.92, 572.52), 0.574)]
+    ok, why = check(ADA_PLATE, hits, target_score=0.6435)
+    assert ok, why
+
+
+def test_the_real_2026_09_11_alarm_pick_is_still_refused():
+    """Minutes earlier, with the arm occluding the plate, the grounder returned the ALARM itself
+    as 'the accessible door push button' at 0.4034. Three forbidden queries sat on it above the
+    confidence floor. This is the failure the file exists for and must still veto."""
+    hits = [("a red fire alarm pull station", (446.04, 445.86, 488.57, 544.34), 0.552),
+            ("a fire alarm activation lever", (447.17, 446.67, 487.28, 544.08), 0.386),
+            ("an emergency stop button",      (447.01, 445.16, 488.50, 543.77), 0.238),
+            ("a red emergency call button",   (447.03, 445.24, 488.17, 543.42), 0.593)]
+    ok, why = check(ADA_ALARM, hits, target_score=0.4034)
+    assert not ok and "3 of 4" in why, why
+
+
+def test_a_lone_forbidden_hit_more_confident_than_the_target_still_vetoes():
+    """The relaxation is bounded: one vote still vetoes when the detector is MORE sure the thing
+    is an alarm than that it is the control that was asked for."""
+    target = (100, 100, 150, 150)
+    hits = [("a red fire alarm pull station", target, 0.70),
+            ("an emergency stop button", (500, 500, 540, 540), 0.30)]
+    ok, why = check(target, hits, target_score=0.50)
+    assert not ok, why

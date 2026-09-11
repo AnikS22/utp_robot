@@ -99,7 +99,32 @@ def check(target_bbox, forbidden_hits, *, iou_veto: float = IOU_VETO,
             best = (o, q, score)
         if o >= iou_veto:
             on_target.append((o, q, score))
+    # A SINGLE forbidden query vetoes ONLY when it is MORE confident of the forbidden label than
+    # the detector was of the target label. Without that clause one confused query still overrides
+    # a confident correct target -- the exact failure the comment above disclaims, left half-fixed.
+    #
+    # Measured 2026-09-11, floor-1 ADA plate, both frames pinned in tests/test_press_veto.py:
+    #   target = the ADA plate (645.7,461.0)-(813.8,629.3)                        0.6435
+    #   'a red fire alarm pull station' -> the REAL alarm, narrow, ~200 px left    0.527
+    #   'a fire alarm activation lever' -> the REAL alarm                          0.524
+    #   'a red emergency call button'   -> the REAL alarm                          0.574
+    #   'an emergency stop button'      -> THE PLATE, 99% overlap                  0.593
+    # Three queries agreed on where the alarm actually was. One matched a square push plate to
+    # "emergency stop button", at LOWER confidence than the target itself. The old rule refused on
+    # that single vote, twice, and the press only happened after the operator identified the plate
+    # by eye and explicitly authorised a bypass -- which is the outcome this guard exists to avoid
+    # making routine. A guard that cries wolf teaches the operator to wave it through.
+    #
+    # The same frame shows why the >= 2 branch is untouched: when the grounder actually RETURNED
+    # the alarm as the door button minutes earlier, three forbidden queries landed on it (0.552,
+    # 0.386, 0.593 against a 0.4034 target) and it is still refused.
+    #
+    # target_score is optional. When it is absent the single-hit veto stands exactly as before: a
+    # caller that cannot say how sure it was of the target gets the stricter rule, never the
+    # looser one. Fail closed.
     best_on_target = best is not None and best[0] >= iou_veto
+    if best_on_target and target_score is not None and float(best[2]) <= float(target_score):
+        best_on_target = False
     if len(on_target) >= 2 or best_on_target:
         o, q, score = max(on_target, key=lambda t: t[2]) if on_target else best
         return False, (f"REFUSING TO PRESS: the target overlaps {o:.0%} with what the detector "
