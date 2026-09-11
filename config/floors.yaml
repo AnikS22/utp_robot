@@ -24,6 +24,46 @@ building: fau_eng
 floors:
 
   # -------------------------------------------------------------------------------------------
+  "5":
+    description: >
+      LIFT FLOOR of the 2026-09-10 building, and the first floor of this campaign mapped on the
+      CLEAN cloud chain. maps/f5_lobby_20260910.* is 360x844 at 0.05 m, 4449 occupied cells, built
+      from /ouster/points_clean rather than raw -- see the note in bringup/bringup_all.sh. The
+      difference is not cosmetic: the raw-chain map of the same building localized at ~20% fit and
+      sat half a metre off, and this one relocalizes at 85.8%, with every one of the five waypoints
+      below recorded on a verified lock. All five nav legs were driven by Nav2 in 34 s total, two of
+      them inside the car.
+      NOT YET DONE HERE: the call press has been run once and the arm reached the plate, but no
+      contact trip was observed, and the entry leg after the doors opened aborted once when the lift
+      left before the robot was through.
+    map: f5_lobby_20260910
+    waypoints:
+      call_button:     f5_call_button      # at the call plate            (-2.652,+1.431)  +38.2
+      door_facing:     f5_elevator_doors   # outside, nose to the doors   (-3.178,+2.826)  +31.5
+      car_facing_in:   f5_car_at_panel     # inside, facing away from doors (-1.525,+4.068) +34.0
+      car_facing_out:  f5_car_at_doors     # inside, facing the doors     (-1.868,+3.834) -145.7
+      car_panel:       f5_car_panel        # inside, square to the panel  (-2.130,+4.154) +174.2
+      exit:            f5_elevator_doors   # back outside the doors
+    call_query: "the small round blue button on the metal call plate"
+    select_query: "the round blue button with a number on it"
+    select_index_from_bottom: 1
+  "1L":
+    kind: task
+    description: >
+      GROUND FLOOR of the 2026-09-10 building, where the ride ends and the ADA task happens.
+      maps/f1_clean_20260910.* is 1020x737 at 0.05 m, 12054 occupied cells, also built on the CLEAN
+      chain. It relocalizes at 83%, and the three waypoints below were each verified before saving:
+      the doors pose at 92.7% -- the best reading of the session -- the ADA plate at 81.6%, the exit
+      at 78.9%. In every case an independent global search agreed with the live pose to within 5 cm.
+      The OLD floor "1" in this file is a DIFFERENT BUILDING's ground floor on a raw-chain map; its
+      waypoints are anchored to maps/floor1 and are not interchangeable with these.
+    map: f1_clean_20260910
+    waypoints:
+      task_button:  f1_lobby_ada_button   # square to the ADA plate  (+11.078,-10.213) +47.7
+      task_exit:    f1_lobby_outside      # finish pose, outside     (+12.808,-11.730) -34.6
+    task_query: "the accessible door push button"
+    select_query: "the round blue button with a number on it"
+    select_index_from_bottom: 1
   "1":
     kind: task
     description: >

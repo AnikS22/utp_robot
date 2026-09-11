@@ -162,8 +162,25 @@ def check_chassis_mode(rep):
         rep.add("chassis mode", False, "no 0x211 -- bus silent, or rover unpowered", CRITICAL)
         return
     vehicle, mode, batt, err = st
-    rep.add("chassis mode", mode == GOOD,
-            f"{mode}" + ("" if mode == GOOD else f"  <- {ADVICE.get(mode, '')}"), CRITICAL)
+    # RC AUTHORITY IS THE RIGHT ANSWER WHEN A HUMAN IS DRIVING.
+    #
+    # This check is CRITICAL because the failure it catches is invisible: in CONTROL_MODE_RC the
+    # chassis discards every CAN motion command while odom keeps flowing and the mux keeps saying
+    # "permitted". That is fatal when the COMPUTER is meant to be driving.
+    #
+    # It is not fatal when a person is. Mapping is driven by hand -- docs/MAPPING.md is explicit
+    # that a map comes from someone walking the rover around on the transmitter, closing loops --
+    # and SWB is DOWN for the whole of it, on purpose. Failing bring-up for that means the mapping
+    # stack cannot be started the one way it is supposed to be started. Measured 2026-09-10: the
+    # operator flipped SWB down to drive, and health.py refused to bring up SLAM.
+    #
+    # So the caller says which it is. --rc-drive reports the mode and does not gate on it.
+    _rc_ok = getattr(rep, "rc_drive", False)
+    rep.add("chassis mode", mode == GOOD or _rc_ok,
+            f"{mode}" + ("  <- RC holds authority, as expected while you drive it by hand"
+                         if (_rc_ok and mode != GOOD)
+                         else "" if mode == GOOD else f"  <- {ADVICE.get(mode, '')}"),
+            INFO if _rc_ok else CRITICAL)
     rep.add("chassis state", vehicle == "NORMAL",
             f"{vehicle}" + ("" if vehicle == "NORMAL" else "  <- nothing will move"),
             CRITICAL if vehicle == "ESTOP" else INFO)
@@ -423,6 +440,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--watch", action="store_true")
+    ap.add_argument("--rc-drive", action="store_true",
+                    help="a human is driving on the transmitter (mapping): report the chassis "
+                         "control mode, do not gate on it")
     ap.add_argument("--skip-camera", action="store_true",
                     help="the camera was deliberately not started; report INFO, not CRITICAL")
     ap.add_argument("--skip-arm", action="store_true",
@@ -438,6 +458,7 @@ def main() -> int:
 
     while True:
         rep = Report()
+        rep.rc_drive = bool(getattr(a, "rc_drive", False))
         print(f"\n=== utp_robot health  {time.strftime('%H:%M:%S')} "
               f"(ROS_DOMAIN_ID={os.environ.get('ROS_DOMAIN_ID', 'UNSET')}) ===")
         check_usb(rep)

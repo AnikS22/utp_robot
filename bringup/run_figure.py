@@ -66,6 +66,27 @@ def load_map(name: str):
     return np.flipud(img), float(y["resolution"]), y["origin"][0], y["origin"][1]
 
 
+
+# A RUN'S PATH STARTS WHEN IT KNOWS WHERE IT IS, NOT WHEN THE RECORDER STARTS.
+#
+# poses.jsonl is map -> base_link sampled from the moment recording begins, and that is BEFORE
+# load_map and find_self have run. Until find_self agrees with itself those numbers are whatever
+# the previous session left in the frame, or load_map's 0,0,0 seed -- not positions. On the
+# 2026-09-07 floor-1 arrival, 601 of 1836 poses predate the lock: they begin at (6.87, 4.32),
+# which is a floor-2 coordinate left over in the frame, and snap to (2.39, 0.56) the instant the
+# search converges.
+#
+# Drawn without this filter, that snap becomes a straight diagonal line across the map -- a path
+# the robot never drove, in a place it never was. The operator's words on seeing it: "that is not
+# what it looked like". They were right.
+def _first_lock(events):
+    """Timestamp of the first `localized` event, or None if the run never got a lock."""
+    for e in events:
+        if (e.get("kind") if isinstance(e, dict) else e[1]) == "localized":
+            return (e.get("stamp") if isinstance(e, dict) else e[0])
+    return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("run")
@@ -81,6 +102,13 @@ def main() -> int:
     run = pathlib.Path(a.run)
     poses = rows(run / "poses.jsonl")
     events = rows(run / "events.jsonl")
+    # Drop everything before the lock -- see _first_lock.
+    _lock = _first_lock(events)
+    if _lock is not None:
+        _before = len(poses)
+        poses = [q for q in poses if q.get("stamp", 0) >= _lock] or poses
+        if len(poses) < _before:
+            print(f"  dropped {_before - len(poses)} poses from before the robot localized")
     if not poses:
         print(f"no poses in {run}", file=sys.stderr)
         return 2
