@@ -383,7 +383,13 @@ def main() -> int:
     # target's PLANE is exactly the case where it may be far off across the plate, because the
     # along-axis distance says nothing about height. Going to the align stop first then corrects
     # height and lateral while still 90 mm clear of the panel, which is the whole point.
-    align = float(os.environ.get("UTP_ALIGN_MM", "90")) / 1000.0
+    # 45 mm, NOT 90. At 90 the align stop sits at flange x 0.368 and height 0.343 -- low and tucked
+    # in near the arm's own base -- and the only IK that reaches it folds J2 past the limit set in
+    # UFACTORY Studio to keep the arm out of the laptop on the deck. Measured 2026-09-11: the
+    # pre-commit IK check refused it, correctly, and the press never happened. The press pose
+    # itself (x 0.657) is nowhere near that limit. So the alignment has to stay close enough that
+    # the arm remains extended while it settles height and lateral.
+    align = float(os.environ.get("UTP_ALIGN_MM", "45")) / 1000.0
     stops = [align, a.min_standoff / 1000.0]
     print(f"\n{len(stops)} steps, stopping at {a.min_standoff:.0f} mm standoff:")
     for i, s in enumerate(stops, 1):

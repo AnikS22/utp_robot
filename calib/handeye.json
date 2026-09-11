@@ -62,7 +62,7 @@
   "max_mm": 8.18779814584497,
   "rotation_spread_deg": 63.78092467403988,
   "target_offset_link_base_m": [
-    0.02,
+    0.021,
     -0.0293,
     0.025
   ],
@@ -80,5 +80,8 @@
     ]
   },
   "tool_tip_mm": 172.0,
-  "tool_tip_note": "172 mm, the catalogue figure for an xArm Gripper, STILL UNVERIFIED on this build -- see docs/CALIBRATION.md item 2.\n\nA 392 mm value was written here on 2026-09-11 and REVERTED the same hour. It came from driving the arm until the operator confirmed physical contact with the floor-5 call button and reading the encoders: the modelled 172 mm tip sat 220 mm PAST the grounded button, 24 mm off across. I read that as 'the tool is 220 mm longer than modelled' and stored 172+220.\n\nThat was wrong, and the geometry says so: with 392 mm the modelled tip starts 194 mm PAST the button at the ready pose, so a press would require the arm to move BACKWARDS. Run the other way, the same measurement means the point that actually touched is ~48 mm BEHIND the flange face -- which is the wrist housing, not a fingertip. The photo taken at that pose agrees: the white wrist is against the plate with nothing projecting past it.\n\nSo the measurement was of the WRIST touching, not the tool, and it cannot calibrate a tool tip. What is physically on the flange, and how far it projects, is still unanswered and is the thing blocking presses on this rig."
+  "tool_tip_note": "172 mm, the catalogue figure for an xArm Gripper, STILL UNVERIFIED on this build -- see docs/CALIBRATION.md item 2.\n\nA 392 mm value was written here on 2026-09-11 and REVERTED the same hour. It came from driving the arm until the operator confirmed physical contact with the floor-5 call button and reading the encoders: the modelled 172 mm tip sat 220 mm PAST the grounded button, 24 mm off across. I read that as 'the tool is 220 mm longer than modelled' and stored 172+220.\n\nThat was wrong, and the geometry says so: with 392 mm the modelled tip starts 194 mm PAST the button at the ready pose, so a press would require the arm to move BACKWARDS. Run the other way, the same measurement means the point that actually touched is ~48 mm BEHIND the flange face -- which is the wrist housing, not a fingertip. The photo taken at that pose agrees: the white wrist is against the plate with nothing projecting past it.\n\nSo the measurement was of the WRIST touching, not the tool, and it cannot calibrate a tool tip. What is physically on the flange, and how far it projects, is still unanswered and is the thing blocking presses on this rig.",
+  "notes": [
+    "2026-09-11 f5 call button, two-move approach (align 45 mm, then push to -200 mm): operator confirmed the press twice ('PERFECT', 'PERFECT AGAIN'), asking only for ~1 mm more forward. x offset 0.020 -> 0.021 m. This is a ~1 mm trim on a working press, not a re-derivation -- the underlying tool length (172 mm) is still unverified."
+  ]
 }
