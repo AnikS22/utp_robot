@@ -7,6 +7,22 @@
 # value for every driver instance. goto and route_run REFUSE a waypoint whose session
 # does not match the running one. 'odom_epoch' is wall-clock provenance only -- nothing
 # reads it. See safety/waypoint_frame.py.
+call_elevator_button:
+  frame: map
+  map_name: new_floor_20260910_2150
+  mola_session: 010fe91b37586610
+  odom_epoch: 1789092867
+  x: 7.4167
+  y: -2.0185
+  yaw: -1.2872
+elevator_doors:
+  frame: map
+  map_name: new_floor_20260910_2150
+  mola_session: 010fe91b37586610
+  odom_epoch: 1789093006
+  x: 9.2323
+  y: -2.7928
+  yaw: -1.6706
 f1_ada_button:
   frame: map
   map_name: floor1
@@ -50,10 +66,11 @@ f2_car_at_panel:
 f2_car_panel:
   frame: map
   map_name: floor2
-  odom_epoch: 1788640330
-  x: 6.8889
-  y: 4.1384
-  yaw: 3.0424
+  mola_session: 010fa5756345d0f7
+  odom_epoch: 1788817053
+  x: 6.8254
+  y: 4.2806
+  yaw: -2.8276
 f2_lift_door:
   frame: map
   map_name: floor2
@@ -62,3 +79,43 @@ f2_lift_door:
   x: 5.9075
   y: 2.537
   yaw: 0.9668
+f5_car_at_doors:
+  frame: map
+  map_name: f2_clean_20260910
+  mola_session: 010fe91b6234ca5e
+  odom_epoch: 1789094672
+  x: -1.8679
+  y: 3.8339
+  yaw: -2.5434
+f5_car_at_panel:
+  frame: map
+  map_name: f2_clean_20260910
+  mola_session: 010fe91b6234ca5e
+  odom_epoch: 1789094531
+  x: -1.5254
+  y: 4.0679
+  yaw: 0.5935
+f5_car_panel:
+  frame: map
+  map_name: f2_clean_20260910
+  mola_session: 010fe91b6234ca5e
+  odom_epoch: 1789094605
+  x: -2.1299
+  y: 4.1542
+  yaw: 3.0396
+f5_elevator_doors:
+  frame: map
+  map_name: f2_clean_20260910
+  mola_session: 010fe91b6234ca5e
+  odom_epoch: 1789094470
+  x: -3.1779
+  y: 2.8265
+  yaw: 0.549
+f5_call_button:
+  frame: map
+  map_name: f2_clean_20260910
+  mola_session: 010fe91b6234ca5e
+  odom_epoch: 1789094349
+  x: -2.6525
+  y: 1.4315
+  yaw: 0.666
