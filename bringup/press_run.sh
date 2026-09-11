@@ -24,6 +24,11 @@ VENV="$HOME/unlocking-the-path/env/.venv/bin/python"
 
 # Defined HERE, not beside the reach: the GROUNDING stage uses it, and grounding runs first.
 PICK_ARG=""; [ -n "${UTP_PICK_FROM_BOTTOM:-}" ] && PICK_ARG="--pick-from-bottom $UTP_PICK_FROM_BOTTOM"
+# How many buttons the panel HAS. Without it detect_frame cannot tell a SHORT column from a
+# complete one: on 2026-09-11 the car was dark enough that only the top two of six buttons were
+# detected, "1 from the bottom" resolved to "5", and the robot rode to the wrong floor with
+# nothing in the output suggesting anything was missing.
+[ -n "${UTP_EXPECT_BUTTONS:-}" ] && PICK_ARG="$PICK_ARG --expect-buttons $UTP_EXPECT_BUTTONS"
 
 # mm, measured to the MARKER on the flange, NOT the tool tip -- the gripper extends past the
 # marker, which is why stopping 60 mm short of the target can still touch the plate. 60 was

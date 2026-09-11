@@ -53,6 +53,15 @@ floors:
     # the operator confirmed on both, twice each.
     call_standoff_mm: -200
     select_standoff_mm: -200
+
+    # WHICH CALL BUTTON, COUNTED FROM THE BOTTOM. The robot is going DOWN to the lobby, and DOWN
+    # is the lower of the two. This is the same trap floors.yaml has documented for the in-car
+    # buttons since 2026-09-05, on a plate nobody had wired the fix to: measured 2026-09-11, the
+    # two candidates were both 29x30 px at x=619, centres 52 px apart, and the language ranking
+    # took the UPPER at 0.446 over the lower at 0.296. The robot called the lift going UP.
+    # UP and DOWN are not linguistically different, only spatially.
+    call_index_from_bottom: 1
+    call_button_count: 2
   "1L":
     kind: task
     description: >
@@ -84,6 +93,16 @@ floors:
     # this is the press the operator confirmed in the car on 2026-09-11. Without it the press
     # silently falls back to the -45 mission default and stops 155 mm short of contact.
     select_standoff_mm: -200
+
+    # HOW MANY BUTTONS THE CAR PANEL HAS. This lift reads 6/5/4/3/2/1 top to bottom. Without the
+    # count, detect_frame cannot tell a SHORT column from a complete one -- and on 2026-09-11 the
+    # car interior measured mean brightness 30.8/255, dark enough that only the top TWO buttons
+    # were detected (plus duplicate boxes of them at three scales). "1 from the bottom" of that
+    # resolved to "5", the robot rode to the wrong floor, and the output said "1 from the bottom
+    # of a 4-button column" with no hint anything was missing.
+    # With the count, an incomplete column divides the panel strip instead: the strip in that
+    # frame was 60x214 px, and dividing it into 6 lands within ~2 px of every real button.
+    select_button_count: 6
 
     task_align_mm: -100
 

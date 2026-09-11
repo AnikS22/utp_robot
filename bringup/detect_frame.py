@@ -161,6 +161,118 @@ def _relift(det, cand, depth, cam):
     return det
 
 
+
+def _iou(a, b) -> float:
+    ix0, iy0 = max(a[0], b[0]), max(a[1], b[1])
+    ix1, iy1 = min(a[2], b[2]), min(a[3], b[3])
+    iw, ih = max(0.0, ix1 - ix0), max(0.0, iy1 - iy0)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    aa = max(0.0, a[2]-a[0]) * max(0.0, a[3]-a[1])
+    ab = max(0.0, b[2]-b[0]) * max(0.0, b[3]-b[1])
+    u = aa + ab - inter
+    return inter / u if u > 0 else 0.0
+
+
+def _containment(a, b) -> float:
+    """Intersection over the SMALLER box. IoU misses nested duplicates: the detector returned the
+    same button as 32x39 and as 18x25, one wholly inside the other, and their IoU is only 0.36."""
+    ix0, iy0 = max(a[0], b[0]), max(a[1], b[1])
+    ix1, iy1 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0.0, ix1-ix0) * max(0.0, iy1-iy0)
+    if inter <= 0:
+        return 0.0
+    smaller = min(max(0.0, a[2]-a[0]) * max(0.0, a[3]-a[1]),
+                  max(0.0, b[2]-b[0]) * max(0.0, b[3]-b[1]))
+    return inter / smaller if smaller > 0 else 0.0
+
+
+def dedupe(cands, iou_thresh=0.4, contain_thresh=0.7):
+    """Collapse candidates that frame the SAME object, keeping the best-scoring.
+
+    The detector returns a button several times at different scales. Measured 2026-09-11 in the
+    floor-5 car, the "6" button came back three times -- 32x39, 18x25 and 49x53, all centred within
+    2 px -- and the spatial pick counted them as three separate buttons. Counting BOXES instead of
+    BUTTONS is what made a 2-button column look like a 4-button one.
+    """
+    out = []
+    for c in sorted(cands, key=lambda c: -float(c.get("score", 0.0))):
+        if not any(_iou(c["bbox"], k["bbox"]) >= iou_thresh
+                   or _containment(c["bbox"], k["bbox"]) >= contain_thresh for k in out):
+            out.append(c)
+    return out
+
+
+def pick_from_column(cands, n_from_bottom, *, image_hw, max_button_area=0.6,
+                     column_px=60.0, expect_buttons=0):
+    """Pick the Nth button from the bottom of a panel column.
+
+    Returns (chosen_bbox, note). chosen_bbox may be SYNTHESISED by dividing the panel strip when
+    the detector could not resolve the individual buttons -- which is the normal case in a dimly
+    lit lift car, not an edge case.
+
+    WHY THE STRIP FALLBACK EXISTS. 2026-09-11, floor-5 car, panel reading 6/5/4/3/2/1 top to
+    bottom. The frame had mean brightness 30.8/255 and the detector found ONLY the top two
+    buttons, plus duplicates of them. The column was therefore 2 buttons long, "1 from the bottom"
+    resolved to "5", and the robot rode to the wrong floor. Nothing in the output said the column
+    was incomplete -- it reported "1 from the bottom of a 4-button column" with total confidence.
+
+    The same frame contained the answer: a 60x214 box over the whole button strip. Dividing that
+    strip into 6 bands puts the button centres at y = 512.8, 548.5, 584.2, 619.8, 655.5, 691.2
+    against measured 511, 546, 580, 618, 655, 690 -- within ~2 px on every button. A panel's
+    buttons are evenly spaced, so the strip plus a floor count locates any of them without the
+    detector resolving them at all.
+
+    expect_buttons is the count the CALLER knows from the building. Without it this function
+    cannot tell a short column from a complete one, and silently picking from a short column is
+    the bug above.
+    """
+    H, W = image_hw
+    area_pct = lambda b: 100.0 * ((b[2]-b[0]) * (b[3]-b[1])) / float(H * W)
+    btn = dedupe([c for c in cands if 0.02 <= area_pct(c["bbox"]) <= max_button_area])
+    if len(btn) < 1:
+        return None, f"no button-sized candidates (of {len(cands)})"
+
+    xs = sorted((c["bbox"][0] + c["bbox"][2]) / 2 for c in btn)
+    xmed = xs[len(xs) // 2]
+    col = [c for c in btn if abs((c["bbox"][0]+c["bbox"][2])/2 - xmed) <= column_px]
+    col.sort(key=lambda c: (c["bbox"][1]+c["bbox"][3])/2, reverse=True)   # lowest first
+
+    # THE COLUMN IS ONLY TRUSTWORTHY IF IT IS COMPLETE.
+    if expect_buttons and len(col) < expect_buttons:
+        strip = None
+        for c in cands:
+            b = c["bbox"]
+            cx = (b[0]+b[2]) / 2
+            if abs(cx - xmed) > column_px:
+                continue
+            h = b[3] - b[1]
+            if strip is None or h > (strip[3] - strip[1]):
+                strip = b
+        med_h = sorted((c["bbox"][3]-c["bbox"][1]) for c in col)[len(col)//2] if col else 0
+        if strip is not None and (strip[3]-strip[1]) >= max(2.5 * med_h, 3.0):
+            x0, y0, x1, y1 = strip
+            band = (y1 - y0) / float(expect_buttons)
+            cy = y1 - (n_from_bottom - 0.5) * band
+            cx = (x0 + x1) / 2
+            w = (x1 - x0) * 0.55
+            h = band * 0.60
+            return ([cx - w/2, cy - h/2, cx + w/2, cy + h/2],
+                    f"column held only {len(col)} of {expect_buttons} buttons, so the panel strip "
+                    f"{int(x1-x0)}x{int(y1-y0)} px was divided into {expect_buttons}: "
+                    f"button {n_from_bottom} from the bottom is at ({cx:.0f},{cy:.0f})")
+        return None, (f"column held only {len(col)} of {expect_buttons} expected buttons and no "
+                      f"panel strip was found to divide -- REFUSING to index a short column")
+
+    if len(col) < n_from_bottom:
+        return None, f"only {len(col)} button(s) in the column, needed {n_from_bottom}"
+    chosen = col[n_from_bottom - 1]
+    return chosen["bbox"], (f"{n_from_bottom} from the bottom of a {len(col)}-button column "
+                            f"-> center=({(chosen['bbox'][0]+chosen['bbox'][2])/2:.0f},"
+                            f"{(chosen['bbox'][1]+chosen['bbox'][3])/2:.0f})")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -174,6 +286,11 @@ def main() -> int:
                          "from the BOTTOM of the panel column (1 = lowest). 0 disables.")
     ap.add_argument("--max-button-area", type=float, default=0.6, metavar="PCT",
                     help="a candidate larger than this %% of the image is not a button (default 0.6)")
+    ap.add_argument("--expect-buttons", type=int, default=0, metavar="N",
+                    help="how many buttons the panel HAS. Without it a short column cannot be "
+                         "told from a complete one, and indexing a short column is how the robot "
+                         "pressed 5 instead of 1 on 2026-09-11. With it, an incomplete column "
+                         "falls back to dividing the panel strip, or refuses.")
     ap.add_argument("--column-px", type=float, default=60.0,
                     help="horizontal tolerance for treating candidates as one panel column")
     ap.add_argument("--device", default="cuda:0")
@@ -273,31 +390,26 @@ def main() -> int:
     # are filtered to button-sized boxes, clustered by x to one panel column, ordered bottom-up,
     # and the Nth taken. Floor order is a property of the building, and the caller passes it.
     if a.pick_from_bottom:
-        H, W = rgb.shape[0], rgb.shape[1]
-        btn = [c for c in ranked
-               if 0.02 <= 100 * ((c["bbox"][2]-c["bbox"][0]) * (c["bbox"][3]-c["bbox"][1]))
-                                / float(H*W) <= a.max_button_area]
-        if len(btn) >= a.pick_from_bottom:
-            xs = sorted((c["bbox"][0]+c["bbox"][2])/2 for c in btn)
-            xmed = xs[len(xs)//2]
-            col = [c for c in btn if abs((c["bbox"][0]+c["bbox"][2])/2 - xmed) <= a.column_px]
-            col.sort(key=lambda c: (c["bbox"][1]+c["bbox"][3])/2, reverse=True)   # lowest first
-            if len(col) >= a.pick_from_bottom:
-                chosen = col[a.pick_from_bottom - 1]
-                print(f"\n  SPATIAL PICK: {a.pick_from_bottom} from the bottom of a "
-                      f"{len(col)}-button column "
-                      f"-> center=({(chosen['bbox'][0]+chosen['bbox'][2])/2:.0f},"
-                      f"{(chosen['bbox'][1]+chosen['bbox'][3])/2:.0f}) score {chosen['score']:.3f}")
-                print("  (language found the panel; geometry chose the button -- they are the "
-                      "same blue and 34 px apart)")
-                det = _relift(det, chosen, depth, cam)
-                ranked = [chosen] + [c for c in ranked if c is not chosen]
-            else:
-                print(f"\n  SPATIAL PICK SKIPPED: only {len(col)} button(s) in the column, "
-                      f"needed {a.pick_from_bottom}. Falling back to the language winner.")
+        bbox, note = pick_from_column(ranked, a.pick_from_bottom,
+                                      image_hw=(rgb.shape[0], rgb.shape[1]),
+                                      max_button_area=a.max_button_area,
+                                      column_px=a.column_px,
+                                      expect_buttons=a.expect_buttons)
+        if bbox is None:
+            print(f"\n  SPATIAL PICK SKIPPED: {note}")
+            if a.expect_buttons and "REFUSING" in note:
+                print("  Falling back to the language winner would press an unknown button on a "
+                      "panel whose layout is known. Not doing that.", file=sys.stderr)
+                return 2
+            print("  Falling back to the language winner.")
         else:
-            print(f"\n  SPATIAL PICK SKIPPED: only {len(btn)} button-sized candidate(s). "
-                  f"Falling back to the language winner.")
+            print(f"\n  SPATIAL PICK: {note}")
+            print("  (language found the panel; geometry chose the button -- they are the "
+                  "same blue and 34 px apart)")
+            chosen = next((c for c in ranked if list(c.get("bbox")) == list(bbox)),
+                          {"bbox": list(bbox), "score": 0.0, "synthesised": True})
+            det = _relift(det, chosen, depth, cam)
+            ranked = [chosen] + [c for c in ranked if c is not chosen]
     print(f"\nRANKING ({len(ranked)} candidates, best first) -- this is the evidence that")
     print("separates 'could not see it' from 'saw it and preferred a decoy':")
     for i, c in enumerate(ranked[:6]):
