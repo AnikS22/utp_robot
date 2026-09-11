@@ -187,8 +187,20 @@ def main() -> int:
     # caller gets by forgetting a flag -- every route in this repo goes through here, and the fix
     # is only a fix if it propagates to all of them without each one opting in. Pass 0 to restore
     # the old marker aiming, which is useful only for reproducing pre-2026-09-07 runs.
-    ap.add_argument("--tool-tip-mm", type=float,
-                    default=float(os.environ.get("UTP_TOOL_TIP_MM", "172") or 0),
+    # DEFAULT COMES FROM THE CALIBRATION FILE, not from a literal in this script. 172 was the
+    # catalogue figure for an xArm Gripper and was never verified on this build; measured against a
+    # confirmed physical contact on 2026-09-11 the real distance is 392 mm, and the 220 mm
+    # difference is why every press stopped short. calib/handeye.json carries the number and the
+    # measurement behind it.
+    def _tool_tip_default():
+        env = os.environ.get("UTP_TOOL_TIP_MM")
+        if env:
+            return float(env)
+        try:
+            return float(json.loads((REPO / "calib" / "handeye.json").read_text())["tool_tip_mm"])
+        except Exception:
+            return 172.0
+    ap.add_argument("--tool-tip-mm", type=float, default=_tool_tip_default(),
                     help="distance from the flange face to the fingertip along the tool +z axis "
                          "(default 172). The TIP is placed at the standoff. 0 = legacy marker aim.")
     ap.add_argument("--go", action="store_true")
@@ -350,12 +362,29 @@ def main() -> int:
               f"further in, not press. Move the base back, or re-ground.", file=sys.stderr)
         arm.disconnect()
         return 1
-    stops = []
-    d = dist_now
-    while d - step_mm / 1000.0 > a.min_standoff / 1000.0:
-        d -= step_mm / 1000.0
-        stops.append(d)
-    stops.append(a.min_standoff / 1000.0)
+    # TWO MOVES: ALIGN, THEN PUSH. Never one diagonal.
+    #
+    # The old plan walked from wherever the wrist was straight to the final pose. When the ready
+    # pose already sat near the target's plane that collapsed to a single move that was mostly
+    # VERTICAL -- 31 cm down and 10 cm across -- dressed up as an approach. It reads to an operator
+    # as the arm diving at the panel, and if the aim is off at all it arrives off, with no chance to
+    # see it first. Worse, the along-axis distance the step count is built from goes to nearly zero
+    # in that geometry, so the whole approach became one lunge.
+    #
+    # So the shape is fixed rather than derived: stop ONCE at UTP_ALIGN_MM in front of the target,
+    # correct in height and across the plate but held back in depth, and then push STRAIGHT along
+    # the approach axis to the standoff. Everything but the depth is settled before anything goes
+    # near the panel. The operator asked for exactly this after a run drove into the wall beside
+    # the button: "get everything but the depth done, not all one movement, 2 movements but still
+    # fast".
+    # UNCONDITIONAL. It was `if dist_now > align`, which skipped the alignment stop whenever the
+    # wrist happened to start inside it -- and the ready pose usually does, so the very run this was
+    # written for still went in one move. Skipping it is backwards: a wrist that is already near the
+    # target's PLANE is exactly the case where it may be far off across the plate, because the
+    # along-axis distance says nothing about height. Going to the align stop first then corrects
+    # height and lateral while still 90 mm clear of the panel, which is the whole point.
+    align = float(os.environ.get("UTP_ALIGN_MM", "90")) / 1000.0
+    stops = [align, a.min_standoff / 1000.0]
     print(f"\n{len(stops)} steps, stopping at {a.min_standoff:.0f} mm standoff:")
     for i, s in enumerate(stops, 1):
         tgt = p_arm - approach * s

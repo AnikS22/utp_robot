@@ -371,7 +371,6 @@ press() {
     # have shown it.
     UTP_NO_STOW=1 UTP_OFFSET_PROFILE="$profile" UTP_PICK_FROM_BOTTOM="$pick" \
     UTP_STANDOFF="${UTP_STANDOFF:--45}" UTP_REACH_MARGIN_M="${UTP_REACH_MARGIN_M:-0.03}" \
-    UTP_TOOL_TIP_MM="${UTP_TOOL_TIP_MM:-172}" \
     UTP_STEP_MM="${UTP_STEP_MM:-60}" UTP_REACH_SPEED="${UTP_REACH_SPEED:-60}" \
         bash "$REPO/bringup/press_run.sh" --query "$query" --hold --name "$cap" 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
