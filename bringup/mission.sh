@@ -161,6 +161,15 @@ for tag, fid in (("A", a), ("B", b)):
     print(f"{tag}_SELECT_QUERY={shlex.quote(f.select_query)}")
     print(f"{tag}_TASK_QUERY={shlex.quote(f.task_query)}")
     print(f"{tag}_SELECT_INDEX={shlex.quote(str(f.extra.get('select_index_from_bottom', '')))}")
+    # PER-TARGET REACH SETTINGS. The align stop and the standoff are properties of the CONTROL,
+    # not of the robot: measured 2026-09-11, the f5 call plate and in-car panel both reach with
+    # the 45 mm align stop, while the floor-1 ADA plate at the same standoff folds J2 to -67 deg,
+    # past the -55 limit UFACTORY Studio holds to keep the arm off the laptop on the deck. One
+    # global number cannot serve both. Empty means "use the tool's own default".
+    for role in ("call", "select", "task"):
+        for k in ("align_mm", "standoff_mm"):
+            print(f"{tag}_{role.upper()}_{k.upper()}="
+                  f"{shlex.quote(str(f.extra.get(f'{role}_{k}', '')))}")
 PY
 )" || die "could not read config/floors.yaml for floors $FROM and $TO"
 
@@ -309,7 +318,8 @@ at_wp() {
 # so the controller's abnormal-current trip (ControllerError 31) is the only thing that can report
 # the gripper meeting the plate. Only 31: 21/22/23/24 mean the arm never got there.
 press() {
-    local query="$1" profile="${2:-}" pick="${3:-}" log rc contact=0
+    local query="$1" profile="${2:-}" pick="${3:-}" align="${4:-}" standoff="${5:-}"
+    local log rc contact=0
     say "PRESS  '$query'${profile:+   [offset: $profile]}${pick:+   [button ${pick} from bottom]}"
     event press_start "$query"
     # FOLD BEFORE GROUNDING, ALWAYS. press_run.sh grounds with the arm parked and only then moves
@@ -320,6 +330,8 @@ press() {
     # the second attempt grounded at 1.29 m, off the panel entirely, for exactly this reason.
     [ -n "$DRY" ] || "$REPO/.venv-arm/bin/python" "$REPO/bringup/stow_arm.py" --go >/dev/null 2>&1
     [ -n "$DRY" ] && { UTP_OFFSET_PROFILE="$profile" UTP_PICK_FROM_BOTTOM="$pick" \
+        UTP_ALIGN_MM="${align:-${UTP_ALIGN_MM:-45}}" \
+        UTP_STANDOFF="${standoff:-${UTP_STANDOFF:--45}}" \
         bash "$REPO/bringup/press_run.sh" --dry-run --query "$query" || true; return 0; }
     local cap tries="${UTP_PRESS_TRIES:-2}" attempt short adv
     for attempt in $(seq 1 "$tries"); do
@@ -370,7 +382,8 @@ press() {
     # made no contact. The --dry-run branch below is correctly formed, so a dry run could never
     # have shown it.
     UTP_NO_STOW=1 UTP_OFFSET_PROFILE="$profile" UTP_PICK_FROM_BOTTOM="$pick" \
-    UTP_STANDOFF="${UTP_STANDOFF:--45}" UTP_REACH_MARGIN_M="${UTP_REACH_MARGIN_M:-0.03}" \
+    UTP_ALIGN_MM="${align:-${UTP_ALIGN_MM:-45}}" \
+    UTP_STANDOFF="${standoff:-${UTP_STANDOFF:--45}}" UTP_REACH_MARGIN_M="${UTP_REACH_MARGIN_M:-0.03}" \
     UTP_STEP_MM="${UTP_STEP_MM:-60}" UTP_REACH_SPEED="${UTP_REACH_SPEED:-60}" \
         bash "$REPO/bringup/press_run.sh" --query "$query" --hold --name "$cap" 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
@@ -970,7 +983,7 @@ if [ "$MANUAL_CALL" = 1 ]; then
     note "press the call button now; the lidar below is watching the doorway"
 else
     nav   "$A_CALL_BUTTON" || true
-    press "$A_CALL_QUERY" \
+    press "$A_CALL_QUERY" "" "" "${A_CALL_ALIGN_MM:-}" "${A_CALL_STANDOFF_MM:-}" \
         || note "the robot could not confirm the call press -- PRESS THE CALL BUTTON if the lift is not coming; the lidar decides when the doors are open"
 fi
 
@@ -1020,6 +1033,7 @@ else
     # calibration: the lift's "1" and "2" are 34 px apart and the same blue, so language cannot
     # separate them and the detector will happily take either.
     press "$B_SELECT_QUERY" lift_car_select "${B_SELECT_INDEX:-}" \
+        "${B_SELECT_ALIGN_MM:-}" "${B_SELECT_STANDOFF_MM:-}" \
         || note "the robot could not confirm the floor press -- PRESS FLOOR $TO if the car does not move"
 fi
 
@@ -1131,7 +1145,7 @@ clear_costmaps
 
 if [ "$B_KIND" = "task" ]; then
     nav   "$B_TASK_BUTTON" || true
-    press "$B_TASK_QUERY" || note "task press failed -- still driving out so the run ends where it should"
+    press "$B_TASK_QUERY" "" "" "${B_TASK_ALIGN_MM:-}" "${B_TASK_STANDOFF_MM:-}" || note "task press failed -- still driving out so the run ends where it should"
     # NOTHING between the press and the drive. The opener is already swinging; a check here is a
     # check against a closing door, and all three that were tried were slower than the event.
     nav   "$B_TASK_EXIT" || true

@@ -47,6 +47,12 @@ floors:
     call_query: "the small round blue button on the metal call plate"
     select_query: "the round blue button with a number on it"
     select_index_from_bottom: 1
+
+    # Both f5 controls reach fine at the default +45 mm align stop -- they sit lower and further
+    # out than the ADA plate. Only the standoff is overridden, for the reason above: -200 is what
+    # the operator confirmed on both, twice each.
+    call_standoff_mm: -200
+    select_standoff_mm: -200
   "1L":
     kind: task
     description: >
@@ -64,6 +70,28 @@ floors:
     task_query: "the accessible door push button"
     select_query: "the round blue button with a number on it"
     select_index_from_bottom: 1
+
+    # THE ADA PLATE NEEDS A DIFFERENT ALIGN STOP FROM EVERY LIFT CONTROL. Measured 2026-09-11 with
+    # the robot squared to the plate: at the +45 mm align stop the flange lands at x 0.371, z 0.517
+    # -- high and tucked in toward the arm's own base -- and the only IK that reaches it folds J2 to
+    # -67.2 deg, past the -55 limit set in UFACTORY Studio to keep the arm off the laptop on the
+    # deck. Swept the whole band: every standoff from +45 out to 0 either breaks J2 or flips the
+    # wrist, and from -75 inward it is clean and smooth (J2 -24.1 -> -5.3, J4 -48.6 -> -28.0 over
+    # -100 -> -200). -100 sits inside that band with margin.
+    # THE IN-CAR "1" BUTTON IS PRESSED ON THE WAY DOWN, AND IT READS THIS FLOOR'S SETTINGS.
+    # mission.sh presses B_SELECT_QUERY -- B is the DESTINATION floor -- so the button that sends
+    # the car HERE is configured HERE, not on the floor it is pressed from. Same -200 as the rest;
+    # this is the press the operator confirmed in the car on 2026-09-11. Without it the press
+    # silently falls back to the -45 mission default and stops 155 mm short of contact.
+    select_standoff_mm: -200
+
+    task_align_mm: -100
+
+    # -200, NOT the -45 mission default. Every press CONFIRMED by the operator on 2026-09-11 --
+    # the f5 hall call button, the in-car floor button, and this plate -- was driven to -200. At
+    # -45 the tool stops 155 mm short of where contact actually happened. This number is doing the
+    # work the unverified 172 mm tool_tip_mm should be doing; see calib/handeye.json.
+    task_standoff_mm: -200
   "1":
     kind: task
     description: >
