@@ -507,13 +507,30 @@ fi
 # floor2 -- lost by this stack's own scale -- and the robot then grounded a decoy at the call plate
 # because it was not where it believed it was. The operator saw it first, as "the dots behind the
 # lidar that shouldn't exist came back".
+# FILTERED IS THE DEFAULT NOW, FOR EVERY MAP.
+#
+# This used to name ONE map -- floor2 -- as the exception that got the clean cloud, and hand raw
+# points to everything else. That rule was written for one map on one day and then silently
+# governed every map made since: floor1 got raw, and so did 20260190, and so would any new map,
+# because none of them is spelled "floor2".
+#
+# Measured 2026-09-10 on the new building map, in the slice pointcloud_to_laserscan keeps:
+#     /ouster/points        26822 points, 24527 of them under 1.4 m
+#     /ouster/points_clean  18613 points, 16295 of them under 1.4 m
+# a third of the near field is the OS0's own crosstalk, and on raw it all reaches the matcher. The
+# operator sees it as a scatter of returns 0.9-1.1 m behind a robot with nothing behind it, the map
+# comes out with starburst streaks through it, and localization sits at ~20% fit and half a metre
+# off while the scan SHAPE visibly matches the walls.
+#
+# The comment above this block already records the same failure on floor2 at 27.8% fit, and the
+# robot grounding a decoy at the call plate because it was not where it believed it was. The
+# conclusion was right; it was applied to one map name instead of to the rule.
+#
+# UTP_CLOUD_CHAIN=raw still exists, for reading a map that was genuinely built on the raw chain.
 case "${UTP_CLOUD_CHAIN:-auto}" in
   raw)      CLOUD_TOPIC=/ouster/points ;;
   filtered) CLOUD_TOPIC=/ouster/points_clean ;;
-  *) case "$MAP_NAME" in
-       floor2|floor2.*) CLOUD_TOPIC=/ouster/points_clean ;;
-       *)               CLOUD_TOPIC=/ouster/points ;;
-     esac ;;
+  *)        CLOUD_TOPIC=/ouster/points_clean ;;
 esac
 if [ "$CLOUD_TOPIC" = /ouster/points ]; then
   record filter skip "raw /ouster/points: matches the '$MAP_NAME' mapping chain"

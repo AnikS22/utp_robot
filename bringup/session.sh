@@ -158,9 +158,30 @@ say "2/6  lidar + 2D scan chain"
 alive /ouster/points || { bg bash bringup/lidar3d.sh; waitfor 40 /ouster/points \
   || die "no /ouster/points — check udp_dest: a sensor streaming to another host still reports RUNNING"; }
 echo "  /ouster/points ok"
+
+# MAP FROM THE FILTERED CLOUD, ALWAYS.
+#
+# This path built every new map from RAW /ouster/points, so the OS0's near-field crosstalk went
+# into the grid. Measured 2026-09-10, in the slice pointcloud_to_laserscan keeps: raw carries 26822
+# points against the filter's 18613, and a third of the near field is crosstalk. The map comes out
+# with starburst streaks through it, and localizing against it afterwards sits at ~20% fit and half
+# a metre off while the scan SHAPE visibly matches the walls -- because the real structure IS right
+# and the phantom returns are what drags the match.
+#
+# It also guaranteed a MISMATCH: bringup_all localizes from the filtered cloud, so every map this
+# path made was read back through a different chain than it was built from. That is the 27.8% fit
+# on floor2 recorded in bringup_all.sh, and the decoy the robot grounded at the call plate.
+#
+# The filter must therefore be UP before the projection, not optional and not assumed.
+alive /ouster/points_clean || {
+  echo "  starting safety/cloud_artifact_filter.py (the map is built from the CLEAN cloud)"
+  bg python3 safety/cloud_artifact_filter.py
+  waitfor 25 /ouster/points_clean || die "no /ouster/points_clean — the artifact filter did not start"
+}
+echo "  /ouster/points_clean ok"
 if ! alive /scan_filtered; then
   bg ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node --ros-args \
-     -r cloud_in:=/ouster/points -r scan:=/scan_filtered \
+     -r cloud_in:=/ouster/points_clean -r scan:=/scan_filtered \
      -p target_frame:=base_link -p min_height:=0.20 -p max_height:=1.20 \
      -p angle_min:=-3.14159 -p angle_max:=3.14159 -p angle_increment:=0.0061 \
      -p range_min:=0.45 -p range_max:=40.0 -p use_inf:=true
@@ -262,6 +283,12 @@ fi
 # ------------------------------------------------------------------------------ 4. health
 HEALTH_FLAGS=""
 [ "${UTP_NO_CAMERA:-0}" = "1" ] && HEALTH_FLAGS="--skip-camera"
+# MAPPING IS DRIVEN BY HAND. docs/MAPPING.md is explicit that a map comes from a person walking the
+# rover around on the transmitter, closing loops -- so SWB is DOWN for all of it, on purpose, and
+# the chassis correctly reports RC authority. Gating on that means the mapping stack cannot be
+# started the one way it is meant to be started (measured 2026-09-10: bring-up refused for exactly
+# this). In every other mode the computer IS the driver and RC authority stays fatal.
+[ "$cmd" = map ] && HEALTH_FLAGS="$HEALTH_FLAGS --rc-drive"
 say "4/6  health + gates"
 python3 bringup/health.py ${HEALTH_FLAGS:-} || die "health.py reported a critical failure"
 bash bringup/lab_gates.sh 0 2 || die "gates 0-2 failed — fix before anything moves"
