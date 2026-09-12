@@ -56,6 +56,10 @@ from safety.waypoint_drive import Limits, corridor_blocked, wrap  # noqa: E402
 CMD_TOPIC = "/cmd_vel_servo"
 RATE_HZ = 20.0
 ARM_REACH_M = 0.88          # xArm6 envelope with the riser fitted (HARDWARE_SPECS)
+# base_link -> link_base. The arm is mounted this far up; a target's height above the FLOOR is not
+# its height above the SHOULDER, and only the latter is inside the reach envelope.
+RISER_M = float(__import__("json").loads(
+    (REPO / "calib" / "handeye.json").read_text()).get("riser_m", 0.74))
 PRESS_STANDOFF_M = 0.55     # the press pose proven on 2026-08-25
 YAW_TOL = math.radians(4.0)
 POS_TOL_M = 0.06
@@ -277,18 +281,34 @@ def main() -> int:
         bear = math.atan2(ty_b, tx_b)
         step_in = dist - a.standoff
 
+        # THE REACH TEST MUST USE THE DISTANCE THE ARM ACTUALLY HAS TO COVER, NOT THE FLOOR PLAN.
+        # `dist` above is hypot(x, y) -- horizontal, from base_link. The arm does not reach
+        # horizontally from base_link; it reaches in 3D from link_base, 0.74 m up the riser, and
+        # that is the distance approach_target checks against the same 0.88 m envelope.
+        #
+        # For a control at head height the two disagree by more than the shortfall they are
+        # arguing about. Measured 2026-09-11 on a campus ADA plate: target in base_link
+        # (+0.826, -0.007, +1.201). Horizontal dist 0.83 -> "ALREADY IN REACH; no base move
+        # needed". True 3D distance from link_base sqrt(0.826^2 + 0.461^2) = 0.95 -> past the
+        # envelope, and approach_target duly refused with SHORTFALL_M 0.127. One tool waved the
+        # base through while the other refused to reach, on the same target, in the same frame.
+        tz_arm = float(p_base[2]) - RISER_M
+        reach_rng = math.sqrt(tx_b*tx_b + ty_b*ty_b + tz_arm*tz_arm)
+
         print(f"  target in base_link: x={tx_b:+.3f} y={ty_b:+.3f} z={float(p_base[2]):+.3f}")
         print(f"  range {dist:.2f} m, bearing {math.degrees(bear):+.1f} deg")
+        print(f"  horizontal {dist:.2f} m from base_link; the ARM must cover "
+              f"{reach_rng:.2f} m in 3D from link_base ({tz_arm:+.2f} m of it vertical)")
         print(f"  arm reach is {ARM_REACH_M:.2f} m -> "
               + ("ALREADY IN REACH; no base move needed"
-                 if dist <= ARM_REACH_M else
-                 f"OUT OF REACH by {dist-ARM_REACH_M:.2f} m"))
+                 if reach_rng <= ARM_REACH_M else
+                 f"OUT OF REACH by {reach_rng-ARM_REACH_M:.2f} m"))
         print(f"  plan: turn {math.degrees(bear):+.1f} deg, then advance {step_in:+.2f} m "
               f"to a {a.standoff:.2f} m standoff")
         if a.advance is not None:
             step_in = a.advance
             print(f"  --advance: stepping in {a.advance:.2f} m toward the target instead")
-        elif dist <= ARM_REACH_M and abs(bear) <= YAW_TOL:
+        elif reach_rng <= ARM_REACH_M and abs(bear) <= YAW_TOL:
             print("  nothing to do.")
             return 0
         if a.dry_run:
