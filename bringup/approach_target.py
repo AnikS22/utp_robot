@@ -389,8 +389,57 @@ def main() -> int:
     # pre-commit IK check refused it, correctly, and the press never happened. The press pose
     # itself (x 0.657) is nowhere near that limit. So the alignment has to stay close enough that
     # the arm remains extended while it settles height and lateral.
-    align = float(os.environ.get("UTP_ALIGN_MM", "45")) / 1000.0
-    stops = [align, a.min_standoff / 1000.0]
+    # THE ALIGN STOP PICKS ITSELF. A FIXED NUMBER CANNOT BE RIGHT AT EVERY PARKING DISTANCE.
+    #
+    # Nav2's goal tolerance is 0.30 m, so where the base actually stops varies run to run, and the
+    # align stop's flange pose moves with it. Measured on the floor-5 call plate, 2026-09-11:
+    #   base at 0.714 m from the target -> +45 mm align is legal, the press lands
+    #   base at 0.675 m from the target -> +45 mm align folds J2 to -68.8 deg, past its -55 limit,
+    #                                      and the reach is refused before it starts
+    # Same code, same config, same button, 4 cm of parking difference. Hand-tuning the constant
+    # per target (45 for the lift plates, -100 for the ADA plate) only moved the cliff around.
+    #
+    # So: ask the IK. Walk candidate standoffs from the requested one inward and take the FIRST
+    # that solves, clears safety/arm_limits, and does not flip the wrist relative to the pose the
+    # arm is starting from. Wrist flips matter as much as the limits -- a mirrored branch reaches
+    # the same point through a 120-150 deg swing, which is what put the arm into a collision stop
+    # on 2026-09-11.
+    _requested = float(os.environ.get("UTP_ALIGN_MM", "45"))
+    _floor = a.min_standoff + 20.0        # never collapse the align stop onto the press itself
+    _cands = [_requested]
+    _v = _requested - 15.0
+    while _v > _floor:
+        _cands.append(_v); _v -= 15.0
+    align = None
+    if not a.dry_run:
+        from safety.arm_limits import violations as _lv
+        _start_j4 = arm.get_servo_angle()[1][3]
+        for _c in _cands:
+            _tgt = p_arm - approach * (_c / 1000.0)
+            _fl = _tgt - R_f @ ref_off
+            _c2, _q = arm.get_inverse_kinematics(
+                [_fl[0]*1000, _fl[1]*1000, _fl[2]*1000,
+                 start_rpy[0], start_rpy[1], start_rpy[2]],
+                input_is_radian=False, return_is_radian=False)
+            if _c2 != 0 or _q is None:
+                continue
+            _q6 = list(_q[:6])
+            if _lv(_q6):
+                continue
+            if abs(_q6[3] - _start_j4) > 90.0:      # mirrored wrist branch
+                continue
+            align = _c / 1000.0
+            if _c != _requested:
+                print(f"\n  ALIGN STOP MOVED IN: {_requested:.0f} mm was not reachable from here "
+                      f"(the base parked {np.linalg.norm(p_arm):.3f} m out); using {_c:.0f} mm, "
+                      f"J2={_q6[1]:.1f} J4={_q6[3]:.1f}")
+            break
+        if align is None:
+            print(f"\n  NO LEGAL ALIGN STOP between {_requested:.0f} and {_floor:.0f} mm -- going "
+                  f"straight to the press standoff in one move.")
+    if align is None:
+        align = _requested / 1000.0 if a.dry_run else None
+    stops = ([align] if align is not None else []) + [a.min_standoff / 1000.0]
     print(f"\n{len(stops)} steps, stopping at {a.min_standoff:.0f} mm standoff:")
     for i, s in enumerate(stops, 1):
         tgt = p_arm - approach * s
