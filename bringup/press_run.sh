@@ -126,10 +126,29 @@ fi
 # The last gate before the ARM moves. reach_control checks too, but this is the one that matters:
 # it is the only check between a grounded box and a fingertip on it, and press_run is runnable on
 # its own. Fails closed -- if it cannot answer, nothing is pressed. See safety/press_veto.py.
+if [ -n "${UTP_VETO_OVERRIDE:-}" ]; then
+    # OPERATOR OVERRIDE. Deliberately not a quiet flag: it prints, it lands in the run log, and it
+    # names what is being overridden, because the thing on the other side of this gate is a fire
+    # alarm. It exists because the alternative was worse -- on 2026-09-11 the veto refused a
+    # genuine ADA plate twice and the press only happened by calling approach_target.py directly,
+    # which ALSO skipped the ready-pose stage and put the arm through a 122 deg wrist flip. A
+    # sanctioned, logged bypass is safer than an operator reinventing one under time pressure.
+    #
+    # It must never be set in a route by default. The operator confirms the target BY EYE first.
+    echo
+    echo "  ############################################################################"
+    echo "  # VETO OVERRIDDEN -- UTP_VETO_OVERRIDE is set."
+    echo "  # The fire-alarm check is being SKIPPED for this press, on operator authority."
+    echo "  # What the check would have said:"
+    "$VENV" "$REPO/bringup/check_press_safe.py" "$CAP" 2>&1 | sed 's/^/  #   /' || true
+    echo "  ############################################################################"
+    echo
+else
 [ -f "$CAP/detection.json" ] && "$VENV" "$REPO/bringup/check_press_safe.py" "$CAP" || {
     echo "[press] REFUSED -- the arm will not be commanded at that target." >&2
     exit 1
 }
+fi
 # detect_frame writes detection.json ONLY when it has a 3D point. No point, no aiming.
 [ -f "$CAP/detection.json" ] || {
     echo >&2
