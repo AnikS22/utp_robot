@@ -66,3 +66,23 @@ def test_without_expect_buttons_the_old_behaviour_is_unchanged():
            {"bbox": [604, 672, 633, 702], "score": 0.296}]    # DOWN
     bbox, note = pick_from_column(two, 1, image_hw=HW)
     assert bbox is not None and abs((bbox[1] + bbox[3]) / 2 - 687) <= 2, note
+
+
+def test_a_box_wider_than_tall_is_not_a_panel_strip():
+    """2026-09-11, floor-5 car: a 296x174 box was accepted as the button column and dividing it
+    into six put the target at link_base x=-0.020 z=+0.752 -- behind the arm and near the ceiling.
+    approach_target refusing it was the only thing that stopped the reach."""
+    wide = [{"bbox": [570, 233, 866, 407], "score": 0.203},     # 296x174, wider than tall
+            {"bbox": [540, 532, 559, 559], "score": 0.208}]     # one real button
+    bbox, note = pick_from_column(wide, 1, image_hw=HW, expect_buttons=6)
+    assert bbox is None, f"accepted a non-column as the strip: {note}"
+    assert "wider than it is tall" in note, note
+
+
+def test_a_real_column_is_still_accepted():
+    """The genuine strips measured in that car are 57x207 and 63x212 -- tall and narrow."""
+    real = [{"bbox": [524, 495, 584, 709], "score": 0.266},     # 60x214, the real strip
+            {"bbox": [540, 532, 559, 559], "score": 0.208}]
+    bbox, note = pick_from_column(real, 1, image_hw=HW, expect_buttons=6)
+    assert bbox is not None, note
+    assert abs((bbox[1] + bbox[3]) / 2 - ACTUAL_Y[1]) <= 6, note

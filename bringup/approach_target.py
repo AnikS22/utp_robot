@@ -44,6 +44,10 @@ sys.path.insert(0, str(REPO / ".venv-arm/lib/python3.12/site-packages"))
 
 ARM_IP = "192.168.1.221"
 SPEED_MM_S = 25.0
+# How far to back off along the panel normal before the withdraw changes height.
+# 150 mm clears the plate; the buttons are ~35 mm apart vertically, so anything
+# that moves vertically while still near the plate can press a neighbour.
+RETREAT_CLEAR_M = float(os.environ.get("UTP_RETREAT_CLEAR_MM", "150")) / 1000.0
 SETTLE_S = 1.5
 J5_MARGIN_DEG = 4.0        # stop while this much headroom remains on the binding joint
 STEP_MM = 60.0
@@ -550,6 +554,25 @@ def main() -> int:
             return 1 if failed else 0
         print("\nretreating to start...")
         if not arm.error_code:
+            # BACK STRAIGHT OUT FIRST, THEN GO HOME. Going directly to the start pose is one
+            # Cartesian move, and on a vertical panel that line runs UP ACROSS THE BUTTONS.
+            # Measured 2026-09-11 in the floor-5 car: the arm pressed "1" correctly and then
+            # pressed "2" on its way back, because 2 sits directly above 1 and the withdraw
+            # dragged over it. The lift was called to two floors by one press.
+            #
+            # The approach axis is the panel normal, so -approach is the one direction guaranteed
+            # to move AWAY from every button at once. Clear the plate along it before any move
+            # that changes height.
+            _rc, _pn = arm.get_position()
+            if _rc == 0 and _pn is not None:
+                _cur = np.array(_pn[:3]) / 1000.0
+                _clear = _cur - approach * RETREAT_CLEAR_M
+                _c2 = arm.set_position(
+                    x=_clear[0]*1000, y=_clear[1]*1000, z=_clear[2]*1000,
+                    roll=_pn[3], pitch=_pn[4], yaw=_pn[5],
+                    speed=SPEED_MM_S, is_radian=False, wait=True)
+                print(f"  backed {RETREAT_CLEAR_M*1000:.0f} mm straight off the plate "
+                      f"-> code {_c2}")
             arm.set_position(x=start_xyz[0]*1000, y=start_xyz[1]*1000, z=start_xyz[2]*1000,
                              roll=start_rpy[0], pitch=start_rpy[1], yaw=start_rpy[2],
                              speed=SPEED_MM_S, is_radian=False, wait=True)

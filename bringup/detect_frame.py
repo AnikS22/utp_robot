@@ -251,7 +251,15 @@ def pick_from_column(cands, n_from_bottom, *, image_hw, max_button_area=0.6,
             if strip is None or h > (strip[3] - strip[1]):
                 strip = b
         med_h = sorted((c["bbox"][3]-c["bbox"][1]) for c in col)[len(col)//2] if col else 0
-        if strip is not None and (strip[3]-strip[1]) >= max(2.5 * med_h, 3.0):
+        # A BUTTON COLUMN IS TALL AND NARROW. Checking only the height accepted a 296x174 box --
+        # wider than it is tall, so not a column at all -- and dividing THAT into six produced a
+        # target at link_base x -0.020 z +0.752: behind the arm's own base and up near the ceiling.
+        # approach_target refused it ("the reference point is already -652 mm from the target"),
+        # which is the only reason nothing moved. Measured 2026-09-11; the real strip in the same
+        # car is 57x207 and 63x212. Require the thing to actually be a column.
+        _sw = (strip[2] - strip[0]) if strip is not None else 0.0
+        _sh = (strip[3] - strip[1]) if strip is not None else 0.0
+        if strip is not None and _sh >= max(2.5 * med_h, 3.0) and _sh >= 1.8 * _sw:
             x0, y0, x1, y1 = strip
             band = (y1 - y0) / float(expect_buttons)
             cy = y1 - (n_from_bottom - 0.5) * band
@@ -262,8 +270,12 @@ def pick_from_column(cands, n_from_bottom, *, image_hw, max_button_area=0.6,
                     f"column held only {len(col)} of {expect_buttons} buttons, so the panel strip "
                     f"{int(x1-x0)}x{int(y1-y0)} px was divided into {expect_buttons}: "
                     f"button {n_from_bottom} from the bottom is at ({cx:.0f},{cy:.0f})")
-        return None, (f"column held only {len(col)} of {expect_buttons} expected buttons and no "
-                      f"panel strip was found to divide -- REFUSING to index a short column")
+        _why = "no panel strip was found to divide"
+        if strip is not None and _sh < 1.8 * _sw:
+            _why = (f"the tallest x-aligned box is {int(_sw)}x{int(_sh)} px, wider than it is tall "
+                    f"-- that is not a button column")
+        return None, (f"column held only {len(col)} of {expect_buttons} expected buttons and "
+                      f"{_why} -- REFUSING to index a short column")
 
     if len(col) < n_from_bottom:
         return None, f"only {len(col)} button(s) in the column, needed {n_from_bottom}"
