@@ -95,6 +95,19 @@ fi
 
 echo "[camera] serial=$SERIAL ns=$NS color=${CW}x${CH} depth=${DW}x${DH} @${FPS} ROS_DOMAIN_ID=$ROS_DOMAIN_ID"
 
+# auto_exposure_priority TRUE, AND IT IS NOT A PREFERENCE. False pins the driver to the requested
+# frame rate, which caps exposure at ~1/30 s, so in a dark scene auto-exposure has nowhere left to
+# go and simply hands back an underexposed frame. The lift car is exactly that scene.
+#
+# Measured 2026-09-11 inside the floor-5 car, same car, same pose, only this parameter changed:
+#     false -> mean brightness  30.8 / 255
+#     true  -> mean brightness  87.5 / 255      (the lit hall call plate reads 120.6)
+#
+# At 30.8 the grounder found 1 of the 6 floor buttons and could not even resolve the panel strip,
+# so the press was correctly REFUSED and the robot rode nowhere. Earlier, at the same brightness,
+# it found only the top two buttons and pressed "5" instead of "1". Both failures are downstream
+# of this one line. The cost is that the driver may drop below 30 fps in the dark, which for a
+# stationary press is not a cost at all.
 setsid ros2 run realsense2_camera realsense2_camera_node --ros-args \
     -r __ns:=/ -r __node:="$NS" \
     -p camera_name:="$NS" \
@@ -102,6 +115,7 @@ setsid ros2 run realsense2_camera realsense2_camera_node --ros-args \
     -p align_depth.enable:=true \
     -p initial_reset:=true \
     -p rgb_camera.color_profile:="${CW}x${CH}x${FPS}" \
+    -p rgb_camera.auto_exposure_priority:=true \
     -p depth_module.depth_profile:="${DW}x${DH}x${FPS}" \
     -p enable_color:=true -p enable_depth:=true \
     -p enable_infra1:=false -p enable_infra2:=false \

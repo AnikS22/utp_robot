@@ -15,6 +15,54 @@ call_elevator_button:
   x: 7.4167
   y: -2.0185
   yaw: -1.2872
+campus_ada2_button:
+  frame: map
+  map_name: campus_ada2_20260911
+  mola_session: 010f2e75f205d418
+  odom_epoch: 1789173756
+  x: 49.0999
+  y: 34.2597
+  yaw: 2.3422
+campus_ada2_doors:
+  frame: map
+  map_name: campus_ada2_20260911
+  mola_session: 010f2e75f205d418
+  odom_epoch: 1789173647
+  x: 50.4817
+  y: 33.9287
+  yaw: 0.1971
+campus_ada2_goal:
+  frame: map
+  map_name: campus_ada2_20260911
+  mola_session: 010f2e75f205d418
+  odom_epoch: 1789173696
+  x: 52.7526
+  y: 34.0722
+  yaw: -0.0217
+campus_ada_button:
+  frame: map
+  map_name: campus_ada_20260911
+  mola_session: 010f2e7556b13b22
+  odom_epoch: 1789172448
+  x: 52.7176
+  y: -15.8734
+  yaw: -2.5342
+campus_ada_doors:
+  frame: map
+  map_name: campus_ada_20260911
+  mola_session: 010f2e7556b13b22
+  odom_epoch: 1789172405
+  x: 53.2076
+  y: -15.5434
+  yaw: -1.0996
+campus_ada_goal:
+  frame: map
+  map_name: campus_ada_20260911
+  mola_session: 010f2e7556b13b22
+  odom_epoch: 1789172532
+  x: 54.225
+  y: -17.4651
+  yaw: -1.2541
 elevator_doors:
   frame: map
   map_name: new_floor_20260910_2150
