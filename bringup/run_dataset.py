@@ -190,7 +190,21 @@ def main() -> int:
                                 start_new_session=True)
     bag = None
     if a.bag != "off":
+        # LATCHED TOPICS NEED A TRANSIENT_LOCAL SUBSCRIBER OR THEY RECORD NOTHING.
+        # `ros2 bag record` subscribes VOLATILE. Against a TRANSIENT_LOCAL publisher that is
+        # COMPATIBLE -- so nothing warns, nothing errors, the topic is listed in the bag -- but the
+        # already-published latched message is never delivered. Measured 2026-09-11: a 25 GB run
+        # with a complete camera and costmap record and `/map  Count: 0`, because slam_toolbox
+        # publishes the frozen grid ONCE at activation, minutes before the recorder starts.
+        # The map survived only because provenance/ snapshots the files.
+        qos_path = out / "bag_qos_overrides.yaml"
+        qos_path.write_text("\n".join(
+            f"{t}:\n  history: keep_last\n  depth: 5\n"
+            f"  reliability: reliable\n  durability: transient_local"
+            for t in ("/map", "/map_updates", "/slam_toolbox/graph_visualization",
+                      "/global_costmap/costmap", "/local_costmap/costmap", "/tf_static")) + "\n")
         bag_cmd = ["ros2", "bag", "record", "-a", "--include-hidden-topics",
+                   "--qos-profile-overrides-path", str(qos_path),
                    "--include-unpublished-topics", "--storage", "mcap",
                    "--storage-preset-profile", "zstd_fast", "--max-bag-size", "4294967296",
                    "--disable-keyboard-controls", "--output", str(out / "rosbag"),
