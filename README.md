@@ -1,12 +1,16 @@
-# utp_robot — physical robot stack for *Unlocking the Path*
+# utp_robot — physical robot stack for *GAIN*
 
 The hardware half of an interactive-navigation benchmark: a mobile manipulator that reasons about
 a **closed door**, finds the **ADA push plate**, presses it, and drives through.
 
+Paper: *GAIN: Grounded Active Interactive Navigation in State-Dependent Environments*
+(formerly *Unlocking the Path*), under review.
+
 Platform: **AgileX Ranger Mini 3.0** (4-wheel independent steering) + **uFactory xArm6** +
 **Intel RealSense D435** + **RPLIDAR A1M8**, on ROS 2 Jazzy / Ubuntu 24.04.
 
-The simulation stack lives in a separate repository (`Unlocking_the_path`) and is never modified by
+The simulation stack lives in a separate repository
+([simulation stack](https://github.com/AnikS22/unlocking-the-path), release pending) and is never modified by
 anything here — code is copied out of it, not edited in place. This repo is what happens when that
 pipeline meets a real chassis.
 
