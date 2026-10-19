@@ -1,42 +1,148 @@
-# utp_robot — physical robot stack for *GAIN*
+<h1 align="center">GAIN: Grounded Active Interactive Navigation<br>in State-Dependent Environments</h1>
 
-The hardware half of an interactive-navigation benchmark: a mobile manipulator that reasons about
-a **closed door**, finds the **ADA push plate**, presses it, and drives through.
+<p align="center"><b>Physical robot stack</b></p>
 
-Paper: *GAIN: Grounded Active Interactive Navigation in State-Dependent Environments*
-(formerly *Unlocking the Path*), under review.
+<p align="center">
+  <a href="https://github.com/AnikS22">Anik Sahai</a> and collaborators<br>
+  SIMA Lab (Scalable Intelligence for Motion and Autonomy), Florida Atlantic University
+</p>
 
-Platform: **AgileX Ranger Mini 3.0** (4-wheel independent steering) + **uFactory xArm6** +
-**Intel RealSense D435** + **RPLIDAR A1M8**, on ROS 2 Jazzy / Ubuntu 24.04.
+<p align="center"><i>Paper under review (anonymized submission; full author list after the decision).</i></p>
+
+<p align="center">
+  <b>Paper:</b> under review, link after decision
+  &nbsp;&middot;&nbsp;
+  <a href="#real-world-deployment"><b>Video clips</b></a>
+  &nbsp;&middot;&nbsp;
+  <b>Simulation code:</b> <a href="https://github.com/AnikS22/unlocking-the-path">unlocking-the-path</a> (release pending)
+  &nbsp;&middot;&nbsp;
+  <b>Hardware code:</b> this repository
+</p>
+
+<p align="center">
+  <img alt="Status: under review" src="https://img.shields.io/badge/status-under%20review-lightgrey">
+  <img alt="ROS 2 Jazzy" src="https://img.shields.io/badge/ROS%202-Jazzy-blue">
+  <img alt="License: none yet" src="https://img.shields.io/badge/license-none%20yet-lightgrey">
+</p>
+
+<p align="center">
+  <img src="media/hero_real_interactions.gif" width="100%" alt="Physical robot calling the elevator, pressing door-release plates and selecting a floor inside the car">
+</p>
+<p align="center"><sub>The physical robot (AgileX Ranger Mini 3.0 + uFactory xArm6) in a campus building:
+calling the elevator, pressing door-release plates (one beside a fire alarm it must not touch) and
+selecting the floor inside the car. Clips from the project video, faces blurred. These are
+demonstrations, not counted trials.</sub></p>
+
+**TL;DR.** A route can be geometrically valid and still blocked by a closed door or an elevator on
+the wrong floor, and replanning cannot fix that. GAIN lets a mobile manipulator notice that progress
+has stopped, asks a foundation model *what* must change (in words only, never pixels or
+coordinates), hands that description to an open-vocabulary detector that decides *where*, and
+presses the control. In simulation it beats direct VLM interaction on door and elevator tasks while
+using roughly half the model calls. This repository is the hardware half: the ROS 2 stack, safety
+layer and bring-up record for running the same pipeline on a real robot.
+
+## Method
+
+<p align="center">
+  <img src="media/method_overview.jpg" width="100%" alt="GAIN method overview">
+</p>
+<p align="center"><sub>(1) Nav2 reports a blockage. (2) The foundation model reasons over the current
+observation, the task, the robot's capability list and a memory of what it has already tried, and
+names the control in words; an open-vocabulary detector (Grounding DINO) localizes that description
+and depth lifts it to a 3-D point. (3) The arm presses, the system checks whether the door or
+elevator changed state, and navigation resumes; if nothing changed, the attempt goes back into
+memory. Paper figure. The building illustration in panel 1 was generated with ChatGPT, as disclosed
+in the paper.</sub></p>
+
+The two stages exchange only a language description and a 3-D point. No component is trained; every
+model is used off the shelf.
+
+## Results (simulation)
+
+All numbers are from the submitted manuscript. Isaac Sim, three-floor office, ROS 2 / Nav2, 120
+trials per method per task. Every method uses the same reasoning model (`gpt-5.4-mini`), navigation,
+execution and verification. *Direct Spatial VLM* asks the model for the action and its image
+location in one call; *Direct VLM-2Call* asks for the action, then the location in a second call.
+
+| Task | GAIN (ours) | Direct Spatial VLM | Direct VLM-2Call |
+|---|---|---|---|
+| Door: success | **109/120 (90.8%)** | 104/120 (86.7%) | 106/120 (88.3%) |
+| Door: model calls per trial | **4.24** | 7.59 | 11.69 |
+| Elevator: success | **104/120 (86.7%)** | 50/120 (41.7%) | 60/120 (50.0%) |
+| Elevator: model calls per trial | **8.59** | 15.74 | 16.99 |
+
+<p align="center">
+  <img src="media/results_door_elevator.png" width="90%" alt="Bar charts: success rate and model calls per trial for GAIN and two direct-VLM baselines on Door and Elevator tasks">
+</p>
+
+- **Distractors.** 30 of the 120 door trials place a plausible wrong control (for example a fire
+  alarm) next to the right one. GAIN succeeds on 24/30 (80.0%) of these against 85/90 (94.4%)
+  without a distractor; both baselines reach 23/30.
+- **Long horizon.** Missions that chain an elevator ride and a door (three interactions in order,
+  no partial credit): GAIN with GPT-5.4 mini completes **85/100**.
+- **Model sensitivity** (same 100 long-horizon missions, 23-call budget): GPT-5.4 mini 85/100
+  (13.62 mean calls), Grok 4.3 60/100 (16.63), a Gemma 4-family model 18/100 (20.65). Gemma fails
+  mostly at action selection; GPT and Grok fail mostly later, at target acquisition, grounding and
+  physical execution.
+
+## Real-world deployment
+
+The same reason, ground, act, verify loop runs on the physical platform below. The real-robot
+results are **qualitative**: the robot has called elevators, selected floors, ridden between floors
+and opened accessible-entry doors in a campus building, but there are no counted real-robot trials
+and no success rate to report. Every number in the section above is from simulation.
+
+<table>
+  <tr>
+    <td align="center" width="33%"><img src="media/real_hall_call.gif" width="100%" alt="Robot pressing the elevator hall-call plate"></td>
+    <td align="center" width="33%"><img src="media/real_floor_select.gif" width="100%" alt="Robot pressing the floor button inside the elevator car"></td>
+    <td align="center" width="33%"><img src="media/real_entry_door.gif" width="100%" alt="Robot pressing the accessible-entry plate; the door opens and the robot drives through"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Calling the elevator (5x)</sub></td>
+    <td align="center"><sub>Selecting the floor in the car (7x)</sub></td>
+    <td align="center"><sub>Accessible-entry plate, fire alarm not selected; door opens, robot drives through (4x)</sub></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="media/real_robot_grounding.jpg" width="100%" alt="The platform and its four interactions">
+</p>
+<p align="center"><sub>Platform: AgileX Ranger Mini 3.0 (4-wheel independent steering), uFactory xArm6,
+Intel RealSense D435, Ouster OS0-128 (an RPLIDAR A1M8 was used in early bring-up), ROS 2 Jazzy on
+Ubuntu 24.04.</sub></p>
 
 The simulation stack lives in a separate repository
-([simulation stack](https://github.com/AnikS22/unlocking-the-path), release pending) and is never modified by
-anything here — code is copied out of it, not edited in place. This repo is what happens when that
-pipeline meets a real chassis.
+([unlocking-the-path](https://github.com/AnikS22/unlocking-the-path), release pending) and is never
+modified by anything here; code is copied out of it, not edited in place. This repo is what happens
+when that pipeline meets a real chassis.
 
 ---
 
-## Status — read this first
+## Hardware status — read this first
 
-The task decomposes into six stages. Five are demonstrated on the physical robot; the sixth is not.
+Every row is backed by a dated entry in [`EXPERIMENT_LOG.md`](EXPERIMENT_LOG.md), the commit
+history or [`docs/PIPELINE_STATE.md`](docs/PIPELINE_STATE.md). "Demonstrated" means it happened on
+the robot and was logged; none of it is a counted trial.
 
 | stage | status | evidence |
 |---|---|---|
-| Navigate a recorded route leg | **working** | repeated arrivals within 0.15 m; one 2-leg run at 14.3 cm final error |
-| Detect that the way is blocked and escalate | **working** | corridor veto fires, route hands off to the pipeline instead of steering around |
-| Ground the ADA plate in the image | **working** | score 0.526, 99×90 px, correctly preferred over a FIRE alarm 18 cm away |
-| Refuse to press a fire alarm | **working** | veto refused a real alarm twice (4 of 4 forbidden queries on target) |
-| Drive the base into arm reach of the plate | **working** | `positioned: 0.68 m from target, +0.0° off the press axis` |
-| **The press landing on the plate** | **NOT DEMONSTRATED** | last attempt missed by ~10 cm; see below |
+| Navigate a recorded route leg | **working** | repeated arrivals within 0.15 m; on the 2026-09-10 building all five floor-5 Nav2 legs driven first attempt, two inside the lift car |
+| Detect that the way is blocked and escalate | **working** | corridor veto fires, route hands off to the pipeline instead of steering around; camera OR lidar fusion (`safety/blockage_fusion.py`) |
+| Ground the ADA plate in the image | **working** | score 0.581, 186×191 px, preferred over a fire alarm 20 cm away (2026-09-01b) |
+| Refuse to press a fire alarm | **working** | the strongest forbidden hit (0.797) landed on the real alarm and was vetoed |
+| Drive the base into arm reach | **working** | reach refused at 0.943 m from a 0.88 m arm, base crept in, re-grounded at 0.816 m (2026-09-07) |
+| Press the ADA plate and drive through | **demonstrated** | first complete press-and-exit 2026-09-01b; again 2026-09-07 on floor 1 after a lift ride |
+| Call the elevator | **demonstrated** | call button pressed twice in a row, operator confirmed the lift was called (2026-09-03); floor-5 DOWN button pressed with no hand correction (2026-09-11) |
+| Select the floor inside the car | **demonstrated, not reliable** | contact correct, but one run pressed 5 instead of 1 in a dark car (fixed by strip division; root cause, under-exposure, not fixed) |
+| Full floor 5 to floor 1 mission, one run | **not yet completed** | best run (2026-09-11) got through call, ride and in-car press, then correctly refused to drive at `FIND SELF` on floor 1 |
 
-**The remaining failure is perception-at-range, not control.** The plate was grounded from 1.66 m,
-where a 12 cm plate subtends roughly 50 px. A half-plate error at that distance is ~10 cm of lateral
-error in the world, and the base then drove precisely onto the wrong point. The fix — re-ground from
-the press pose, with the arm raised so it does not occlude the lower-centre of the frame, and correct
-before committing — is implemented (`bringup/reach_control.sh`, `bringup/press_run.sh`) and has
-**never been executed on hardware**. Do not read this repo as claiming a completed door-opening run.
-
-Everything above is reproducible from `EXPERIMENT_LOG.md`, which is dated and includes the failures.
+**History of the hard row.** Until 2026-09-01 the press had never landed: the last attempt missed by
+~10 cm because the plate was grounded from 1.66 m, where a 12 cm plate subtends roughly 50 px and a
+half-plate error is ~10 cm in the world. Two things closed it: re-grounding from the press pose with
+the arm out of the camera's view (order LOOK, GROUND, SHOW, READY, REACH in `bringup/press_run.sh`),
+and an empirical camera-to-arm offset in `calib/handeye.json` that improved two unrelated targets at
+once. Both are documented in the log with the failures that preceded them.
 
 ---
 
@@ -152,6 +258,7 @@ tests/         all headless: no ROS, no GPU, no hardware. 478 passed / 29 skippe
                as of 2026-09-05; see docs/TESTING.md for what each file guards
 patches/       our diffs against upstream drivers, applied by setup_workspace.sh
 maps/          site maps (see maps/README.md) · archive/ retired scripts, see archive/README.md
+media/         README figures and clips (from the paper and the blurred project video)
 ros2_ws/       GITIGNORED — rebuilt from pinned upstream commits by setup_workspace.sh
 ```
 
@@ -200,7 +307,7 @@ cause rather than the layer the symptom appeared in — "there is no `odom->base
 publish `map->odom`", not "localization is wrong".
 
 `MAP_NAME=elevator` (the default) selects the map to localize into. Floor 2 is `MAP_NAME=floor2`.
-Floor 1 is **mid-re-map** into a single `floor1` map covering both the lift lobby and the ADA
+On the first building, floor 1 was re-mapped into a single `floor1` map covering both the lift lobby and the ADA
 door — `config/floors.yaml` already names it, so `floor_swap.py --check` fails on purpose until
 the drive is done. Procedure and order: **[docs/FLOOR1_REMAP.md](docs/FLOOR1_REMAP.md)**.
 
@@ -359,8 +466,11 @@ because `session.sh` is live; it belongs to whoever is next at the console.
 
 ## Known-open
 
-1. **The press.** Untested since the READY → LOOK → GROUND → REACH reorder. This is the one thing
-   between here and a complete run.
+1. **One complete multi-floor run.** The press now lands (see the status table); what is missing is
+   a single run from floor 5 to the floor-1 goal. The best attempt (2026-09-11) stopped at
+   `FIND SELF` on floor 1 because the global search never got 3 of 5 searches to agree. Open
+   problems for that run, including the controller choosing its own IK branch, are in
+   [docs/PIPELINE_STATE.md](docs/PIPELINE_STATE.md).
 2. **Lidar re-anchoring** (`waypoints.py anchor` / `relocalize`). Written, unit-tested, never run on
    the robot. It is what removes the re-record-before-every-run tax — which is caused by the odom
    frame not surviving a power-cycle, not by drift within a run.
@@ -370,22 +480,68 @@ because `session.sh` is live; it belongs to whoever is next at the console.
    sim can validate navigation and the state machine, but **cannot** validate grounding. This is why
    `safety/lidar_lift.py` exists — it lifts a 2D box to 3D from lidar when depth has nothing, which
    also covers glass doors, where depth genuinely fails on hardware too.
-4. **Elevator interaction.** The lift has never been ridden. Floor 2's map (`maps/floor2.*`) and
-   its five `f2_` waypoints exist and all four nav legs have been driven; the in-car press has
-   been tuned by hand. The handover itself is untested.
-5. **Floor 1 is mid-re-map.** It was two maps — `elevator` (lift lobby, relocalizable) and
+4. **Elevator interaction is demonstrated, not reliable.** The lift has been called and ridden
+   (2026-09-03, 2026-09-07), but two wrong-button presses are logged: UP instead of DOWN on a
+   two-button plate, and 5 instead of 1 in a dark car. Both are fixed by spatial picking in
+   `bringup/detect_frame.py`; the car's under-exposure, the root cause of the second, is not.
+5. **Floor 1 of the first building** (historical; the current site is the 2026-09-10 building,
+   floors `5` and `1L`). It was two maps — `elevator` (lift lobby, relocalizable) and
    `atrium` (ADA door, `.pgm`/`.yaml` only, so not relocalizable and not mergeable). One
    continuous drive covering both is being recorded as `floor1`. `config/floors.yaml` already
    names it and its five `f1_` waypoints, so `floor_swap.py --check` fails until the drive is
    done — deliberately. `bringup/elevator_route.sh` still drives the old unsuffixed names and
-   will need updating after. See [docs/FLOOR1_REMAP.md](docs/FLOOR1_REMAP.md).
+   will need updating after. See [docs/FLOOR1_REMAP.md](docs/FLOOR1_REMAP.md). The `floor1` map
+   was saved on 2026-09-05 (four files verified non-empty; loop closure not independently checked).
 
 ---
 
 ## Reading order for a reviewer
 
 1. `EXPERIMENT_LOG.md` — dated findings, including everything that failed.
-2. `docs/MORNING.md` — current state and the exact runbook.
+2. `docs/PIPELINE_STATE.md` — state as of 2026-09-11 and the one command for the multi-floor run;
+   `docs/MORNING.md` — the earlier runbook.
 3. `safety/route_plan.py` and `safety/reach_envelope.py` — the mission and geometry rules, with the
    constants ported from the simulator and the reasoning for each.
 4. `tests/test_press_veto.py` — the safety case that matters most: never press a fire alarm.
+
+---
+
+## Limitations
+
+- **Real-robot evidence is qualitative.** The physical robot has operated door-release plates, the
+  elevator call plate and the in-car floor panel, but there are no counted real-robot trials. All
+  success rates in this README are from simulation.
+- **One platform, one site at a time.** Calibration offsets, per-target standoffs and the button
+  counts in `config/floors.yaml` are measured for this robot in these buildings and will not
+  transfer without re-measurement.
+- **Not hands-off.** Runs are supervised with the E-stop in hand; the arm has no force sensing, and
+  as of the 2026-09-01 log `requires_enable` was off for supervised runs, which `run_campaign.py`
+  refuses to run with.
+- **Glass is invisible to the lidar** and dark elevator cars degrade the camera; both are handled by
+  fusion and fallbacks, not solved.
+- **The simulator cannot validate grounding on this laptop** (Isaac depth is dead, Known-open 3), so
+  sim-to-real here means navigation and the state machine, not perception.
+
+## Citation
+
+The submission is anonymized for review; the full author list will be added after the decision.
+
+```bibtex
+@misc{sahai2026gain,
+  title  = {{GAIN}: Grounded Active Interactive Navigation in State-Dependent Environments},
+  author = {Sahai, Anik and others},
+  year   = {2026},
+  note   = {Under review}
+}
+```
+
+## Acknowledgments
+
+This work was done in the SIMA Lab (Scalable Intelligence for Motion and Autonomy) at Florida
+Atlantic University, advised by Dr. Minghan Wei. The simulation pipeline this stack ports from was
+developed in [unlocking-the-path](https://github.com/AnikS22/unlocking-the-path); see that
+repository for its contributors.
+
+## License
+
+No license has been chosen yet; all rights are reserved until one is.
