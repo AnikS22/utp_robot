@@ -72,18 +72,76 @@ location in one call; *Direct VLM-2Call* asks for the action, then the location 
 | Elevator: model calls per trial | **8.59** | 15.74 | 16.99 |
 
 <p align="center">
+  <img src="media/paper_sim_env.jpg" width="80%" alt="Top-down view of the three-floor simulated office with doors, ADA buttons, distractors, broken controls and elevator cars marked">
+</p>
+<p align="center"><sub>The three-floor Isaac Sim office used for every simulation number on this page: open
+doorways, ADA buttons, badge readers, distractor controls, broken controls, sealed doors and elevator
+cars. Paper Fig. 3.</sub></p>
+
+<p align="center">
   <img src="media/results_door_elevator.png" width="90%" alt="Bar charts: success rate and model calls per trial for GAIN and two direct-VLM baselines on Door and Elevator tasks">
 </p>
 
-- **Distractors.** 30 of the 120 door trials place a plausible wrong control (for example a fire
-  alarm) next to the right one. GAIN succeeds on 24/30 (80.0%) of these against 85/90 (94.4%)
-  without a distractor; both baselines reach 23/30.
-- **Long horizon.** Missions that chain an elevator ride and a door (three interactions in order,
-  no partial credit): GAIN with GPT-5.4 mini completes **85/100**.
-- **Model sensitivity** (same 100 long-horizon missions, 23-call budget): GPT-5.4 mini 85/100
-  (13.62 mean calls), Grok 4.3 60/100 (16.63), a Gemma 4-family model 18/100 (20.65). Gemma fails
-  mostly at action selection; GPT and Grok fail mostly later, at target acquisition, grounding and
-  physical execution.
+<table>
+  <tr>
+    <td align="center" width="50%"><img src="media/fig_calls_vs_success.png" width="100%" alt="Scatter of success rate against mean model calls per trial for three methods on Door and Elevator tasks"></td>
+    <td align="center" width="50%"><img src="media/paper_grounding.jpg" width="100%" alt="Grid of grounding results: direct VLM baselines miss the control, GAIN boxes it tightly"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Same data as the table, as cost against reliability. GAIN sits up and to the
+    left on both tasks. Paper Table I, n = 120 trials per point.</sub></td>
+    <td align="center"><sub>Why: the median-case target from each method (not best-case). The direct VLMs
+    point near the control or box the surrounding structure; the detector boxes the control. Paper Fig. 4.</sub></td>
+  </tr>
+</table>
+
+### Distractors
+
+30 of the 120 door trials place a plausible wrong control (for example a fire alarm) next to the
+right one. GAIN succeeds on 24/30 (80.0%) of these against 85/90 (94.4%) without a distractor; both
+baselines reach 23/30. With n = 30 the confidence intervals overlap, so this is a cost every method
+pays, not a separation between them.
+
+<table>
+  <tr>
+    <td align="center" width="50%"><img src="media/fig_distractor.png" width="100%" alt="Grouped bars: Door-only success with and without a look-alike distractor, with Wilson 95% confidence intervals"></td>
+    <td align="center" width="50%"><img src="media/paper_distractor.jpg" width="100%" alt="A door-release control next to a fire alarm, in simulation and in a real building"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Door-only success split by trial type, Wilson 95% intervals. Paper Sec. V-B,
+    n = 90 ordinary and 30 distractor trials per method.</sub></td>
+    <td align="center"><sub>Distractor cases the method gets right, in simulation (left) and in a campus
+    building (right), where the distractor is a real fire alarm. Paper Fig. 5.</sub></td>
+  </tr>
+</table>
+
+### Long horizon and model sensitivity
+
+Missions that chain an elevator ride and a door (three interactions in order, no partial credit):
+GAIN with GPT-5.4 mini completes **85/100**. Swapping only the reasoning model on the same 100
+missions (23-call budget): Grok 4.3 60/100, a Gemma 4-family model 18/100. Gemma fails mostly at
+action selection; GPT and Grok get past that and fail later, at target acquisition, grounding and
+physical execution. A better reasoner moves the bottleneck downstream rather than removing it.
+
+<table>
+  <tr>
+    <td align="center" width="50%"><img src="media/fig_model_sensitivity.png" width="100%" alt="Bars: long-horizon success and mean model calls for GPT-5.4 mini, Grok 4.3 and a Gemma 4-family model"></td>
+    <td align="center" width="50%"><img src="media/fig_failure_breakdown.png" width="100%" alt="Stacked bars: primary failure cause of the 137 failed missions, by model"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Success (Wilson 95% CI) and mean model calls per mission; dashed line is the
+    23-call budget. Paper Table II, n = 100 missions per model.</sub></td>
+    <td align="center"><sub>Primary failure cause of each of the 137 failed missions (15 + 40 + 82).
+    Paper Table III.</sub></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="media/paper_long_horizon.jpg" width="100%" alt="Five rows of frames from long-horizon missions: three in simulation, two on the physical robot">
+</p>
+<p align="center"><sub>Long-horizon missions, left to right: approach the elevator, operate its controls,
+change floors, meet a closed door, press its release, continue to the goal. Top three rows simulation,
+bottom two the physical robot in a campus building (demonstrations, not counted trials). Paper Fig. 6.</sub></p>
 
 ## Real-world deployment
 
@@ -127,7 +185,7 @@ the robot and was logged; none of it is a counted trial.
 
 | stage | status | evidence |
 |---|---|---|
-| Navigate a recorded route leg | **working** | repeated arrivals within 0.15 m; on the 2026-09-10 building all five floor-5 Nav2 legs driven first attempt, two inside the lift car |
+| Navigate a recorded route leg | **working** | 44 of 58 logged arrivals within 0.15 m of the waypoint (median 0.12 m; in-car legs are looser, see below); on the 2026-09-10 building all five floor-5 Nav2 legs driven first attempt, two inside the lift car |
 | Detect that the way is blocked and escalate | **working** | corridor veto fires, route hands off to the pipeline instead of steering around; camera OR lidar fusion (`safety/blockage_fusion.py`) |
 | Ground the ADA plate in the image | **working** | score 0.581, 186×191 px, preferred over a fire alarm 20 cm away (2026-09-01b) |
 | Refuse to press a fire alarm | **working** | the strongest forbidden hit (0.797) landed on the real alarm and was vetoed |
@@ -136,6 +194,29 @@ the robot and was logged; none of it is a counted trial.
 | Call the elevator | **demonstrated** | call button pressed twice in a row, operator confirmed the lift was called (2026-09-03); floor-5 DOWN button pressed with no hand correction (2026-09-11) |
 | Select the floor inside the car | **demonstrated, not reliable** | contact correct, but one run pressed 5 instead of 1 in a dark car (fixed by strip division; root cause, under-exposure, not fixed) |
 | Full floor 5 to floor 1 mission, one run | **not yet completed** | best run (2026-09-11) got through call, ride and in-car press, then correctly refused to drive at `FIND SELF` on floor 1 |
+
+<p align="center">
+  <img src="media/fig_hw_timeline.png" width="90%" alt="Timeline of hardware bring-up milestones from 2026-08-17 to 2026-09-11">
+</p>
+<p align="center"><sub>Bring-up milestones, one per dated entry in <code>EXPERIMENT_LOG.md</code> and
+<code>docs/PIPELINE_STATE.md</code>. Highlighted: first press-and-exit, first confirmed elevator call,
+first floor-1 arrival and press after a real lift ride.</sub></p>
+
+<table>
+  <tr>
+    <td align="center" width="50%"><img src="media/fig_hw_route_floor1.png" width="100%" alt="Driven path on the floor-1 occupancy map from localization to the ADA plate and out of the door"></td>
+    <td align="center" width="50%"><img src="media/fig_hw_legs.png" width="100%" alt="Bars of Nav2 leg outcomes and a strip plot of arrival distance per waypoint"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>The 2026-09-07 floor-1 run (<code>runs/20260907T235743Z_ours_floor1_arrival</code>):
+    1235 map-frame poses over 123 s on <code>maps/floor1.pgm</code>, with the recorded waypoints and the
+    logged events. The reach was refused at 0.94 m, the base crept in and the press landed.</sub></td>
+    <td align="center"><sub>Every Nav2 leg in <code>runs/*/events.jsonl</code> (88 legs, 26 runs), and for the 58
+    arrivals whose run kept its waypoint file, the distance from the robot's localized pose to the
+    recorded waypoint at "arrived". This is the robot's own estimate, not ground truth; the in-car legs
+    sit above 0.15 m. Bar = median.</sub></td>
+  </tr>
+</table>
 
 **History of the hard row.** Until 2026-09-01 the press had never landed: the last attempt missed by
 ~10 cm because the plate was grounded from 1.66 m, where a 12 cm plate subtends roughly 50 px and a
